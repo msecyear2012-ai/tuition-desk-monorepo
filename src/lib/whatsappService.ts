@@ -41,7 +41,12 @@ export function getAppBaseUrl(): string {
 }
 
 /**
- * Generates the canonical Parent VIP Portal magic link for a given student ID.
+ * Builds a Parent Portal link.
+ *
+ * IMPORTANT: `/p/{studentId}` carries no credential and cannot authenticate a
+ * first-time parent (it requires an existing `parent_portal_session`), so the
+ * frontend must never emit it as a shared/invitation link. Tokens are only ever
+ * minted server-side; without one we fall back to the `/portal` entry page.
  */
 export function buildMagicLink(
   studentId?: string | { toString(): string } | null
@@ -50,8 +55,8 @@ export function buildMagicLink(
   const idStr =
     typeof studentId === "string" ? studentId.trim() : studentId.toString().trim();
   if (!idStr) return "";
-  const baseUrl = getAppBaseUrl();
-  return `${baseUrl}/p/${idStr}`;
+  const baseUrl = getAppBaseUrl().replace(/\/+$/, "");
+  return `${baseUrl}/portal`;
 }
 
 /**
@@ -63,10 +68,124 @@ export function buildMagicLink(
  * Any missing, empty, invalid, or non-matching configuration strictly defaults to simulation.
  * NODE_ENV=production is NOT sufficient authorization for live dispatch.
  */
-export function isLiveDispatchEnabled(): boolean {
+/**
+ * Normalizes Indian phone numbers consistently:
+ * - Strips all non-digit characters.
+ * - Converts 10-digit Indian numbers (e.g. 9999900011) to canonical 12-digit format (919999900011).
+ * - Converts 11-digit numbers starting with 0 (e.g. 09999900011) to canonical 12-digit format (919999900011).
+ * - Leaves existing 12-digit numbers starting with 91 intact.
+ */
+export function normalizeIndianPhone(phone: string | number): string {
+  const cleaned = String(phone || "").replace(/\D/g, "");
+  if (cleaned.length === 10) {
+    return `91${cleaned}`;
+  }
+  if (cleaned.length === 11 && cleaned.startsWith("0")) {
+    return `91${cleaned.slice(1)}`;
+  }
+  return cleaned;
+}
+
+/**
+ * Strict QA Live-Recipient Allowlist Guard:
+ * - If QA_LIVE_MODE is active, a missing, empty, or invalid allowlist MUST fail closed (rejects live send).
+ * - If QA_LIVE_RECIPIENT_ALLOWLIST is configured, only explicitly allowlisted numbers may proceed live.
+ * - Non-allowlisted numbers fail closed and revert to simulation mode.
+ */
+export function isPhoneAllowedForLiveDispatch(phone?: string | number): boolean {
+  const isQaLiveMode = process.env.QA_LIVE_MODE?.trim().toLowerCase() === "true";
+  const allowlistRaw = process.env.QA_LIVE_RECIPIENT_ALLOWLIST?.trim();
+
+  // In QA live mode, missing or empty allowlist must fail closed
+  if (isQaLiveMode && (!allowlistRaw || allowlistRaw.length === 0)) {
+    console.warn(
+      "[QA SAFETY GUARD] QA_LIVE_MODE is active but QA_LIVE_RECIPIENT_ALLOWLIST is missing/empty. Failing closed into simulation."
+    );
+    return false;
+  }
+
+  // If an allowlist is provided (whether QA_LIVE_MODE is set or not)
+  if (allowlistRaw) {
+    if (!phone) return false;
+    const normRecipient = normalizeIndianPhone(phone);
+    const allowedList = allowlistRaw
+      .split(",")
+      .map((p) => normalizeIndianPhone(p.trim()))
+      .filter(Boolean);
+
+    if (allowedList.length === 0) {
+      console.warn(
+        "[QA SAFETY GUARD] QA_LIVE_RECIPIENT_ALLOWLIST contains no valid numbers. Failing closed into simulation."
+      );
+      return false;
+    }
+
+    const isMatch = allowedList.includes(normRecipient);
+    if (!isMatch) {
+      const masked =
+        normRecipient.length >= 4 ? `***${normRecipient.slice(-4)}` : "****";
+      console.log(
+        `[QA SAFETY GUARD] Recipient ${masked} is NOT in QA_LIVE_RECIPIENT_ALLOWLIST. Diverting to simulation.`
+      );
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function isLiveDispatchEnabled(
+  recipientPhone?: string | number
+): boolean {
   const mode = process.env.WHATSAPP_MODE?.trim().toLowerCase();
   const liveOptIn = process.env.ENABLE_LIVE_WHATSAPP?.trim().toLowerCase();
-  return mode === "live" && liveOptIn === "true";
+  if (mode !== "live" || liveOptIn !== "true") {
+    return false;
+  }
+  return isPhoneAllowedForLiveDispatch(recipientPhone);
+}
+
+/**
+ * Test-Only WhatsApp Live Dispatch Guard:
+ * Allows ONLY explicit test pings from the authenticated Owner Settings page
+ * (POST /api/whatsapp/test-message) to dispatch to the WhatsApp microservice.
+ *
+ * HARD PRODUCTION RESTRICTION:
+ * - Test-only dispatch is permitted ONLY in local development or test environments.
+ * - In production (NODE_ENV === "production" or VERCEL_ENV === "production"),
+ *   this function unconditionally returns FALSE regardless of whether
+ *   ALLOW_TEST_WHATSAPP_DISPATCH is set to true.
+ * - Defaults strictly to FALSE (OFF).
+ *
+ * CRITICAL WORKFLOW ISOLATION:
+ * This function MUST NEVER be used by any standard business workflow
+ * (fees, admissions, receipts, test results, attendance, or campaigns).
+ */
+export function isTestDispatchAllowed(
+  recipientPhone?: string | number
+): boolean {
+  // 1. Hard unconditional production block: reject immediately
+  if (
+    process.env.NODE_ENV === "production" ||
+    process.env.VERCEL_ENV === "production"
+  ) {
+    return false;
+  }
+
+  // 2. Explicitly allow ONLY local development or automated test environments
+  const env = process.env.NODE_ENV?.trim().toLowerCase();
+  if (env !== "development" && env !== "test") {
+    return false;
+  }
+
+  // 3. Require explicit opt-in flag; default OFF
+  const testOptIn = process.env.ALLOW_TEST_WHATSAPP_DISPATCH?.trim().toLowerCase();
+  if (testOptIn !== "true") {
+    return false;
+  }
+
+  // 4. Strict allowlist guard
+  return isPhoneAllowedForLiveDispatch(recipientPhone);
 }
 
 /**
@@ -153,7 +272,7 @@ export async function sendWelcomeMessage(
   }
 
   // Fail-closed simulation guard: zero network requests unless explicitly opted into live mode
-  if (!isLiveDispatchEnabled()) {
+  if (!isLiveDispatchEnabled(cleanDigits)) {
     logSimulatedDispatch("welcome_message", centerId, cleanDigits, message);
     return {
       success: false,
@@ -269,7 +388,7 @@ export async function sendCustomWhatsAppMessage(
   }
 
   // Fail-closed simulation guard
-  if (!isLiveDispatchEnabled()) {
+  if (!isLiveDispatchEnabled(cleanDigits)) {
     logSimulatedDispatch("custom_message", centerId, cleanDigits, message);
     return {
       success: false,
@@ -367,7 +486,7 @@ export async function sendFeeReminder(
   }
 
   // Fail-closed simulation guard: zero network requests unless explicitly opted into live mode
-  if (!isLiveDispatchEnabled()) {
+  if (!isLiveDispatchEnabled(cleanDigits)) {
     logSimulatedDispatch("fee_reminder", centerId, cleanDigits, message);
     return {
       success: false,
@@ -498,7 +617,7 @@ export async function sendTestResult(
   }
 
   // Fail-closed simulation guard: zero network requests unless explicitly opted into live mode
-  if (!isLiveDispatchEnabled()) {
+  if (!isLiveDispatchEnabled(cleanDigits)) {
     logSimulatedDispatch("test_result", centerId, cleanDigits, message);
     return {
       success: false,

@@ -5,17 +5,27 @@ import { getJwtSecretKey } from "./jwt.ts";
 export interface AuthPayload extends JWTPayload {
   userId?: string;
   centerId: string;
-  role: "owner" | "parent";
+  role: "owner" | "teacher" | "parent";
+  teacherId?: string;
+  name?: string;
+  mustChangePassword?: boolean;
+  parentAccessId?: string;
+  tokenPrefix?: string;
+  linkedStudentIds?: string[];
 }
 
 /**
- * Sign a JWT token with userId, centerId, and role.
+ * Sign a JWT token with userId, centerId, role, and optional teacher context.
  * Expires in 7 days.
  */
 export async function signToken(payload: {
   userId?: string;
   centerId: string;
-  role: "owner" | "parent";
+  role: "owner" | "teacher" | "parent";
+  teacherId?: string;
+  name?: string;
+  mustChangePassword?: boolean;
+  [key: string]: unknown;
 }): Promise<string> {
   const secretKey = getJwtSecretKey();
   return await new SignJWT({ ...payload })
@@ -41,13 +51,13 @@ export async function verifyToken(token: string): Promise<AuthPayload | null> {
 }
 
 /**
- * Extracts and verifies the centerId strictly from the request's verified JWT token
+ * Extracts and verifies the authenticated user strictly from the request's verified JWT token
  * in cookies or Authorization header (Bearer token).
  * Fails closed and returns null if unauthenticated.
  */
-export async function getAuthenticatedCenterId(
+export async function getAuthenticatedUser(
   request: NextRequest
-): Promise<string | null> {
+): Promise<AuthPayload | null> {
   // 1. Check cookies (auth_token or token)
   const cookieToken =
     request.cookies.get("auth_token")?.value ||
@@ -56,7 +66,7 @@ export async function getAuthenticatedCenterId(
   if (cookieToken) {
     const payload = await verifyToken(cookieToken);
     if (payload?.centerId) {
-      return String(payload.centerId);
+      return payload;
     }
   }
 
@@ -66,9 +76,22 @@ export async function getAuthenticatedCenterId(
     const token = authHeader.substring(7).trim();
     const payload = await verifyToken(token);
     if (payload?.centerId) {
-      return String(payload.centerId);
+      return payload;
     }
   }
 
   return null;
+}
+
+/**
+ * Extracts and verifies the centerId strictly from the request's verified JWT token
+ * in cookies or Authorization header (Bearer token).
+ * Fails closed and returns null if unauthenticated.
+ * Preserved for full backward compatibility across existing API routes.
+ */
+export async function getAuthenticatedCenterId(
+  request: NextRequest
+): Promise<string | null> {
+  const user = await getAuthenticatedUser(request);
+  return user?.centerId ? String(user.centerId) : null;
 }

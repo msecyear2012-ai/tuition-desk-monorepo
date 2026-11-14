@@ -13,6 +13,7 @@ export interface ITest {
   date: Date;
   maxMarks: number;
   results: ITestResult[];
+  assignedTeacherId?: mongoose.Types.ObjectId | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -74,17 +75,29 @@ const TestSchema = new Schema<ITestDocument>(
       type: [TestResultSchema],
       default: [],
     },
+    // Academic attribution: null represents the Institute Owner, or references Teacher _id
+    assignedTeacherId: {
+      type: Schema.Types.ObjectId,
+      ref: "Teacher",
+      default: null,
+      index: true,
+    },
   },
   {
     timestamps: true,
   }
 );
 
-// Compound index for queries by center and date
+// Compound indexes for multi-tenant querying
 TestSchema.index({ centerId: 1, date: -1 });
+TestSchema.index({ centerId: 1, assignedTeacherId: 1, date: -1 });
 
-// In development, reset cached model to support hot reloads
-if (process.env.NODE_ENV !== "production" && mongoose.models.Test) {
+// In development, reset cached model to support hot reloads if schema path changed
+if (
+  process.env.NODE_ENV !== "production" &&
+  mongoose.models.Test &&
+  !mongoose.models.Test.schema.path("assignedTeacherId")
+) {
   delete (mongoose.models as Record<string, unknown>).Test;
 }
 

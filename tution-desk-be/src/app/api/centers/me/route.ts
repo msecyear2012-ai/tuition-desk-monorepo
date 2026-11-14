@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import Center from "@/models/Center";
-import { getAuthenticatedCenterId } from "@/lib/auth";
+import Teacher from "@/models/Teacher";
+import { getAuthenticatedUser } from "@/lib/auth";
 import { getCorsHeaders, handleCorsPreflight } from "@/lib/cors";
 
 export async function OPTIONS(request: NextRequest) {
@@ -14,16 +15,16 @@ export async function GET(request: NextRequest) {
   try {
     await connectDB();
 
-    const centerId = await getAuthenticatedCenterId(request);
+    const user = await getAuthenticatedUser(request);
 
-    if (!centerId) {
+    if (!user || !user.centerId) {
       return NextResponse.json(
         { success: false, error: "Not authenticated" },
         { status: 401, headers: corsHeaders }
       );
     }
 
-    const center = await Center.findOne({ centerId: String(centerId).trim() });
+    const center = await Center.findOne({ centerId: String(user.centerId).trim() });
 
     if (!center) {
       return NextResponse.json(
@@ -32,9 +33,27 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    let teacherInfo: { id?: string; name?: string } | undefined;
+    if (user.role === "teacher") {
+      let teacherName = user.name;
+      const tId = user.teacherId || user.userId;
+      if (!teacherName && tId) {
+        const teacherDoc = await Teacher.findById(tId).select("name");
+        if (teacherDoc) {
+          teacherName = teacherDoc.name;
+        }
+      }
+      teacherInfo = {
+        id: tId,
+        name: teacherName,
+      };
+    }
+
     return NextResponse.json(
       {
         success: true,
+        role: user.role,
+        teacher: teacherInfo,
         center: {
           name: center.name,
           ownerName: center.ownerName,

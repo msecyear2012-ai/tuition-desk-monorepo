@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    "tution-desk-be/**",
+    "whatsapp-server/**",
+    "scratch/**",
+    "test/**",
+    "reports/**",
   ]),
 ]);
 

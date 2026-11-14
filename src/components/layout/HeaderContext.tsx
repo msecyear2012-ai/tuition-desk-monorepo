@@ -18,6 +18,7 @@ export interface AlertItem {
   message: string;
   link?: string;
   time: string;
+  isRead?: boolean;
 }
 
 export interface HeaderContextType {
@@ -38,7 +39,7 @@ const HeaderContext = createContext<HeaderContextType | undefined>(undefined);
 
 export function HeaderProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [headerConfig, setHeaderConfig] = useState<HeaderConfig>({});
+  const [headerConfig, setHeaderConfigState] = useState<HeaderConfig>({});
   const prevPathname = useRef(pathname);
 
   // Global Dynamic Alerts & Badges State
@@ -46,6 +47,24 @@ export function HeaderProvider({ children }: { children: React.ReactNode }) {
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [overdueCount, setOverdueCount] = useState<number>(0);
   const [isWhatsappConnected, setIsWhatsappConnected] = useState<boolean | null>(null);
+
+  // Stable header configuration updater with structural equality guard
+  const updateHeaderConfig: React.Dispatch<React.SetStateAction<HeaderConfig>> =
+    React.useCallback((action) => {
+      setHeaderConfigState((prev) => {
+        const next = typeof action === "function" ? action(prev) : action;
+        if (
+          prev.title === next.title &&
+          prev.subtitle === next.subtitle &&
+          prev.badgeText === next.badgeText &&
+          prev.showNotifications === next.showNotifications &&
+          prev.showLogout === next.showLogout
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    }, []);
 
   const isParentPortal =
     pathname?.startsWith("/p/") || pathname === "/login" || pathname === "/parent";
@@ -86,45 +105,72 @@ export function HeaderProvider({ children }: { children: React.ReactNode }) {
 
         setAlerts(filteredAlerts);
 
-        const unread = filteredAlerts.filter(
-          (a) => a.type === "warning" || a.type === "error"
-        ).length;
-        setUnreadCount(unread);
+        const resolvedUnread =
+          typeof data.unreadCount === "number"
+            ? data.unreadCount
+            : filteredAlerts.filter((a) => a.isRead === false).length;
+        setUnreadCount(resolvedUnread);
       }
     } catch {
       // Gracefully ignore fetch errors
     }
   }, [isParentPortal]);
 
-  // Initial fetch on mount
+  // Initial fetch on mount & listen to live collection recorded events
   useEffect(() => {
-    refreshAlerts();
+    let ignore = false;
+    void (async () => {
+      if (!ignore) {
+        await refreshAlerts();
+      }
+    })();
+
+    const handleLiveCollection = () => {
+      void refreshAlerts();
+    };
+
+    window.addEventListener("msec:collection-recorded", handleLiveCollection);
+    return () => {
+      ignore = true;
+      window.removeEventListener("msec:collection-recorded", handleLiveCollection);
+    };
   }, [refreshAlerts]);
 
   // Clear page-specific header overrides whenever the user navigates to a new route
   useEffect(() => {
     if (prevPathname.current !== pathname) {
       prevPathname.current = pathname;
-      setHeaderConfig({});
+      updateHeaderConfig({});
     }
-  }, [pathname]);
+  }, [pathname, updateHeaderConfig]);
+
+  const contextValue = React.useMemo<HeaderContextType>(
+    () => ({
+      headerConfig,
+      setHeaderConfig: updateHeaderConfig,
+      alerts,
+      setAlerts,
+      unreadCount,
+      setUnreadCount,
+      overdueCount,
+      setOverdueCount,
+      isWhatsappConnected,
+      setIsWhatsappConnected,
+      refreshAlerts,
+    }),
+    [
+      headerConfig,
+      updateHeaderConfig,
+      alerts,
+      unreadCount,
+      overdueCount,
+      isWhatsappConnected,
+      refreshAlerts,
+    ]
+  );
 
   return (
-    <HeaderContext.Provider
-      value={{
-        headerConfig,
-        setHeaderConfig,
-        alerts,
-        setAlerts,
-        unreadCount,
-        setUnreadCount,
-        overdueCount,
-        setOverdueCount,
-        isWhatsappConnected,
-        setIsWhatsappConnected,
-        refreshAlerts,
-      }}
-    >
+    <HeaderContext.Provider value={contextValue}>
       {children}
     </HeaderContext.Provider>
   );

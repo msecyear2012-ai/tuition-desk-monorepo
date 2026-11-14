@@ -97,7 +97,7 @@ async function main() {
   const expectedDbName =
     process.env.EXPECTED_AUDIT_DB_NAME ||
     args.find((a) => a.startsWith("--expected-db="))?.split("=")[1] ||
-    "test";
+    "msec";
   const allowPrimaryDb = args.includes("--allow-primary-db");
 
   if (!auditUri || !auditUri.trim()) {
@@ -105,14 +105,14 @@ async function main() {
     process.exit(1);
   }
 
-  // If URI has no explicit database path, normalize with /test (MongoDB default)
+  // If URI has no explicit database path, normalize with expected database
   let normalizedAuditUri = auditUri.trim();
   const httpEquiv = normalizedAuditUri.replace(/^mongodb(\+srv)?:\/\//i, "http://");
   try {
     const parsed = new URL(httpEquiv);
     const pathname = parsed.pathname.replace(/^\/+/, "");
     if (!pathname) {
-      normalizedAuditUri = normalizedAuditUri.replace(/\/?(\?|$)/, "/test$1");
+      normalizedAuditUri = normalizedAuditUri.replace(/\/?(\?|$)/, `/${expectedDbName}$1`);
     }
   } catch {
     // If URL parsing fails, retain original
@@ -160,8 +160,8 @@ async function main() {
 
     const actualDbName = db.databaseName;
     console.log(`[CONFIRMED] Active Database Name: '${actualDbName}'`);
-    if (actualDbName !== "test") {
-      throw new Error(`Execution safety guard: Expected database 'test', but active database is '${actualDbName}'. Aborting.`);
+    if (actualDbName !== expectedDbName) {
+      throw new Error(`Execution safety guard: Expected database '${expectedDbName}', but active database is '${actualDbName}'. Aborting.`);
     }
 
     // Inspect user privileges (read-only verification)

@@ -8,9 +8,56 @@ export interface ISTDateComponents {
   year: number;
   month: number; // 1-12
   day: number; // 1-31
+  daysInMonth: number; // 28-31
   billingMonth: string; // "YYYY-MM"
   monthLabel: string; // "October 2026"
   shortMonthLabel: string; // "Oct 2026"
+}
+
+/**
+ * Returns total days in a given calendar month (1-12) of a given year under Asia/Kolkata timezone.
+ * Handles leap years (Feb 29 vs 28) and differing month lengths (30 vs 31 days).
+ */
+export function getDaysInISTMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/**
+ * Calculates the effective billing cycle day for a student in a specific calendar month.
+ * If billingCycleDay exceeds the total days in the month (e.g. 29/30/31 in February or 31 in April),
+ * it is deterministically clamped to the last calendar day of that month.
+ */
+export function getEffectiveBillingCycleDay(
+  billingCycleDay: number,
+  year: number,
+  month: number
+): number {
+  const daysInMonth = getDaysInISTMonth(year, month);
+  const safeCycleDay = Math.max(1, Math.min(31, Math.floor(billingCycleDay || 5)));
+  return Math.min(safeCycleDay, daysInMonth);
+}
+
+/**
+ * Returns the list of configured student billingCycleDate values that are eligible
+ * to be processed on a given day of the month.
+ * - On standard days (cycleDay < daysInMonth), returns [cycleDay].
+ * - On the last calendar day of the month (or if cycleDay >= daysInMonth),
+ *   returns [cycleDay, ..., 31] so students configured for dates 29, 30, or 31
+ *   in shorter months are deterministically clamped to the month's final day.
+ */
+export function getEligibleBillingCycleDates(
+  cycleDay: number,
+  daysInMonth: number
+): number[] {
+  if (cycleDay < daysInMonth) {
+    return [cycleDay];
+  }
+  const effectiveStart = Math.min(cycleDay, daysInMonth);
+  const result: number[] = [];
+  for (let d = effectiveStart; d <= 31; d++) {
+    result.push(d);
+  }
+  return result;
 }
 
 /**
@@ -29,6 +76,7 @@ export function getISTDateComponents(date: Date = new Date()): ISTDateComponents
   const month = parseInt(parts.find((p) => p.type === "month")!.value, 10);
   const day = parseInt(parts.find((p) => p.type === "day")!.value, 10);
 
+  const daysInMonth = getDaysInISTMonth(year, month);
   const billingMonth = `${year}-${String(month).padStart(2, "0")}`;
 
   const monthLabel = new Intl.DateTimeFormat("en-IN", {
@@ -47,6 +95,7 @@ export function getISTDateComponents(date: Date = new Date()): ISTDateComponents
     year,
     month,
     day,
+    daysInMonth,
     billingMonth,
     monthLabel,
     shortMonthLabel,
@@ -61,6 +110,30 @@ export function formatBillingMonth(date: Date = new Date()): string {
 }
 
 /**
+ * Calculates start and end Date bounds for an Asia/Kolkata (IST = UTC+5:30) calendar day.
+ * Ensures consistent same-day attendance query matching and prevents duplicate collisions.
+ */
+export function getISTDayRange(dateInput: Date | string = new Date()): {
+  dateStr: string;
+  startOfDay: Date;
+  endOfDay: Date;
+} {
+  let dateStr: string;
+  if (typeof dateInput === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateInput.trim())) {
+    dateStr = dateInput.trim();
+  } else {
+    const d = typeof dateInput === "string" ? new Date(dateInput) : dateInput;
+    const safeDate = isNaN(d.getTime()) ? new Date() : d;
+    dateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(safeDate);
+  }
+
+  const startOfDay = new Date(`${dateStr}T00:00:00.000+05:30`);
+  const endOfDay = new Date(`${dateStr}T23:59:59.999+05:30`);
+
+  return { dateStr, startOfDay, endOfDay };
+}
+
+/**
  * Determines the first eligible billing month for a student.
  * Rule: If joinDayIST >= billingCycleDay, the current month's cycle is considered passed
  * or active today, so recurring automated billing starts from the NEXT eligible cycle.
@@ -72,8 +145,9 @@ export function calculateFirstBillingMonth(
   billingCycleDay: number
 ): string {
   const { year, month, day } = getISTDateComponents(joiningDate);
+  const effectiveCycleDay = getEffectiveBillingCycleDay(billingCycleDay, year, month);
 
-  if (day < billingCycleDay) {
+  if (day < effectiveCycleDay) {
     return `${year}-${String(month).padStart(2, "0")}`;
   }
 

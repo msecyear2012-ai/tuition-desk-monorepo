@@ -1,15 +1,37 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useSetHeader } from "@/components/layout/HeaderContext";
-import { apiClient, getCurrentCenterId } from "@/lib/apiClient";
-import { StudentRecord } from "@/types";
+import { apiClient } from "@/lib/apiClient";
+import { StudentRecord, BatchRecord } from "@/types";
+
+const StudentBatchRequestModal = dynamic(
+  () => import("@/components/modals/StudentBatchRequestModal"),
+  { ssr: false }
+);
+const FeePaymentModal = dynamic(
+  () => import("@/components/modals/FeePaymentModal"),
+  { ssr: false }
+);
+const FeeDetailModal = dynamic(
+  () => import("@/components/modals/FeeDetailModal"),
+  { ssr: false }
+);
+const ReceiptSlipModal = dynamic(
+  () => import("@/components/modals/ReceiptSlipModal"),
+  { ssr: false }
+);
+import type { TargetFeeInfo } from "@/components/modals/FeePaymentModal";
+import type { ReceiptSlipData } from "@/components/modals/ReceiptSlipModal";
+import type { PaymentEntryItem, CustodyBreakdownItem } from "@/types";
+import ParentAccessCard from "./ParentAccessCard";
+import { openParentPortalForStudent } from "@/lib/parentPortalLink";
+import StudentPhoneMasked from "@/components/common/StudentPhoneMasked";
+import { getAuthenticatedCenter, getCachedCenter } from "@/lib/centerProfile";
 import {
   ArrowLeft,
-  Phone,
-  MessageCircle,
   Calendar,
   IndianRupee,
   Layers,
@@ -19,25 +41,24 @@ import {
   Sparkles,
   Banknote,
   Receipt,
-  Printer,
-  X,
-  ShieldCheck,
   Clock,
   PlusCircle,
   AlertCircle,
   RefreshCw,
-  Building2,
   User,
 } from "lucide-react";
 
 export interface StudentFeeItem {
   _id: string;
   centerId: string;
-  studentId: any;
+  studentId: string | Record<string, unknown>;
   month: string;
   title?: string;
   amountDue: number;
   paidAmount?: number;
+  originalAmountDue?: number;
+  billingMonth?: string;
+  feeType?: string;
   dueDate?: string;
   status: "Pending" | "Paid" | "Verification Pending" | "Partial Paid";
   utrNumber?: string;
@@ -49,11 +70,31 @@ export interface StudentFeeItem {
   paidAt?: string;
   paymentDate?: string;
   createdAt?: string;
+  receivedByName?: string;
+  receivedByRole?: "owner" | "teacher" | string;
+  assignedTeacherName?: string;
+  batchAtPayment?: string;
+  custodyBreakdown?: CustodyBreakdownItem;
+  paymentHistory?: PaymentEntryItem[];
 }
 
 interface StudentProfileProps {
   studentId: string;
   onBack?: () => void;
+  userRole?: "owner" | "teacher" | string;
+}
+
+function getSettledAmount(fee: StudentFeeItem | null | undefined): number {
+  if (!fee) return 0;
+  const paid = Number(fee.paidAmount);
+  if (!isNaN(paid) && paid > 0) {
+    return paid;
+  }
+  const due = Number(fee.amountDue);
+  if (!isNaN(due) && due > 0) {
+    return due;
+  }
+  return 0;
 }
 
 function formatCurrency(amount: number): string {
@@ -97,7 +138,22 @@ function getInitials(name: string): string {
   return (name || "").slice(0, 2).toUpperCase();
 }
 
-export default function StudentProfile({ studentId, onBack }: StudentProfileProps) {
+export default function StudentProfile({
+  studentId,
+  onBack,
+  userRole: initialRole,
+}: StudentProfileProps) {
+  const [currentUserRole, setCurrentUserRole] = useState<string>(
+    () => initialRole || getCachedCenter()?.role || "teacher"
+  );
+
+  useEffect(() => {
+    if (!initialRole) {
+      getAuthenticatedCenter().then((c) => {
+        if (c?.role) setCurrentUserRole(c.role);
+      });
+    }
+  }, [initialRole]);
   const router = useRouter();
 
   const [student, setStudent] = useState<StudentRecord | null>(null);
@@ -113,125 +169,149 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
     badgeText: student?.batch || "Student",
   });
 
-  // Modal 1: Record Cash Payment Form
-  const [isCashModalOpen, setIsCashModalOpen] = useState(false);
-  const [amountInput, setAmountInput] = useState<string>("");
-  const [feeType, setFeeType] = useState<"Regular Monthly Fee" | "Advance Payment">(
-    "Regular Monthly Fee"
-  );
-  const [notesInput, setNotesInput] = useState<string>("");
-  const [isSubmittingCash, setIsSubmittingCash] = useState(false);
-  const [cashError, setCashError] = useState<string | null>(null);
+  // Modal States (Phase 5.3)
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [selectedFeeForPayment, setSelectedFeeForPayment] = useState<TargetFeeInfo | null>(null);
+  const [selectedDetailFeeId, setSelectedDetailFeeId] = useState<string | null>(null);
+  const [activeReceiptData, setActiveReceiptData] = useState<ReceiptSlipData | null>(null);
 
-  // Modal 2: View Digital Slip Modal
-  const [selectedReceiptFee, setSelectedReceiptFee] = useState<StudentFeeItem | null>(null);
+  // Modal: Batch Assignment Request (REQ-01)
+  const [isBatchRequestOpen, setIsBatchRequestOpen] = useState(false);
+  const [batches, setBatches] = useState<BatchRecord[]>([]);
+
+  useEffect(() => {
+    apiClient<BatchRecord[]>("/batches")
+      .then((res) => {
+        if (res.data) setBatches(res.data);
+      })
+      .catch(() => {});
+  }, []);
 
   // Toast feedback
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
 
   // Fetch Student Profile & Fee Ledger
-  const fetchStudentData = useCallback(async () => {
+  useEffect(() => {
     if (!studentId) return;
+    let ignore = false;
+
+    async function load() {
+      try {
+        const [studentRes, feesRes] = await Promise.allSettled([
+          apiClient<StudentRecord>(`/students/${studentId}`),
+          apiClient<StudentFeeItem[]>("/fees", { params: { studentId } }),
+        ]);
+
+        if (ignore) return;
+
+        if (studentRes.status === "fulfilled" && studentRes.value.success && studentRes.value.data) {
+          setStudent(studentRes.value.data);
+        } else {
+          throw new Error("Failed to load student details");
+        }
+
+        if (feesRes.status === "fulfilled" && feesRes.value.success && Array.isArray(feesRes.value.data)) {
+          setFees(feesRes.value.data);
+        } else {
+          setFees([]);
+        }
+      } catch (err: unknown) {
+        if (!ignore) {
+          const msg = err instanceof Error ? err.message : "Error loading student profile";
+          setError(msg);
+        }
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void load();
+
+    return () => {
+      ignore = true;
+    };
+  }, [studentId, refreshTrigger]);
+
+  const handleManualRefresh = useCallback(() => {
     setLoading(true);
     setError(null);
+    setRefreshTrigger((c) => c + 1);
+  }, []);
 
-    try {
-      const [studentRes, feesRes] = await Promise.allSettled([
-        apiClient<StudentRecord>(`/students/${studentId}`),
-        apiClient<StudentFeeItem[]>("/fees", { params: { studentId } }),
-      ]);
-
-      if (studentRes.status === "fulfilled" && studentRes.value.success && studentRes.value.data) {
-        setStudent(studentRes.value.data);
-      } else {
-        throw new Error("Failed to load student details");
-      }
-
-      if (feesRes.status === "fulfilled" && feesRes.value.success && Array.isArray(feesRes.value.data)) {
-        setFees(feesRes.value.data);
-      } else {
-        setFees([]);
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error loading student profile";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [studentId]);
-
-  useEffect(() => {
-    fetchStudentData();
-  }, [fetchStudentData]);
-
-  // Handle Opening Cash Payment Modal with Monthly Fee prefilled
-  const handleOpenCashModal = (type: "Regular Monthly Fee" | "Advance Payment" = "Regular Monthly Fee") => {
-    setFeeType(type);
-    setAmountInput(student?.monthlyFee ? String(student.monthlyFee) : "");
-    setNotesInput("");
-    setCashError(null);
-    setIsCashModalOpen(true);
-  };
-
-  // Submit Manual Cash Payment
-  const handleSubmitCashPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const numAmount = Number(amountInput);
-
-    if (isNaN(numAmount) || numAmount <= 0) {
-      setCashError("Please enter a valid amount greater than ₹0.");
-      return;
-    }
-
-    setIsSubmittingCash(true);
-    setCashError(null);
-
-    try {
-      const res = await apiClient<StudentFeeItem>("/fees/manual-collection", {
-        method: "POST",
-        body: {
-          studentId,
-          centerId: student?.centerId || getCurrentCenterId(),
-          amount: numAmount,
-          type: feeType,
-          notes: notesInput.trim(),
-        },
+  // Open Payment Collection Modal
+  const handleOpenPayment = (feeItem?: StudentFeeItem | null) => {
+    if (feeItem) {
+      setSelectedFeeForPayment({
+        _id: feeItem._id,
+        month: feeItem.month,
+        title: feeItem.title,
+        amountDue: Number(feeItem.amountDue) || 0,
+        paidAmount: Number(feeItem.paidAmount) || 0,
+        originalAmountDue:
+          feeItem.originalAmountDue ??
+          (Number(feeItem.amountDue || 0) + Number(feeItem.paidAmount || 0)),
+        billingMonth: feeItem.billingMonth,
+        feeType: feeItem.feeType,
+        isAdvance: feeItem.isAdvance,
       });
-
-      if (!res.success || !res.data) {
-        throw new Error(res.error || "Failed to record manual cash payment.");
-      }
-
-      const newFee = res.data;
-      const rcptNum = newFee.receiptNumber || "";
-
-      setToastMessage(
-        `Recorded ₹${numAmount} cash payment! (Receipt: ${rcptNum})`
-      );
-      setTimeout(() => setToastMessage(null), 4500);
-
-      setIsCashModalOpen(false);
-      await fetchStudentData();
-
-      // Automatically offer to view the generated receipt slip
-      setSelectedReceiptFee(newFee);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to record payment";
-      setCashError(msg);
-    } finally {
-      setIsSubmittingCash(false);
+    } else {
+      setSelectedFeeForPayment(null);
     }
+    setIsPaymentModalOpen(true);
   };
 
-  // Ledger Metrics Calculations
-  const metrics = useMemo(() => {
-    const totalPaid = fees
-      .filter((f) => f.status === "Paid")
-      .reduce((sum, f) => sum + (Number(f.paidAmount || f.amountDue) || 0), 0);
+  const handlePaymentSuccess = (updatedFee: unknown, receiptData: ReceiptSlipData) => {
+    setToastMessage(
+      `Payment of ₹${receiptData.amount.toLocaleString("en-IN")} recorded! (Receipt: ${receiptData.receiptNumber})`
+    );
+    setTimeout(() => setToastMessage(null), 4500);
+    handleManualRefresh();
+    setActiveReceiptData(receiptData);
+  };
 
-    const pendingTotal = fees
-      .filter((f) => f.status === "Pending" || f.status === "Verification Pending")
-      .reduce((sum, f) => sum + (Number(f.amountDue) || 0), 0);
+  const handleOpenReceiptForFee = (feeItem: StudentFeeItem) => {
+    if (!student) return;
+    const paidAmt = getSettledAmount(feeItem);
+    setActiveReceiptData({
+      receiptNumber: feeItem.receiptNumber || `RCPT-${feeItem._id.slice(-6).toUpperCase()}`,
+      studentName: student.name,
+      batchName: student.batch,
+      amount: paidAmt,
+      paymentMode: feeItem.paymentMode || "Cash",
+      paymentDate: feeItem.paidAt || feeItem.paidDate || feeItem.paymentDate || feeItem.createdAt,
+      title: feeItem.title || feeItem.month,
+      collectorName: feeItem.receivedByName,
+      collectorRole: feeItem.receivedByRole,
+      isProvisional: feeItem.receivedByRole === "teacher",
+      remainingBalance: Number(feeItem.amountDue) || 0,
+      notes: feeItem.notes,
+    });
+  };
+
+  // Ledger Metrics Calculations (accurately includes Partial Paid fees)
+  const metrics = useMemo(() => {
+    let totalPaid = 0;
+    let pendingTotal = 0;
+    let totalInvoiced = 0;
+
+    for (const f of fees) {
+      const paid = Number(f.paidAmount) || 0;
+      const due = Number(f.amountDue) || 0;
+      const orig = f.originalAmountDue ?? (paid + due);
+      totalInvoiced += orig;
+
+      if (f.status === "Paid") {
+        totalPaid += paid > 0 ? paid : due;
+      } else if (f.status === "Partial Paid") {
+        totalPaid += paid;
+        pendingTotal += due;
+      } else {
+        pendingTotal += due;
+      }
+    }
 
     const advanceCount = fees.filter(
       (f) =>
@@ -240,7 +320,7 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
         /advance/i.test(f.month || "")
     ).length;
 
-    return { totalPaid, pendingTotal, advanceCount };
+    return { totalPaid, pendingTotal, totalInvoiced, advanceCount };
   }, [fees]);
 
   // Filtered Fees List based on active tab
@@ -250,14 +330,17 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
     }
     if (activeLedgerTab === "pending") {
       return fees.filter(
-        (f) => f.status === "Pending" || f.status === "Verification Pending"
+        (f) =>
+          f.status === "Pending" ||
+          f.status === "Partial Paid" ||
+          f.status === "Verification Pending"
       );
     }
     return fees;
   }, [fees, activeLedgerTab]);
 
   return (
-    <div className="flex flex-col min-h-full relative bg-slate-50/50 pb-24 w-full max-w-full overflow-x-hidden">
+    <div className="flex flex-col min-h-full relative bg-slate-50/50 pb-28 w-full max-w-full overflow-x-hidden">
 
       {/* Floating Success Toast */}
       {toastMessage && (
@@ -294,7 +377,7 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
 
           <button
             type="button"
-            onClick={fetchStudentData}
+            onClick={handleManualRefresh}
             className="tap-bounce inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-800 p-1.5"
             title="Refresh Ledger"
           >
@@ -322,7 +405,7 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
             </div>
             <button
               type="button"
-              onClick={fetchStudentData}
+              onClick={handleManualRefresh}
               className="tap-bounce inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 text-white font-bold text-xs shadow-xs"
             >
               Try Again
@@ -356,33 +439,26 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
                       <Layers className="w-3 h-3 text-indigo-600" />
                       {student.batch}
                     </span>
+                    {currentUserRole === "teacher" && (
+                      <button
+                        type="button"
+                        onClick={() => setIsBatchRequestOpen(true)}
+                        className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold underline ml-1 cursor-pointer"
+                        title="Request batch reassignment for this student"
+                      >
+                        Request Change
+                      </button>
+                    )}
+
                   </div>
 
                   {/* Group personal details neatly using a flex container with wrapping */}
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-2 text-xs sm:text-sm text-slate-600">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-mono text-slate-800 font-semibold">
-                        +91 {student.parentWhatsApp}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <a
-                          href={`https://wa.me/91${student.parentWhatsApp}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="w-5 h-5 rounded-full bg-emerald-50 text-emerald-600 hover:bg-emerald-100 flex items-center justify-center transition-colors"
-                          title="Chat on WhatsApp"
-                        >
-                          <MessageCircle className="w-3 h-3" />
-                        </a>
-                        <a
-                          href={`tel:+91${student.parentWhatsApp}`}
-                          className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center transition-colors"
-                          title="Call parent"
-                        >
-                          <Phone className="w-3 h-3" />
-                        </a>
-                      </div>
-                    </div>
+                    <StudentPhoneMasked
+                      phone={student.parentWhatsApp}
+                      userRole={currentUserRole}
+                      showQuickActions={true}
+                    />
                     <span className="hidden sm:inline text-slate-300">•</span>
                     <span className="flex items-center gap-1 text-xs text-slate-500">
                       <Calendar className="w-3.5 h-3.5 text-slate-400" />
@@ -400,29 +476,48 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
               <div className="flex flex-wrap items-center gap-2 w-full md:w-auto pt-2 md:pt-0">
                 <button
                   type="button"
-                  onClick={() => handleOpenCashModal("Regular Monthly Fee")}
+                  onClick={() => handleOpenPayment(null)}
                   className="tap-bounce flex-1 md:flex-initial min-w-[140px] h-10 px-3 sm:px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-emerald-600/25 transition-all cursor-pointer whitespace-nowrap"
                 >
                   <Banknote className="w-4 h-4 text-emerald-100 stroke-[2.4]" />
                   <span>Record Cash Payment</span>
                 </button>
 
-                <a
-                  href={`/p/${student._id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const result = await openParentPortalForStudent(
+                      String(student._id)
+                    );
+                    if (!result.opened && result.message) {
+                      window.alert(result.message);
+                    }
+                  }}
                   className="tap-bounce flex-1 md:flex-initial min-w-[110px] h-10 px-3 sm:px-3.5 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
-                  title="Open parent-facing VIP mobile portal"
+                  title="Open the parent-facing VIP mobile portal using the canonical portal link"
                 >
                   <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
                   <span>Parent Portal</span>
-                </a>
+                </button>
               </div>
             </div>
 
             {/* 2. Top Metric Cards */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {/* Metric 1: Total Collected */}
+              {/* Metric 1: Total Invoiced */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                  Total Invoiced
+                </span>
+                <div className="text-xl sm:text-2xl font-black font-mono text-slate-900 mt-0.5">
+                  {formatCurrency(metrics.totalInvoiced)}
+                </div>
+                <span className="text-[10px] font-semibold text-slate-500 block mt-0.5">
+                  All Ledger Cycles
+                </span>
+              </div>
+
+              {/* Metric 2: Total Collected */}
               <div className="rounded-2xl border border-emerald-100 bg-white p-3.5 shadow-2xs">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
                   Total Collected
@@ -431,24 +526,24 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
                   {formatCurrency(metrics.totalPaid)}
                 </div>
                 <span className="text-[10px] font-semibold text-emerald-600 block mt-0.5">
-                  Settled &amp; Archived
+                  Settled &amp; Cleared
                 </span>
               </div>
 
-              {/* Metric 2: Pending Dues */}
-              <div className="rounded-2xl border border-amber-100 bg-white p-3.5 shadow-2xs">
+              {/* Metric 3: Pending Dues */}
+              <div className="rounded-2xl border border-rose-100 bg-white p-3.5 shadow-2xs">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
-                  Pending Dues
+                  Outstanding Balance
                 </span>
-                <div className="text-xl sm:text-2xl font-black font-mono text-amber-700 mt-0.5">
+                <div className="text-xl sm:text-2xl font-black font-mono text-rose-700 mt-0.5">
                   {formatCurrency(metrics.pendingTotal)}
                 </div>
-                <span className="text-[10px] font-semibold text-amber-600 block mt-0.5">
-                  {metrics.pendingTotal > 0 ? "Awaiting Payment" : "All Clear"}
+                <span className="text-[10px] font-semibold text-rose-600 block mt-0.5">
+                  {metrics.pendingTotal > 0 ? "Balance Awaiting Payment" : "All Clear"}
                 </span>
               </div>
 
-              {/* Metric 3: Monthly Fee Rate */}
+              {/* Metric 4: Monthly Fee Rate */}
               <div className="rounded-2xl border border-blue-100 bg-white p-3.5 shadow-2xs">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
                   Monthly Rate
@@ -460,20 +555,17 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
                   Due {getCycleOrdinal(student.billingCycleDate || 5)} monthly
                 </span>
               </div>
-
-              {/* Metric 4: Advance Receipts */}
-              <div className="rounded-2xl border border-purple-100 bg-white p-3.5 shadow-2xs">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
-                  Advance Receipts
-                </span>
-                <div className="text-xl sm:text-2xl font-black font-mono text-purple-700 mt-0.5">
-                  {metrics.advanceCount}
-                </div>
-                <span className="text-[10px] font-semibold text-purple-600 block mt-0.5">
-                  Pre-paid Records
-                </span>
-              </div>
             </div>
+
+            {/* 2.5 Parent VIP Portal Access Management */}
+            {currentUserRole === "owner" && (
+              <ParentAccessCard
+                studentId={student._id}
+                studentName={student.name}
+                parentPhone={student.parentWhatsApp}
+                centerId={student.centerId}
+              />
+            )}
 
             {/* 3. Task 1: 360-Degree Fee & Payment History Ledger */}
             <div className="rounded-3xl border border-slate-200/90 bg-white p-5 shadow-xs space-y-4">
@@ -539,7 +631,7 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
                   </p>
                   <button
                     type="button"
-                    onClick={() => handleOpenCashModal()}
+                    onClick={() => handleOpenPayment(null)}
                     className="tap-bounce mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold shadow-2xs"
                   >
                     <PlusCircle className="w-3.5 h-3.5" />
@@ -661,6 +753,26 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
                                 </>
                               ) : null}
 
+                              {/* Attribution & Provisional Badge */}
+                              {fee.receivedByName && (
+                                <>
+                                  <span className="text-slate-300">•</span>
+                                  <span className="inline-flex items-center gap-1 font-semibold text-slate-600 text-[10px]">
+                                    <User className="w-3 h-3 text-slate-400" />
+                                    <span>Collected by {fee.receivedByName}</span>
+                                    {fee.receivedByRole === "teacher" ? (
+                                      <span className="px-1 rounded bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-[9px] uppercase">
+                                        Provisional Cash
+                                      </span>
+                                    ) : (
+                                      <span className="px-1 rounded bg-emerald-100 text-emerald-800 border border-emerald-200 font-extrabold text-[9px] uppercase">
+                                        Owner Verified
+                                      </span>
+                                    )}
+                                  </span>
+                                </>
+                              )}
+
                               {fee.notes && (
                                 <>
                                   <span className="text-slate-300">•</span>
@@ -670,40 +782,64 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
                                 </>
                               )}
                             </div>
+
+                            {/* Partial Paid Progress Indicator */}
+                            {fee.status === "Partial Paid" && (
+                              <div className="mt-1 flex items-center gap-1.5 text-[10.5px]">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-900 border border-amber-200 font-medium">
+                                  <span>Paid: <strong>₹{(fee.paidAmount || 0).toLocaleString("en-IN")}</strong></span>
+                                  <span className="text-amber-400">•</span>
+                                  <span>Balance Due: <strong className="text-rose-700 font-mono">₹{fee.amountDue.toLocaleString("en-IN")}</strong></span>
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
 
                         {/* Right: Amount & Actions */}
-                        <div className="flex items-center justify-between sm:justify-end gap-3 flex-shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 w-full sm:w-auto">
-                          <div className="text-left sm:text-right">
+                        <div className="flex items-center justify-between sm:justify-end gap-2 flex-shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 w-full sm:w-auto flex-wrap">
+                          <div className="text-left sm:text-right mr-1">
                             <div className="text-sm font-black font-mono text-slate-900 tracking-tight">
-                              {formatCurrency(fee.amountDue)}
+                              {formatCurrency(isPaid ? getSettledAmount(fee) : fee.amountDue)}
                             </div>
                             <span className="text-[10px] text-slate-400 font-semibold block">
-                              {isPaid ? "Settled" : "Balance Due"}
+                              {isPaid ? "Settled" : fee.status === "Partial Paid" ? "Balance Due" : "Due"}
                             </span>
                           </div>
 
-                          {/* Task 1.4: View Receipt slip functionality */}
-                          {isPaid ? (
+                          {/* Action 1: View Details & History */}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDetailFeeId(fee._id)}
+                            className="tap-bounce h-8 px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                            title="View complete payment history & custody"
+                          >
+                            <span>Details</span>
+                          </button>
+
+                          {/* Action 2: View Receipt slip if paid or partial */}
+                          {(isPaid || (Number(fee.paidAmount) || 0) > 0) && (
                             <button
                               type="button"
-                              onClick={() => setSelectedReceiptFee(fee)}
-                              className="tap-bounce h-8 px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 active:scale-95 text-slate-800 font-bold text-xs flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                              onClick={() => handleOpenReceiptForFee(fee)}
+                              className="tap-bounce h-8 px-2.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-800 font-bold text-xs flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
                               title="View official digital receipt slip"
                             >
                               <Receipt className="w-3.5 h-3.5 text-emerald-600 stroke-[2.2]" />
-                              <span>View Receipt</span>
+                              <span>Receipt</span>
                             </button>
-                          ) : (
+                          )}
+
+                          {/* Action 3: Record Payment if balance due */}
+                          {fee.amountDue > 0 && (
                             <button
                               type="button"
-                              onClick={() => handleOpenCashModal("Regular Monthly Fee")}
-                              className="tap-bounce h-8 px-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold flex items-center gap-1 shadow-2xs"
-                              title="Settle due with cash"
+                              onClick={() => handleOpenPayment(fee)}
+                              className="tap-bounce h-8 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold flex items-center gap-1 shadow-2xs cursor-pointer"
+                              title="Record cash payment against this fee"
                             >
-                              <Banknote className="w-3.5 h-3.5 text-emerald-700" />
-                              <span>Mark Paid</span>
+                              <Banknote className="w-3.5 h-3.5 text-emerald-100" />
+                              <span>Record Payment</span>
                             </button>
                           )}
                         </div>
@@ -717,315 +853,56 @@ export default function StudentProfile({ studentId, onBack }: StudentProfileProp
         )}
       </div>
 
-      {/* ========================================================= */}
-      {/* MODAL 1: Task 2: Record Cash Payment Modal (Owner Side)    */}
-      {/* ========================================================= */}
-      {isCashModalOpen && student && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in">
-          <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl border border-slate-200 overflow-hidden">
-            {/* Modal Header */}
-            <div className="bg-gradient-to-r from-emerald-600 to-teal-700 p-5 text-white relative">
-              <button
-                type="button"
-                onClick={() => setIsCashModalOpen(false)}
-                className="absolute top-4 right-4 h-8 w-8 rounded-full bg-white/15 hover:bg-white/25 active:scale-90 flex items-center justify-center text-white transition-all cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+      {/* Phase 5.3: Cash/Manual Fee Payment Collection Modal */}
+      <FeePaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        student={
+          student
+            ? {
+                _id: student._id,
+                name: student.name,
+                batch: student.batch,
+                centerId: student.centerId,
+                monthlyFee: student.monthlyFee,
+              }
+            : null
+        }
+        fee={selectedFeeForPayment}
+        onSuccess={handlePaymentSuccess}
+      />
 
-              <div className="flex items-center gap-2 text-emerald-100 text-xs font-bold uppercase tracking-wider">
-                <Banknote className="w-4 h-4" />
-                Record Cash Collection
-              </div>
-              <h2 className="text-xl font-black mt-1 tracking-tight text-white">
-                {student.name}
-              </h2>
-              <p className="text-xs text-emerald-100/90 mt-0.5">
-                Generate instant verified offline receipt &amp; update ledger
-              </p>
-            </div>
+      {/* Phase 5.3: Detailed Fee History & Custody Modal */}
+      <FeeDetailModal
+        isOpen={Boolean(selectedDetailFeeId)}
+        onClose={() => setSelectedDetailFeeId(null)}
+        feeId={selectedDetailFeeId}
+        userRole={currentUserRole}
+        onRecordPayment={(feeDoc) => {
+          handleOpenPayment(feeDoc as unknown as StudentFeeItem);
+        }}
+        onViewReceipt={(receiptData) => {
+          setActiveReceiptData(receiptData);
+        }}
+      />
 
-            {/* Modal Form */}
-            <form onSubmit={handleSubmitCashPayment} className="p-5 space-y-4">
-              {cashError && (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs text-rose-700 font-semibold flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>{cashError}</span>
-                </div>
-              )}
+      {/* Phase 5.3: Official / Provisional Receipt Slip Modal */}
+      <ReceiptSlipModal
+        isOpen={Boolean(activeReceiptData)}
+        onClose={() => setActiveReceiptData(null)}
+        receiptData={activeReceiptData}
+      />
 
-              {/* Amount Input */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 block">
-                  Amount Collected (₹) *
-                </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 font-bold text-sm">
-                    ₹
-                  </span>
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    required
-                    value={amountInput}
-                    onChange={(e) => setAmountInput(e.target.value)}
-                    placeholder="e.g. 2000"
-                    className="w-full pl-8 pr-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-mono font-bold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                  />
-                </div>
-
-                {/* Amount Quick Presets */}
-                <div className="flex items-center gap-1.5 pt-1 flex-wrap">
-                  {student.monthlyFee > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setAmountInput(String(student.monthlyFee))}
-                      className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
-                    >
-                      Monthly Rate (₹{student.monthlyFee})
-                    </button>
-                  )}
-                  {[1000, 2000, 3000, 5000].map((amt) => (
-                    <button
-                      key={amt}
-                      type="button"
-                      onClick={() => setAmountInput(String(amt))}
-                      className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
-                    >
-                      ₹{amt.toLocaleString("en-IN")}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Fee Type Dropdown */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 block">
-                  Fee Type *
-                </label>
-                <select
-                  value={feeType}
-                  onChange={(e) =>
-                    setFeeType(
-                      e.target.value as "Regular Monthly Fee" | "Advance Payment"
-                    )
-                  }
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                >
-                  <option value="Regular Monthly Fee">Regular Monthly Fee</option>
-                  <option value="Advance Payment">Advance Payment</option>
-                </select>
-              </div>
-
-              {/* Notes / Remarks */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 block">
-                  Notes / Remarks (Optional)
-                </label>
-                <input
-                  type="text"
-                  maxLength={100}
-                  value={notesInput}
-                  onChange={(e) => setNotesInput(e.target.value)}
-                  placeholder="e.g. November 2026 tuition fee or Exam prep advance"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 focus:border-transparent placeholder:text-slate-400"
-                />
-              </div>
-
-              {/* Form Actions */}
-              <div className="pt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsCashModalOpen(false)}
-                  disabled={isSubmittingCash}
-                  className="tap-bounce flex-1 h-10 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs transition-colors"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={isSubmittingCash || !amountInput.trim()}
-                  className="tap-bounce flex-1 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/25 transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  {isSubmittingCash ? (
-                    <Loader2 className="w-4 h-4 animate-spin text-white" />
-                  ) : (
-                    <CheckCircle2 className="w-4 h-4 stroke-[2.2]" />
-                  )}
-                  <span>Generate Receipt &amp; Save</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================= */}
-      {/* MODAL 2: Task 1.4: View Digital Receipt Slip Modal         */}
-      {/* ========================================================= */}
-      {selectedReceiptFee && student && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-fade-in">
-          <div className="w-full max-w-sm rounded-3xl bg-white shadow-2xl border border-slate-200 overflow-hidden relative">
-            {/* Slip Top Header */}
-            <div className="bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-800 p-5 text-white relative">
-              <button
-                type="button"
-                onClick={() => setSelectedReceiptFee(null)}
-                className="absolute top-4 right-4 h-8 w-8 rounded-full bg-white/15 hover:bg-white/25 active:scale-90 flex items-center justify-center text-white transition-all cursor-pointer"
-                aria-label="Close receipt modal"
-              >
-                <X className="w-4 h-4" />
-              </button>
-
-              <div className="flex items-center gap-2 text-emerald-100 text-xs font-bold uppercase tracking-wider">
-                <Receipt className="w-4 h-4" />
-                Official Fee Receipt
-              </div>
-              <h2 className="text-xl font-black mt-1 tracking-tight text-white">
-                Tuition Center Ledger
-              </h2>
-              <p className="text-xs text-emerald-100/90 mt-0.5">
-                Verified Payment Acknowledgement Slip
-              </p>
-            </div>
-
-            {/* Slip Details Body */}
-            <div className="p-5 space-y-4 text-xs">
-              {/* Receipt Number & Status */}
-              <div className="flex items-center justify-between pb-3 border-b border-dashed border-slate-200">
-                <div>
-                  <span className="text-[10px] uppercase font-extrabold tracking-wider text-slate-400 block">
-                    Receipt Number
-                  </span>
-                  <span className="font-mono font-black text-slate-900 text-sm select-all">
-                    {selectedReceiptFee.receiptNumber ||
-                      (selectedReceiptFee.paymentMode &&
-                      /cash/i.test(selectedReceiptFee.paymentMode)
-                        ? `RCPT-${selectedReceiptFee._id.slice(-6).toUpperCase()}`
-                        : selectedReceiptFee.utrNumber ||
-                          `RCPT-${selectedReceiptFee._id.slice(-6).toUpperCase()}`)}
-                  </span>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] uppercase font-extrabold tracking-wider text-slate-400 block">
-                    Status
-                  </span>
-                  <span className="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 text-[11px]">
-                    <ShieldCheck className="w-3 h-3" />
-                    PAID &amp; CLEARED
-                  </span>
-                </div>
-              </div>
-
-              {/* Data Grid */}
-              <div className="grid grid-cols-2 gap-3 text-slate-600">
-                <div className="space-y-0.5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-                    <User className="w-3 h-3" />
-                    Student Name
-                  </span>
-                  <p className="font-bold text-slate-900 text-xs truncate">
-                    {student.name}
-                  </p>
-                </div>
-
-                <div className="space-y-0.5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-                    <Calendar className="w-3 h-3" />
-                    Date Paid
-                  </span>
-                  <p className="font-bold text-slate-900 text-xs">
-                    {formatDate(
-                      selectedReceiptFee.paidAt ||
-                        selectedReceiptFee.paidDate ||
-                        selectedReceiptFee.paymentDate ||
-                        selectedReceiptFee.createdAt
-                    )}
-                  </p>
-                </div>
-
-                <div className="space-y-0.5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-                    <Sparkles className="w-3 h-3" />
-                    Description
-                  </span>
-                  <p className="font-bold text-slate-900 text-xs truncate">
-                    {selectedReceiptFee.title || selectedReceiptFee.month}
-                  </p>
-                </div>
-
-                <div className="space-y-0.5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-                    <Building2 className="w-3 h-3" />
-                    Payment Mode
-                  </span>
-                  <p className="font-bold text-slate-900 text-xs flex items-center gap-1">
-                    {selectedReceiptFee.paymentMode &&
-                    /cash/i.test(selectedReceiptFee.paymentMode) ? (
-                      <>
-                        <Banknote className="w-3.5 h-3.5 text-emerald-600" />
-                        Cash Collection
-                      </>
-                    ) : (
-                      <>
-                        <IndianRupee className="w-3.5 h-3.5 text-blue-600" />
-                        Online / UPI
-                      </>
-                    )}
-                  </p>
-                </div>
-              </div>
-
-              {/* UTR / Ref Number if Online */}
-              {selectedReceiptFee.utrNumber && (
-                <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 font-mono text-xs flex items-center justify-between">
-                  <span className="font-sans font-bold text-slate-400 text-[10px] uppercase">
-                    Bank UTR Ref:
-                  </span>
-                  <span className="font-bold text-slate-800 select-all">
-                    {selectedReceiptFee.utrNumber}
-                  </span>
-                </div>
-              )}
-
-              {/* Highlighted Amount */}
-              <div className="p-4 rounded-2xl bg-emerald-50/80 border border-emerald-200 text-center space-y-0.5">
-                <span className="text-[10px] uppercase font-extrabold tracking-wider text-emerald-800">
-                  Total Amount Received
-                </span>
-                <div className="text-3xl font-black font-mono text-emerald-900 tracking-tight">
-                  {formatCurrency(selectedReceiptFee.amountDue)}
-                </div>
-                <p className="text-[10px] text-emerald-700 font-medium">
-                  Official automated entry from center ledger
-                </p>
-              </div>
-
-              {/* Footer Buttons */}
-              <div className="pt-2 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="tap-bounce flex-1 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <Printer className="w-4 h-4 text-slate-600" />
-                  <span>Print Slip</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedReceiptFee(null)}
-                  className="tap-bounce flex-1 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Done</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {student && (
+        <StudentBatchRequestModal
+          isOpen={isBatchRequestOpen}
+          onClose={() => setIsBatchRequestOpen(false)}
+          initialStudent={student}
+          batches={batches}
+          onSuccess={() => {
+            handleManualRefresh();
+          }}
+        />
       )}
     </div>
   );

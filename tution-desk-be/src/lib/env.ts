@@ -133,6 +133,12 @@ export function validateEnvironment(env: Record<string, string | undefined> = pr
       severity: "CRITICAL",
       message: `Production APP_URL is configured as "${appUrl}". Must be a valid public HTTPS origin.`,
     });
+  } else if (isProduction && !appUrl.startsWith("https://")) {
+    issues.push({
+      variable: "APP_URL",
+      severity: "CRITICAL",
+      message: `Production APP_URL is configured as "${appUrl}". Must use HTTPS protocol in production.`,
+    });
   }
 
   // 7. WhatsApp Live Safety Guards

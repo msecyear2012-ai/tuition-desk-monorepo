@@ -1,3 +1,6 @@
+"use client";
+
+import { useMemo } from "react";
 import Link from "next/link";
 import { Clock, Users, ArrowRight } from "lucide-react";
 import { QuickBatchAttendance } from "@/types";
@@ -9,6 +12,22 @@ interface TodayScheduleTimelineProps {
 export default function TodayScheduleTimeline({
   batches,
 }: TodayScheduleTimelineProps) {
+  // Client-side filter: ONLY display currently "Ongoing" batches and the very next "Upcoming" batch
+  const displayedBatches = useMemo(() => {
+    if (!batches || batches.length === 0) return [];
+
+    const firstUpcoming = batches.find((b) => b.timelineStatus === "upcoming");
+
+    return batches.filter((batch) => {
+      // 1. Keep all currently "Ongoing" (Live) batches
+      if (batch.timelineStatus === "ongoing") return true;
+      // 2. Keep ONLY the very next "Upcoming" batch
+      if (firstUpcoming && batch.id === firstUpcoming.id) return true;
+      // 3. Hide all other batches (past completed and subsequent upcoming)
+      return false;
+    });
+  }, [batches]);
+
   const getStatusPill = (status: QuickBatchAttendance["timelineStatus"]) => {
     switch (status) {
       case "ongoing":
@@ -68,14 +87,16 @@ export default function TodayScheduleTimeline({
       </div>
 
       {/* Vertical Timeline Container */}
-      {!batches || batches.length === 0 ? (
+      {!displayedBatches || displayedBatches.length === 0 ? (
         <div className="py-8 text-center text-xs text-slate-400">
-          No scheduled batches for today.
+          {batches && batches.length > 0
+            ? "All batches for today have been completed."
+            : "No scheduled batches for today."}
         </div>
       ) : (
         <div className="relative pl-6 space-y-4">
-          {batches.map((batch, index) => {
-            const isLast = index === batches.length - 1;
+          {displayedBatches.map((batch, index) => {
+            const isLast = index === displayedBatches.length - 1;
 
             return (
               <div key={batch.id} className="relative group">

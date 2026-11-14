@@ -116,7 +116,6 @@ export default function CreateTestModal({
       const res = await apiClient<TestRecord>("/tests", {
         method: "POST",
         body: {
-          centerId: getCurrentCenterId(),
           title: cleanTitle,
           batch: cleanBatch,
           date: date || new Date().toISOString(),

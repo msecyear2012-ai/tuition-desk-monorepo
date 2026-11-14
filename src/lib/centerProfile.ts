@@ -1,15 +1,33 @@
-import { getCurrentCenterId, clearApiCache } from "./apiClient";
+import { getCurrentCenterId, clearApiCache } from "./apiClient.ts";
 
 export interface CenterInfo {
   name: string;
   ownerName?: string;
   tagline?: string;
   centerId?: string;
+  role?: "owner" | "teacher";
+  teacherName?: string;
+  teacherId?: string;
 }
 
 let cachedCenter: CenterInfo | null = null;
 let centerPromise: Promise<CenterInfo | null> | null = null;
 let cacheEpoch = 0;
+
+/**
+ * Returns the synchronously cached center if available and matching activeCenterId.
+ */
+export function getCachedCenter(): CenterInfo | null {
+  const activeCenterId = getCurrentCenterId();
+  if (
+    cachedCenter &&
+    activeCenterId &&
+    cachedCenter.centerId === activeCenterId
+  ) {
+    return cachedCenter;
+  }
+  return null;
+}
 
 /**
  * Fetches authenticated tuition center profile with:
@@ -56,6 +74,9 @@ export async function getAuthenticatedCenter(): Promise<CenterInfo | null> {
           ownerName: data.center.ownerName || "Owner",
           tagline: data.center.tagline || "Classes 8th - 12th • CBSE & State",
           centerId: sessionCenterId || activeCenterId || "",
+          ...(data.role ? { role: data.role } : {}),
+          ...(data.teacher?.name ? { teacherName: data.teacher.name } : {}),
+          ...(data.teacher?.id ? { teacherId: data.teacher.id } : {}),
         };
 
         // If client storage has an activeCenterId that conflicts with the backend session, do not cache

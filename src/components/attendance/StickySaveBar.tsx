@@ -1,4 +1,4 @@
-import { Send, CheckCircle2 } from "lucide-react";
+import { Send, CheckCircle2, Loader2 } from "lucide-react";
 
 interface StickySaveBarProps {
   presentCount: number;
@@ -6,6 +6,7 @@ interface StickySaveBarProps {
   unmarkedCount: number;
   onSave: () => void;
   isSaved: boolean;
+  saving?: boolean;
 }
 
 export default function StickySaveBar({
@@ -14,6 +15,7 @@ export default function StickySaveBar({
   unmarkedCount,
   onSave,
   isSaved,
+  saving = false,
 }: StickySaveBarProps) {
   return (
     <div
@@ -23,17 +25,24 @@ export default function StickySaveBar({
       <button
         type="button"
         onClick={onSave}
-        disabled={isSaved}
+        disabled={isSaved || saving}
         className={`tap-bounce w-full h-12 rounded-2xl font-bold text-[14px] flex items-center justify-center gap-2 transition-all shadow-md ${
           isSaved
             ? "bg-emerald-600 text-white shadow-emerald-600/30 cursor-default"
+            : saving
+            ? "bg-blue-400 text-white cursor-wait opacity-80"
             : "bg-[var(--primary-color)] hover:bg-[var(--primary-dark)] active:scale-[0.98] text-white shadow-blue-600/25"
         }`}
       >
-        {isSaved ? (
+        {saving ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin stroke-[2.5]" />
+            <span>Saving Attendance...</span>
+          </>
+        ) : isSaved ? (
           <>
             <CheckCircle2 className="h-5 w-5 stroke-[2.4]" />
-            <span>Attendance Saved &amp; Parents Notified!</span>
+            <span>Attendance Saved</span>
           </>
         ) : (
           <>

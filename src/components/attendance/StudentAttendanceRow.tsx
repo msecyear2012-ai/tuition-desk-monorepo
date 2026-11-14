@@ -57,6 +57,14 @@ function StudentAttendanceRow({
             >
               {student.attendanceRate}% avg
             </span>
+            {student.assignedTeacherName && (
+              <>
+                <span>•</span>
+                <span className="text-slate-500 font-medium truncate">
+                  {student.assignedTeacherName}
+                </span>
+              </>
+            )}
           </div>
         </div>
       </div>

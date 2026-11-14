@@ -6,5 +6,12 @@ export * from "./Batch";
 export * from "./Test";
 export * from "./FeeReminderLog";
 export * from "./FeeCreationLock";
-
-
+export * from "./Teacher";
+export * from "./ImportBatchLock";
+export * from "./ParentAccess";
+export * from "./ParentAccessLock";
+export * from "./MessageCampaign";
+export * from "./AdmissionWelcomeJob";
+export * from "./CashHandover";
+export * from "./StudentBatchRequest";
+export * from "./StaffNotification";

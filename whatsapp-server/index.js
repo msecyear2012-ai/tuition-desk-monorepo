@@ -184,6 +184,8 @@ function createApp(activeProvider = provider) {
         qr: statusObj.qr,
         qrGeneratedAt: statusObj.qrGeneratedAt || null,
         ready: statusObj.ready,
+        reconnectAttempts: statusObj.reconnectAttempts || 0,
+        inMemoryQueuePending: statusObj.inMemoryQueuePending || 0,
         ...(statusObj.hasClientProcess !== undefined ? { hasClientProcess: statusObj.hasClientProcess } : {}),
         service: 'WhatsApp Multi-Tenant Automation Microservice',
         ...(statusObj.engine ? { engine: statusObj.engine } : {}),

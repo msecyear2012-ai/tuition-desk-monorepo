@@ -30,8 +30,13 @@ export default function RecentHomeworkList({ items }: RecentHomeworkListProps) {
         </span>
       </div>
 
-      <div className="divide-y divide-slate-100">
-        {items.map((item) => {
+      {items.length === 0 ? (
+        <div className="py-6 text-center text-xs text-slate-400">
+          No homework or teacher notes assigned yet.
+        </div>
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {items.map((item) => {
           const isNote = item.status === "note";
           const isSubmitted = item.status === "submitted";
 
@@ -89,7 +94,8 @@ export default function RecentHomeworkList({ items }: RecentHomeworkListProps) {
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 
 interface GlobalReminderButtonProps {
@@ -32,7 +31,7 @@ export default function GlobalReminderButton({
       type="button"
       onClick={onSendAll}
       disabled={isSent || isSending}
-      className={`tap-bounce w-full rounded-2xl p-4 font-bold text-white shadow-md transition-all flex items-center justify-between group ${
+      className={`tap-bounce w-full rounded-2xl p-3.5 sm:p-4 font-bold text-white shadow-md transition-all flex items-center justify-between gap-2.5 group ${
         isSent
           ? "bg-emerald-700 shadow-emerald-700/20 cursor-default"
           : isSending
@@ -40,25 +39,25 @@ export default function GlobalReminderButton({
           : "bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] shadow-emerald-600/30"
       }`}
     >
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur-xs">
+      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+        <div className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur-xs flex-shrink-0">
           {isSending ? (
             <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
           ) : isSent ? (
-            <CheckCircle2 className="h-6 w-6 text-white stroke-[2.5]" />
+            <CheckCircle2 className="h-5 w-5 sm:h-6 sm:w-6 text-white stroke-[2.5]" />
           ) : (
-            <WhatsAppIcon className="h-5 w-5 text-white" />
+            <WhatsAppIcon className="h-4 w-4 sm:h-5 sm:w-5 text-white" />
           )}
         </div>
-        <div className="text-left">
-          <div className="text-[14px] font-extrabold tracking-tight">
+        <div className="text-left min-w-0 flex-1">
+          <div className="text-[13px] sm:text-[14px] font-extrabold tracking-tight truncate">
             {isSending
               ? "Sending Reminders..."
               : isSent
               ? "WhatsApp Reminders Dispatched!"
               : "Send WhatsApp Reminder to All"}
           </div>
-          <div className="text-[11px] font-medium text-emerald-100">
+          <div className="text-[10.5px] sm:text-[11px] font-medium text-emerald-100 truncate">
             {isSending
               ? "Connecting to WhatsApp engine and dispatching..."
               : isSent
@@ -68,7 +67,7 @@ export default function GlobalReminderButton({
         </div>
       </div>
 
-      <span className="rounded-full bg-white/20 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-xs">
+      <span className="rounded-full bg-white/20 px-2.5 py-1 text-[10.5px] sm:text-[11px] font-bold text-white backdrop-blur-xs flex-shrink-0">
         {pendingCount} Due
       </span>
     </button>

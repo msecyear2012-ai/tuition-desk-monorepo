@@ -496,4 +496,90 @@ describe('TuitionDesk WhatsApp Session Recovery & Watchdog Regression Suite', ()
 
     await provider.shutdown();
   });
+
+  it('10. Auto-reconnect lifecycle: saved session enters reconnecting on transient drop and does not clear credentials', async () => {
+    let socketCount = 0;
+    const socketInstances = [];
+
+    const makeSocketFn = () => {
+      const ev = new EventEmitter();
+      const ws = new EventEmitter();
+      ws.close = () => {};
+      const s = { ev, ws, end: () => {}, closed: false };
+      socketInstances.push(s);
+      socketCount++;
+      return s;
+    };
+
+    const provider = new BaileysProvider({
+      makeSocketFn,
+      initWatchdogTimeoutMs: 10000,
+      mongooseInstance: { connection: { readyState: 0 } },
+    });
+
+    provider.authStore.useAuthState = async () => ({
+      state: { creds: { registered: true, me: { id: '919876543210:1@s.whatsapp.net' } }, keys: {} },
+      saveCreds: async () => {},
+      clearAuth: async () => {
+        throw new Error('clearAuth MUST NOT be called on transient network disconnect!');
+      },
+    });
+
+    // Mark center as having a saved session
+    provider.savedSessionCenters.add('center-saved-autoreconnect');
+
+    await provider.initializeSession('center-saved-autoreconnect');
+    assert.strictEqual(socketCount, 1);
+
+    const firstSocket = socketInstances[0];
+    // Socket opens
+    firstSocket.ev.emit('connection.update', { connection: 'open' });
+
+    let status = await provider.getStatus('center-saved-autoreconnect');
+    assert.strictEqual(status.status, 'connected');
+    assert.strictEqual(status.ready, true);
+    assert.strictEqual(status.hasSavedSession, true);
+
+    // Simulate transient network disconnect (e.g. 428 connectionClosed or socket error)
+    firstSocket.ev.emit('connection.update', {
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 428 }, message: 'Connection Closed' } },
+    });
+
+    const sessionObj = provider.sessions.get('center-saved-autoreconnect');
+    assert.strictEqual(sessionObj.status, 'reconnecting', 'Saved session MUST be marked reconnecting, not disconnected');
+    assert.strictEqual(sessionObj.reconnectAttempts, 1);
+    assert.strictEqual(sessionObj.isReady, false);
+    assert.strictEqual(provider.savedSessionCenters.has('center-saved-autoreconnect'), true, 'Saved session must remain intact');
+
+    // getStatus should report reconnecting status and reconnectAttempts
+    status = await provider.getStatus('center-saved-autoreconnect');
+    assert.strictEqual(status.status, 'reconnecting');
+    assert.strictEqual(status.reconnectAttempts, 1);
+    assert.strictEqual(status.ready, false);
+
+    await provider.shutdown();
+  });
+
+  it('11. getStatus accurately reports inMemoryQueuePending and reconnectAttempts', async () => {
+    const provider = new BaileysProvider({
+      makeSocketFn: () => ({ ev: new EventEmitter(), ws: new EventEmitter(), end: () => {} }),
+      mongooseInstance: { connection: { readyState: 0 } },
+    });
+
+    provider.authStore.useAuthState = async () => ({
+      state: { creds: { registered: false }, keys: {} },
+      saveCreds: async () => {},
+      clearAuth: async () => {},
+    });
+
+    await provider.initializeSession('center-metrics-check');
+    const status = await provider.getStatus('center-metrics-check');
+
+    assert.strictEqual(typeof status.reconnectAttempts, 'number');
+    assert.strictEqual(typeof status.inMemoryQueuePending, 'number');
+    assert.strictEqual(status.inMemoryQueuePending, 0);
+
+    await provider.shutdown();
+  });
 });

@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server.js";
 
 // Default allowed origins (in production, localhost is strictly excluded unless explicitly set via ALLOWED_ORIGINS)
 const PRODUCTION_ALLOWED_ORIGINS = [
@@ -37,6 +38,71 @@ export function isOriginAllowed(origin: string | null): boolean {
   if (!origin) return false;
   const allowed = getAllowedOrigins();
   return allowed.has(normalizeOrigin(origin));
+}
+
+/**
+ * Validates request origin against allowed origins for sensitive mutations and session endpoints.
+ * Explicitly rejects unapproved origins before body parsing or database queries.
+ * Behavior for missing Origin:
+ * - If Sec-Fetch-Site indicates 'cross-site' without an approved Origin, request is rejected.
+ * - If Referer is present, its origin is validated against allowed origins.
+ * - Same-origin, direct server-to-server, or test calls without cross-origin indicators are permitted.
+ */
+export function validateRequestOrigin(request: NextRequest | Request): {
+  allowed: boolean;
+  origin: string | null;
+  reason?: string;
+} {
+  const origin = request.headers.get("origin");
+  const secFetchSite = request.headers.get("sec-fetch-site");
+
+  // 1. If Sec-Fetch-Site indicates cross-site, require valid approved Origin
+  if (secFetchSite === "cross-site") {
+    if (!origin || !isOriginAllowed(origin)) {
+      return {
+        allowed: false,
+        origin,
+        reason: "Cross-site request rejected by Sec-Fetch-Site policy",
+      };
+    }
+  }
+
+  // 2. If Origin header is present, strictly check against allowed origins
+  if (origin) {
+    if (!isOriginAllowed(origin)) {
+      return {
+        allowed: false,
+        origin,
+        reason: `Origin '${origin}' is not authorized`,
+      };
+    }
+    return { allowed: true, origin };
+  }
+
+  // 3. If Origin is absent, check Referer if provided by client
+  const referer = request.headers.get("referer");
+  if (referer) {
+    try {
+      const refererUrl = new URL(referer);
+      const refererOrigin = `${refererUrl.protocol}//${refererUrl.host}`;
+      if (!isOriginAllowed(refererOrigin)) {
+        return {
+          allowed: false,
+          origin: refererOrigin,
+          reason: `Referer origin '${refererOrigin}' is not authorized`,
+        };
+      }
+    } catch {
+      return {
+        allowed: false,
+        origin: null,
+        reason: "Malformed Referer header",
+      };
+    }
+  }
+
+  // 4. Same-origin or local non-browser calls with no cross-origin indicators
+  return { allowed: true, origin: null };
 }
 
 /**

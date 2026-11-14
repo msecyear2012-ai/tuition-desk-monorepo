@@ -14,7 +14,11 @@ export default function NavigationWrapper({
 }: NavigationWrapperProps) {
   const pathname = usePathname();
   const isAuthOrParentPage =
-    pathname === "/login" || pathname.startsWith("/p/");
+    pathname === "/login" ||
+    pathname.startsWith("/p/") ||
+    pathname === "/portal" ||
+    pathname.startsWith("/portal/") ||
+    pathname === "/parent";
 
   // Auth & Parent Magic Link pages: Render standalone minimal screen without navigation
   if (isAuthOrParentPage) {
@@ -24,7 +28,7 @@ export default function NavigationWrapper({
   // Full App Layout: Persistent TopHeader + main content + BottomNav
   return (
     <HeaderProvider>
-      <div className="w-full max-w-md sm:max-w-2xl md:max-w-4xl lg:max-w-5xl min-h-screen bg-[var(--bg-app)] flex flex-col relative shadow-xl border-x border-slate-200/60 pb-20">
+      <div className="w-full max-w-md sm:max-w-2xl md:max-w-4xl lg:max-w-5xl min-h-screen bg-[var(--bg-app)] flex flex-col relative shadow-xl border-x border-slate-200/60 pb-20 sm:pb-24">
         <TopHeader />
         <main key={pathname} className="flex-1 overflow-y-auto route-transition">
           {children}

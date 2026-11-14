@@ -48,7 +48,7 @@ export default function PendingFeesHeroCard({
           </span>
         </div>
         <p className="mt-1 text-[12px] text-blue-100 font-medium">
-          Due across Class 10 & 12 batches this month
+          Outstanding fee balance across active batches this month
         </p>
       </div>
 
@@ -76,7 +76,7 @@ export default function PendingFeesHeroCard({
       {/* Quick link to Fees screen */}
       <div className="relative z-10 mt-3 flex items-center justify-between text-xs">
         <span className="text-blue-100/90 text-[11px]">
-          Target: 100% recovery by 28th
+          Target: 100% collection recovery this cycle
         </span>
         <Link
           href="/fees"

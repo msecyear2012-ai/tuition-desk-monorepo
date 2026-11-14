@@ -88,6 +88,14 @@ export default function LoginPage() {
       if (data.token) {
         localStorage.setItem("auth_token", data.token);
       }
+      if (data.role) {
+        localStorage.setItem("user_role", data.role);
+      }
+      if (data.teacher?.name) {
+        localStorage.setItem("teacher_name", data.teacher.name);
+      } else {
+        localStorage.removeItem("teacher_name");
+      }
 
       clearCachedCenter();
       router.push("/");
@@ -157,6 +165,14 @@ export default function LoginPage() {
       }
       if (data.token) {
         localStorage.setItem("auth_token", data.token);
+      }
+      if (data.role) {
+        localStorage.setItem("user_role", data.role);
+      }
+      if (data.teacher?.name) {
+        localStorage.setItem("teacher_name", data.teacher.name);
+      } else {
+        localStorage.removeItem("teacher_name");
       }
 
       clearCachedCenter();

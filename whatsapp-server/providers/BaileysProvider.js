@@ -12,6 +12,7 @@ const {
   ServiceUnavailableError,
   ProviderError,
 } = require('./ProviderErrors');
+const WhatsAppMessageQueue = require('./WhatsAppMessageQueue');
 
 // Module-level cache for dynamic @whiskeysockets/baileys import
 let cachedBaileysModule = null;
@@ -73,6 +74,7 @@ class BaileysProvider extends IWhatsAppProvider {
     this.maxConsecutiveRestarts = options.maxConsecutiveRestarts || 3;
     this.initWatchdogTimeoutMs = options.initWatchdogTimeoutMs || 25000;
     this.coldSessionTimeoutMs = options.coldSessionTimeoutMs || Number(process.env.WHATSAPP_COLD_REHYDRATION_TIMEOUT_MS) || 15000;
+    this.sendTimeoutMs = options.sendTimeoutMs || Number(process.env.WHATSAPP_SEND_TIMEOUT_MS) || 20000;
 
     // Silent pino logger to prevent logging raw frames, tokens, or QR strings
     this.logger = options.pinoLogger || pino({ level: 'silent' });
@@ -91,6 +93,7 @@ class BaileysProvider extends IWhatsAppProvider {
     this._bootReconnected = false;
     this._bootTimers = new Set();
     this._isShuttingDown = false;
+    this.messageQueue = new WhatsAppMessageQueue({ minDelayMs: 3000, maxDelayMs: 7000 });
   }
 
   get name() {
@@ -224,10 +227,34 @@ class BaileysProvider extends IWhatsAppProvider {
       } catch {}
 
       try {
+        if (sock.ws) {
+          if (typeof sock.ws.removeAllListeners === 'function') {
+            sock.ws.removeAllListeners();
+            // Attach safety no-op error handler to absorb close/abort errors without uncaughtException
+            if (typeof sock.ws.on === 'function') {
+              sock.ws.on('error', () => {});
+            }
+          }
+        }
+      } catch {}
+
+      let endSucceeded = false;
+      try {
         if (typeof sock.end === 'function') {
           sock.end(undefined);
-        } else if (sock.ws && typeof sock.ws.close === 'function') {
-          sock.ws.close();
+          endSucceeded = true;
+        }
+      } catch (endErr) {
+        // Fall back to direct socket close if end throws
+      }
+
+      try {
+        if (!endSucceeded && sock.ws) {
+          if (typeof sock.ws.terminate === 'function') {
+            sock.ws.terminate();
+          } else if (typeof sock.ws.close === 'function') {
+            sock.ws.close();
+          }
         }
       } catch {}
 
@@ -269,14 +296,27 @@ class BaileysProvider extends IWhatsAppProvider {
       };
     }
 
+    // Determine effective status:
+    // If the session object is marked 'initializing', but has no client socket (sock is null)
+    // and was updated > 15s ago, it is stalled and not actively initializing.
+    let effectiveStatus = session.status;
+    if (session.status === 'initializing' && !session.sock) {
+      const elapsed = Date.now() - new Date(session.updatedAt).getTime();
+      if (elapsed > 15000) {
+        effectiveStatus = hasSavedSession ? 'reconnecting' : 'disconnected';
+      }
+    }
+
     return {
       centerId: cleanCenterId,
-      status: session.status,
+      status: effectiveStatus,
       hasSavedSession,
       qr: session.qr,
       qrGeneratedAt: session.qrGeneratedAt || null,
       ready: session.isReady,
       hasClientProcess: Boolean(session.sock),
+      reconnectAttempts: session.reconnectAttempts || 0,
+      inMemoryQueuePending: this.messageQueue?.getPendingCount() || 0,
       error: session.error || null,
       updatedAt: session.updatedAt,
       engine: this.name,
@@ -378,48 +418,131 @@ class BaileysProvider extends IWhatsAppProvider {
     sessionObj.error = null;
     sessionObj.updatedAt = new Date().toISOString();
 
-    const baileys = await getBaileys(this.customBaileys);
-    const { DisconnectReason } = baileys;
-    const makeSocket = this.makeSocketFn || baileys.makeWASocket || baileys.default;
-    const makeCacheableSignalKeyStore =
-      typeof baileys.makeCacheableSignalKeyStore === 'function'
-        ? baileys.makeCacheableSignalKeyStore
-        : (keys) => keys;
+    let sock;
+    let authState;
+    let DisconnectReason;
+    try {
+      const baileys = await getBaileys(this.customBaileys);
+      DisconnectReason = baileys?.DisconnectReason;
+      const makeSocket = this.makeSocketFn || baileys.makeWASocket || baileys.default;
+      const makeCacheableSignalKeyStore =
+        typeof baileys.makeCacheableSignalKeyStore === 'function'
+          ? baileys.makeCacheableSignalKeyStore
+          : (keys) => keys;
 
-    if (typeof makeSocket !== 'function') {
-      throw new Error('Baileys makeWASocket factory not available.');
+      if (typeof makeSocket !== 'function') {
+        throw new Error('Baileys makeWASocket factory not available.');
+      }
+
+      // Load or initialize MongoDB auth state for this center
+      authState = await this.authStore.useAuthState(cleanCenterId);
+      sessionObj.authState = authState;
+
+      sock = makeSocket({
+        auth: {
+          creds: authState.state.creds,
+          keys: makeCacheableSignalKeyStore(authState.state.keys, this.logger),
+        },
+        logger: this.logger,
+        printQRInTerminal: false,
+      });
+
+      sessionObj.sock = sock;
+    } catch (spawnErr) {
+      await this.destroySocketSafely(sessionObj);
+      sessionObj.sock = null;
+      sessionObj.isReady = false;
+      sessionObj.error = spawnErr.message;
+      sessionObj.updatedAt = new Date().toISOString();
+
+      let hasSaved = this.savedSessionCenters.has(cleanCenterId);
+      if (!hasSaved) {
+        try {
+          hasSaved = await this.authStore.sessionExists(cleanCenterId);
+          if (hasSaved) this.savedSessionCenters.add(cleanCenterId);
+        } catch {}
+      }
+
+      if (hasSaved) {
+        sessionObj.status = 'reconnecting';
+        sessionObj.reconnectAttempts = (sessionObj.reconnectAttempts || 0) + 1;
+        const baseDelay = Math.min(1000 * Math.pow(1.5, Math.min(sessionObj.reconnectAttempts, 8)), 30000);
+        const jitter = Math.floor(Math.random() * 1000);
+        const backoffMs = Math.min(baseDelay + jitter, 30000);
+
+        if (sessionObj.reconnectTimer) {
+          clearTimeout(sessionObj.reconnectTimer);
+          sessionObj.reconnectTimer = null;
+        }
+
+        sessionObj.reconnectTimer = setTimeout(() => {
+          if (sessionObj.generation === currentGen) {
+            this._spawnSocket(cleanCenterId).catch((retryErr) => {
+              console.warn(`[BaileysProvider] [Center: ${cleanCenterId}] Retry auto-reconnect notice:`, retryErr.message);
+            });
+          }
+        }, backoffMs);
+        if (sessionObj.reconnectTimer && typeof sessionObj.reconnectTimer.unref === 'function') {
+          sessionObj.reconnectTimer.unref();
+        }
+      } else {
+        sessionObj.status = 'disconnected';
+      }
+
+      throw spawnErr;
     }
 
-    // Load or initialize MongoDB auth state for this center
-    const authState = await this.authStore.useAuthState(cleanCenterId);
-    sessionObj.authState = authState;
-
-    const sock = makeSocket({
-      auth: {
-        creds: authState.state.creds,
-        keys: makeCacheableSignalKeyStore(authState.state.keys, this.logger),
-      },
-      logger: this.logger,
-      printQRInTerminal: false,
-    });
-
-    sessionObj.sock = sock;
+    // Prevent MaxListenersExceededWarning on event emitters
+    if (sock.ev && typeof sock.ev.setMaxListeners === 'function') {
+      sock.ev.setMaxListeners(0);
+    }
+    if (sock.ws && typeof sock.ws.setMaxListeners === 'function') {
+      sock.ws.setMaxListeners(0);
+    }
 
     // Set an initialization watchdog timer to recover from stalled socket handshakes
-    const watchdogMs = this.initWatchdogTimeoutMs || 25000;
+    const watchdogMs = this.initWatchdogTimeoutMs || 30000;
     sessionObj.initWatchdogTimer = setTimeout(async () => {
-      if (sessionObj.generation === currentGen && sessionObj.status === 'initializing' && !sessionObj.isReady) {
-        console.warn(`[BaileysProvider] [Center: ${cleanCenterId}] Initialization handshake timed out after ${watchdogMs}ms. Cleaning up stalled socket.`);
+      if (
+        sessionObj.generation === currentGen &&
+        (sessionObj.status === 'initializing' || sessionObj.status === 'reconnecting') &&
+        !sessionObj.isReady
+      ) {
+        console.warn(
+          `[BaileysProvider] [Center: ${cleanCenterId}] Initialization handshake timed out after ${watchdogMs}ms. Cleaning up stalled socket.`
+        );
         await this.destroySocketSafely(sessionObj);
-        sessionObj.status = 'disconnected';
         sessionObj.isReady = false;
-        sessionObj.error = 'WhatsApp initialization handshake timed out. Please click Reconnect to try again.';
         sessionObj.updatedAt = new Date().toISOString();
+
+        if (this.savedSessionCenters.has(cleanCenterId)) {
+          sessionObj.status = 'reconnecting';
+          sessionObj.error = 'Handshake timed out, retrying connection...';
+          sessionObj.reconnectAttempts = (sessionObj.reconnectAttempts || 0) + 1;
+          const backoffMs = Math.min(2000 * Math.pow(1.5, Math.min(sessionObj.reconnectAttempts, 8)), 30000);
+          sessionObj.reconnectTimer = setTimeout(() => {
+            if (sessionObj.generation === currentGen) {
+              this._spawnSocket(cleanCenterId).catch(() => {});
+            }
+          }, backoffMs);
+          if (sessionObj.reconnectTimer && typeof sessionObj.reconnectTimer.unref === 'function') {
+            sessionObj.reconnectTimer.unref();
+          }
+        } else {
+          sessionObj.status = 'disconnected';
+          sessionObj.error = 'WhatsApp initialization handshake timed out. Please click Reconnect to try again.';
+        }
       }
     }, watchdogMs);
     if (sessionObj.initWatchdogTimer && typeof sessionObj.initWatchdogTimer.unref === 'function') {
       sessionObj.initWatchdogTimer.unref();
     }
+
+    // Ensure event listeners are attached strictly once per socket instance
+    if (sock._tdListenersAttached) {
+      return sessionObj;
+    }
+    sock._tdListenersAttached = true;
 
     if (sock.ws && typeof sock.ws.on === 'function') {
       sock.ws.on('error', (wsErr) => {
@@ -473,8 +596,11 @@ class BaileysProvider extends IWhatsAppProvider {
     }
 
     // 1. Credentials update handler
-    sock.ev.on('creds.update', async () => {
+    sock.ev.on('creds.update', async (update) => {
       if (sessionObj.generation !== currentGen) return;
+      if (update && sessionObj.authState?.state?.creds) {
+        Object.assign(sessionObj.authState.state.creds, update);
+      }
       try {
         const savePromise = authState.saveCreds();
         sessionObj.lastCredsSavePromise = savePromise;
@@ -486,7 +612,7 @@ class BaileysProvider extends IWhatsAppProvider {
     });
 
     // 2. Connection update handler
-    sock.ev.on('connection.update', async (update) => {
+    sock.ev.on('connection.update', (update) => {
       if (sessionObj.generation !== currentGen) return;
 
       const { connection, lastDisconnect, qr } = update;
@@ -509,6 +635,10 @@ class BaileysProvider extends IWhatsAppProvider {
         if (sessionObj.initWatchdogTimer) {
           clearTimeout(sessionObj.initWatchdogTimer);
           sessionObj.initWatchdogTimer = null;
+        }
+        if (sessionObj.reconnectTimer) {
+          clearTimeout(sessionObj.reconnectTimer);
+          sessionObj.reconnectTimer = null;
         }
         sessionObj.status = 'connected';
         sessionObj.isReady = true;
@@ -545,22 +675,23 @@ class BaileysProvider extends IWhatsAppProvider {
         const isQrTimeout =
           statusCode === DisconnectReason?.timedOut || statusCode === 408;
 
+        const hasSavedSession = this.savedSessionCenters.has(cleanCenterId);
+
         if (isLoggedOut) {
           sessionObj.status = 'disconnected';
           sessionObj.error = 'WhatsApp session logged out from device';
           sessionObj.restartCount = 0;
-          await this.destroySocketSafely(sessionObj);
-          try {
-            await authState.clearAuth();
-            this.savedSessionCenters.delete(cleanCenterId);
-          } catch {}
-        } else if (isQrTimeout && !this.savedSessionCenters.has(cleanCenterId)) {
+          sessionObj.reconnectAttempts = 0;
+          this.destroySocketSafely(sessionObj).catch(() => {});
+          authState.clearAuth().catch(() => {});
+          this.savedSessionCenters.delete(cleanCenterId);
+        } else if (isQrTimeout && !hasSavedSession) {
           // Unscanned QR timed out: clean up immediately and avoid repeated reconnection cycles
           sessionObj.status = 'disconnected';
           sessionObj.error = 'QR code expired without being scanned. Please click Connect to generate a new QR code.';
           sessionObj.reconnectAttempts = 0;
           sessionObj.restartCount = 0;
-          await this.destroySocketSafely(sessionObj);
+          this.destroySocketSafely(sessionObj).catch(() => {});
         } else if (isRestartRequired) {
           sessionObj.restartCount = (sessionObj.restartCount || 0) + 1;
 
@@ -590,16 +721,26 @@ class BaileysProvider extends IWhatsAppProvider {
           } else {
             sessionObj.status = 'disconnected';
             sessionObj.error = 'Maximum consecutive restarts exceeded';
-            await this.destroySocketSafely(sessionObj);
+            this.destroySocketSafely(sessionObj).catch(() => {});
           }
         } else {
-          sessionObj.status = 'disconnected';
+          // Transient network disconnect (connectionClosed, connectionLost, 503, socket reset, etc.)
           sessionObj.error = error?.message || 'Connection closed';
 
-          // Auto-reconnect with exponential backoff if not logged out
-          if (sessionObj.reconnectAttempts < this.maxReconnectAttempts) {
-            sessionObj.reconnectAttempts++;
-            const backoffMs = Math.min(1000 * Math.pow(2, sessionObj.reconnectAttempts - 1), 10000);
+          if (hasSavedSession) {
+            // A registered, saved session should NEVER permanently abandon reconnection on transient network drops
+            sessionObj.status = 'reconnecting';
+            sessionObj.reconnectAttempts = (sessionObj.reconnectAttempts || 0) + 1;
+
+            // Controlled progressive backoff: 1s, 2s, 5s, 10s, 20s, 30s, capped at 60s
+            const attempt = sessionObj.reconnectAttempts;
+            let backoffMs = 1000;
+            if (attempt === 2) backoffMs = 2000;
+            else if (attempt === 3) backoffMs = 5000;
+            else if (attempt === 4) backoffMs = 10000;
+            else if (attempt === 5) backoffMs = 20000;
+            else if (attempt === 6) backoffMs = 30000;
+            else if (attempt > 6) backoffMs = 60000;
 
             if (sessionObj.reconnectTimer) {
               clearTimeout(sessionObj.reconnectTimer);
@@ -608,11 +749,34 @@ class BaileysProvider extends IWhatsAppProvider {
 
             sessionObj.reconnectTimer = setTimeout(() => {
               if (sessionObj.generation === currentGen) {
-                this._spawnSocket(cleanCenterId).catch(() => {});
+                this._spawnSocket(cleanCenterId).catch((reconnectErr) => {
+                  console.warn(`[BaileysProvider] [Center: ${cleanCenterId}] Auto-reconnect notice:`, reconnectErr.message);
+                });
               }
             }, backoffMs);
+            if (sessionObj.reconnectTimer && typeof sessionObj.reconnectTimer.unref === 'function') {
+              sessionObj.reconnectTimer.unref();
+            }
           } else {
-            await this.destroySocketSafely(sessionObj);
+            // Un-paired socket: retry limited times before marking disconnected
+            sessionObj.status = 'disconnected';
+            if (sessionObj.reconnectAttempts < this.maxReconnectAttempts) {
+              sessionObj.reconnectAttempts++;
+              const backoffMs = Math.min(1000 * Math.pow(2, sessionObj.reconnectAttempts - 1), 10000);
+
+              if (sessionObj.reconnectTimer) {
+                clearTimeout(sessionObj.reconnectTimer);
+                sessionObj.reconnectTimer = null;
+              }
+
+              sessionObj.reconnectTimer = setTimeout(() => {
+                if (sessionObj.generation === currentGen) {
+                  this._spawnSocket(cleanCenterId).catch(() => {});
+                }
+              }, backoffMs);
+            } else {
+              this.destroySocketSafely(sessionObj).catch(() => {});
+            }
           }
         }
       }
@@ -633,11 +797,16 @@ class BaileysProvider extends IWhatsAppProvider {
 
     if (this.sessions.has(cleanCenterId)) {
       const existing = this.sessions.get(cleanCenterId);
-      if (
+      const isStalled =
+        (existing.status === 'initializing' || existing.status === 'reconnecting') &&
+        (!existing.sock || (Date.now() - new Date(existing.updatedAt).getTime() > 15000 && !existing.isReady));
+
+      if (!isStalled && (
         existing.status === 'connected' ||
         existing.status === 'qr_ready' ||
-        existing.status === 'initializing'
-      ) {
+        existing.status === 'initializing' ||
+        existing.status === 'reconnecting'
+      )) {
         return {
           centerId: cleanCenterId,
           status: existing.status,
@@ -646,6 +815,12 @@ class BaileysProvider extends IWhatsAppProvider {
           ready: existing.isReady,
           hasSavedSession: this.savedSessionCenters.has(cleanCenterId),
         };
+      }
+
+      if (isStalled) {
+        console.warn(`[BaileysProvider] [Center: ${cleanCenterId}] initializeSession overriding stalled session (status: ${existing.status}, sock: ${Boolean(existing.sock)}).`);
+        await this.destroySocketSafely(existing);
+        this.sessions.delete(cleanCenterId);
       }
     }
 
@@ -688,8 +863,12 @@ class BaileysProvider extends IWhatsAppProvider {
 
     await this.ensureMongoConnected();
 
-    if (this.activeLocks.has(cleanCenterId) || this.inFlightInitPromises.has(cleanCenterId)) {
-      throw new ConflictError();
+    if (this.inFlightInitPromises.has(cleanCenterId)) {
+      return this.inFlightInitPromises.get(cleanCenterId);
+    }
+
+    if (this.activeLocks.has(cleanCenterId)) {
+      throw new ConflictError('A reconnection is already in progress for this center. Please wait a moment.');
     }
 
     const existing = this.sessions.get(cleanCenterId);
@@ -702,7 +881,7 @@ class BaileysProvider extends IWhatsAppProvider {
 
     if (existing && existing.status === 'initializing' && !isExplicitNewPairing) {
       const elapsed = Date.now() - new Date(existing.updatedAt).getTime();
-      if (elapsed < 10000) {
+      if (elapsed < 10000 && existing.sock) {
         throw new ConflictError('WhatsApp client is currently initializing for this center. Please wait a moment.');
       }
       console.warn(`[BaileysProvider] [Center: ${cleanCenterId}] Reconnect overriding stalled initializing session (elapsed: ${elapsed}ms).`);
@@ -710,37 +889,43 @@ class BaileysProvider extends IWhatsAppProvider {
 
     this.activeLocks.add(cleanCenterId);
 
-    try {
-      if (existing) {
-        await this.destroySocketSafely(existing);
-        this.sessions.delete(cleanCenterId);
-      }
-
-      if (isExplicitNewPairing) {
-        try {
-          await this.authStore.clearAuth(cleanCenterId);
-          this.savedSessionCenters.delete(cleanCenterId);
-        } catch (delErr) {
-          throw new ProviderError(
-            `Failed to clear previous saved session during new pairing: ${delErr.message}`,
-            500
-          );
+    const reconnectPromise = (async () => {
+      try {
+        if (existing) {
+          await this.destroySocketSafely(existing);
+          this.sessions.delete(cleanCenterId);
         }
+
+        if (isExplicitNewPairing) {
+          try {
+            await this.authStore.clearAuth(cleanCenterId);
+            this.savedSessionCenters.delete(cleanCenterId);
+          } catch (delErr) {
+            throw new ProviderError(
+              `Failed to clear previous saved session during new pairing: ${delErr.message}`,
+              500
+            );
+          }
+        }
+
+        const newSession = await this._spawnSocket(cleanCenterId);
+
+        return {
+          centerId: cleanCenterId,
+          status: newSession.status,
+          qr: newSession.qr,
+          qrGeneratedAt: newSession.qrGeneratedAt || null,
+          ready: newSession.isReady,
+          hasSavedSession: this.savedSessionCenters.has(cleanCenterId),
+        };
+      } finally {
+        this.activeLocks.delete(cleanCenterId);
+        this.inFlightInitPromises.delete(cleanCenterId);
       }
+    })();
 
-      const newSession = await this._spawnSocket(cleanCenterId);
-
-      return {
-        centerId: cleanCenterId,
-        status: newSession.status,
-        qr: newSession.qr,
-        qrGeneratedAt: newSession.qrGeneratedAt || null,
-        ready: newSession.isReady,
-        hasSavedSession: this.savedSessionCenters.has(cleanCenterId),
-      };
-    } finally {
-      this.activeLocks.delete(cleanCenterId);
-    }
+    this.inFlightInitPromises.set(cleanCenterId, reconnectPromise);
+    return reconnectPromise;
   }
 
   /**
@@ -805,37 +990,146 @@ class BaileysProvider extends IWhatsAppProvider {
       throw new ValidationError('Invalid phone number format.');
     }
 
-    // Verify registration on WhatsApp if onWhatsApp is supported
-    if (typeof session.sock.onWhatsApp === 'function') {
-      try {
-        const results = await session.sock.onWhatsApp(formattedJid);
-        // Specifically check if WhatsApp explicitly confirmed the number does NOT exist
-        if (Array.isArray(results) && results.length > 0 && results[0]?.exists === false) {
-          throw new NotRegisteredError();
-        }
-      } catch (err) {
-        if (err instanceof NotRegisteredError) throw err;
-        console.warn(`[BaileysProvider] Registration check notice for ${formattedJid}:`, err.message);
+    // Strict QA Live-Recipient Allowlist Guard (Layer 2 - Microservice boundary)
+    const isQaLiveMode = process.env.QA_LIVE_MODE?.trim().toLowerCase() === 'true';
+    const allowlistRaw = process.env.QA_LIVE_RECIPIENT_ALLOWLIST?.trim();
+
+    // If QA live mode is active, missing or empty allowlist must fail closed
+    if (isQaLiveMode && (!allowlistRaw || allowlistRaw.length === 0)) {
+      console.warn(
+        `[BaileysProvider] QA_LIVE_MODE is active but QA_LIVE_RECIPIENT_ALLOWLIST is missing/empty. Failing closed into simulation.`
+      );
+      return {
+        success: true,
+        simulated: true,
+        accepted: false,
+        delivered: false,
+        centerId: targetCenterId,
+        recipient: formattedJid,
+        messageId: `sim_qa_blocked_no_allowlist_${Date.now()}`,
+        status: 'simulated_blocked',
+        timestamp: new Date().toISOString()
+      };
+    }
+
+    if (allowlistRaw) {
+      const cleanedTargetDigits = formattedJid.replace('@s.whatsapp.net', '');
+      const allowedList = allowlistRaw
+        .split(',')
+        .map(p => {
+          let c = p.replace(/\D/g, '').trim();
+          if (c.length === 10) c = '91' + c;
+          else if (c.startsWith('0') && c.length === 11) c = '91' + c.slice(1);
+          return c;
+        })
+        .filter(Boolean);
+
+      if (allowedList.length === 0 || !allowedList.includes(cleanedTargetDigits)) {
+        console.warn(
+          `[BaileysProvider] Recipient ${formattedJid} is not in QA_LIVE_RECIPIENT_ALLOWLIST. Intercepted; live dispatch blocked.`
+        );
+        return {
+          success: true,
+          simulated: true,
+          accepted: false,
+          delivered: false,
+          centerId: targetCenterId,
+          recipient: formattedJid,
+          messageId: `sim_qa_blocked_${Date.now()}`,
+          status: 'simulated_blocked',
+          timestamp: new Date().toISOString()
+        };
       }
     }
 
-    let response;
-    try {
-      response = await session.sock.sendMessage(formattedJid, { text: message });
-    } catch (sendErr) {
-      throw new ProviderError(sendErr instanceof Error ? sendErr.message : 'Failed to send WhatsApp message.', 500);
-    }
+    return this.messageQueue.enqueue(async () => {
+      // Re-verify session and socket readiness at the exact time of execution inside the queue
+      const currentSession = this.sessions.get(targetCenterId);
+      if (!currentSession || !currentSession.sock || !currentSession.isReady) {
+        throw new ServiceUnavailableError(
+          `WhatsApp Client for center '${targetCenterId}' disconnected or not ready. Please scan the QR code in Settings.`
+        );
+      }
 
-    return {
-      success: true,
-      centerId: targetCenterId,
-      messageId: response?.key?.id || response?.id || 'sent',
-      recipient: formattedJid,
-      timestamp: new Date().toISOString(),
-      accepted: true,
-      delivered: false,
-      status: 'accepted',
-    };
+      // Verify registration on WhatsApp if onWhatsApp is supported
+      if (typeof currentSession.sock.onWhatsApp === 'function') {
+        try {
+          let checkTimer = null;
+          const checkPromise = currentSession.sock.onWhatsApp(formattedJid);
+          const timeoutPromise = new Promise((_, reject) => {
+            checkTimer = setTimeout(() => reject(new Error('onWhatsApp check timed out')), 5000);
+            if (typeof checkTimer.unref === 'function') checkTimer.unref();
+          });
+          const results = await Promise.race([checkPromise, timeoutPromise]).finally(() => {
+            if (checkTimer) clearTimeout(checkTimer);
+          });
+          // Specifically check if WhatsApp explicitly confirmed the number does NOT exist
+          if (Array.isArray(results) && results.length > 0 && results[0]?.exists === false) {
+            throw new NotRegisteredError();
+          }
+        } catch (err) {
+          if (err instanceof NotRegisteredError) throw err;
+          console.warn(`[BaileysProvider] Registration check notice for ${formattedJid}:`, err?.message || err);
+        }
+      }
+  
+      let response;
+      const sendTimeoutMs = this.sendTimeoutMs || 20000;
+      let sendTimer = null;
+      let timedOut = false;
+
+      try {
+        const sendPromise = currentSession.sock.sendMessage(formattedJid, { text: message });
+        const timeoutPromise = new Promise((_, reject) => {
+          sendTimer = setTimeout(() => {
+            timedOut = true;
+            reject(
+              new ProviderError(
+                `WhatsApp dispatch timed out after ${sendTimeoutMs}ms (socket stream stalled).`,
+                504
+              )
+            );
+          }, sendTimeoutMs);
+          if (typeof sendTimer.unref === 'function') sendTimer.unref();
+        });
+
+        response = await Promise.race([sendPromise, timeoutPromise]);
+      } catch (sendErr) {
+        console.warn(`[BaileysProvider] [Center: ${targetCenterId}] Send error for ${formattedJid}:`, sendErr?.message || sendErr);
+
+        if (timedOut) {
+          console.warn(`[BaileysProvider] [Center: ${targetCenterId}] Stalled socket stream detected. Triggering safe socket cleanup.`);
+          this.destroySocketSafely(currentSession).catch(() => {});
+          currentSession.status = 'disconnected';
+          currentSession.isReady = false;
+        }
+
+        const statusCode =
+          sendErr?.output?.statusCode ||
+          sendErr?.status ||
+          (sendErr instanceof ProviderError ? sendErr.statusCode : 500);
+        throw new ProviderError(
+          sendErr instanceof Error ? sendErr.message : 'Failed to send WhatsApp message.',
+          statusCode
+        );
+      } finally {
+        if (sendTimer) {
+          clearTimeout(sendTimer);
+          sendTimer = null;
+        }
+      }
+  
+      return {
+        success: true,
+        centerId: targetCenterId,
+        messageId: response?.key?.id || response?.id || 'sent',
+        recipient: formattedJid,
+        timestamp: new Date().toISOString(),
+        accepted: true,
+        delivered: false,
+        status: 'accepted',
+      };
+    });
   }
 
   /**
@@ -895,6 +1189,9 @@ class BaileysProvider extends IWhatsAppProvider {
    */
   async shutdown() {
     this._isShuttingDown = true;
+    if (this.messageQueue && typeof this.messageQueue.shutdown === 'function') {
+      this.messageQueue.shutdown();
+    }
     for (const timer of this._bootTimers) {
       clearTimeout(timer);
     }

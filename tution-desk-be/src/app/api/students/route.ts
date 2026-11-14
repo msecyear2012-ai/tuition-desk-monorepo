@@ -1,22 +1,241 @@
-import { NextRequest, NextResponse } from "next/server";
-import connectDB from "@/lib/db";
-import Student from "@/models/Student";
-import Center, { DEFAULT_ADMISSION_TEMPLATE } from "@/models/Center";
-import { sendWelcomeMessage, formatTemplate, buildMagicLink } from "@/lib/whatsappService";
-import { getAuthenticatedCenterId } from "@/lib/auth";
+import { NextRequest, NextResponse } from "next/server.js";
+import mongoose from "mongoose";
+import connectDB from "../../../lib/db.ts";
+import Student from "../../../models/Student.ts";
+import Batch from "../../../models/Batch.ts";
+import Center from "../../../models/Center.ts";
+import Teacher from "../../../models/Teacher.ts";
+import { getAuthenticatedUser } from "../../../lib/auth.ts";
+import { getCorsHeaders, handleCorsPreflight } from "../../../lib/cors.ts";
+import {
+  enqueueAdmissionWelcomeJob,
+  processPendingAdmissionWelcomeJobs,
+  buildAdmissionWelcomeIdempotencyKey,
+} from "../../../lib/admissionWelcomeQueue.ts";
+import {
+  getOrCreateParentAccess,
+  getRecoverableInvitationToken,
+} from "../../../lib/parentAccessService.ts";
+import {
+  getAppBaseUrl,
+  sendAdmissionWelcomeMessage,
+} from "../../../lib/whatsappService.ts";
+import {
+  resolvePortalAppBaseUrl,
+  buildPortalActivationUrl,
+  isProductionEnvironment,
+} from "../../../lib/portalLinks.ts";
+import { AdmissionWelcomeJob } from "../../../models/AdmissionWelcomeJob.ts";
+import {
+  sanitizeStudentForRole,
+  sanitizeStudentListForRole,
+} from "../../../lib/privacyUtils.ts";
+import { notifyStudentAdmissionEvents } from "../../../lib/notificationService.ts";
 
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 200 });
+export async function OPTIONS(request: NextRequest) {
+  return handleCorsPreflight(request, "GET, POST, OPTIONS");
+}
+
+export async function GET(request: NextRequest) {
+  const corsHeaders = getCorsHeaders(request);
+
+  try {
+    // 1. Authenticate user from verified JWT
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "Authentication required" },
+        { status: 401, headers: corsHeaders }
+      );
+    }
+
+    if (user.role !== "owner" && user.role !== "teacher") {
+      return NextResponse.json(
+        { success: false, error: "Access denied: Unauthorized role" },
+        { status: 403, headers: corsHeaders }
+      );
+    }
+
+    // 2. Connect to database only after authentication and authorization
+    await connectDB();
+
+    const { searchParams } = request.nextUrl;
+    const filter: Record<string, unknown> = { centerId: user.centerId };
+
+    // 3. Role-based scoping for student roster
+    if (user.role === "teacher") {
+      // Teachers can ONLY view students assigned to their own teacherId
+      if (!user.teacherId || !mongoose.Types.ObjectId.isValid(user.teacherId)) {
+        return NextResponse.json(
+          { success: false, error: "Teacher profile invalid" },
+          { status: 403, headers: corsHeaders }
+        );
+      }
+      filter.assignedTeacherId = new mongoose.Types.ObjectId(user.teacherId);
+    } else {
+      // Owner can view all students in institute, or filter by teacher
+      const assignedTeacherParam =
+        searchParams.get("assignedTeacher") || searchParams.get("assignedTeacherId");
+
+      if (assignedTeacherParam) {
+        if (assignedTeacherParam === "owner" || assignedTeacherParam === "null") {
+          // Explicit Owner filter matches explicit null or missing field (legacy students)
+          filter.$or = [
+            { assignedTeacherId: null },
+            { assignedTeacherId: { $exists: false } },
+          ];
+        } else if (mongoose.Types.ObjectId.isValid(assignedTeacherParam)) {
+          filter.assignedTeacherId = new mongoose.Types.ObjectId(assignedTeacherParam);
+        } else {
+          return NextResponse.json(
+            { success: false, error: "Invalid assignedTeacher query parameter" },
+            { status: 400, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // Optional batchId or batch filter
+    const batchId = searchParams.get("batchId");
+    if (batchId && batchId.trim()) {
+      const cleanBatchId = batchId.trim();
+      if (mongoose.Types.ObjectId.isValid(cleanBatchId)) {
+        const batchQuery: Record<string, unknown> = {
+          _id: new mongoose.Types.ObjectId(cleanBatchId),
+          centerId: user.centerId,
+          isActive: { $ne: false },
+        };
+
+        // If Teacher, ensure the batch is in the teacher's authorized scope
+        if (user.role === "teacher") {
+          const teacherObjectId = new mongoose.Types.ObjectId(user.teacherId);
+          const [teacherStudents, teacherDoc] = await Promise.all([
+            Student.find({
+              centerId: user.centerId,
+              assignedTeacherId: teacherObjectId,
+              isActive: { $ne: false },
+            }).select("batch"),
+            Teacher.findOne({
+              _id: teacherObjectId,
+              centerId: user.centerId,
+            }).select("assignedBatches"),
+          ]);
+
+          const allowedBatchNames = Array.from(
+            new Set([
+              ...(teacherDoc?.assignedBatches || []),
+              ...teacherStudents.map((s) => s.batch).filter(Boolean),
+            ])
+          );
+
+          batchQuery.name = { $in: allowedBatchNames };
+        }
+
+        const batchDoc = await Batch.findOne(batchQuery).select("name");
+
+        if (batchDoc) {
+          filter.batch = batchDoc.name;
+        } else {
+          // Batch does not exist, was deleted, or is unauthorized
+          filter.batch = "__NON_EXISTENT_BATCH__";
+        }
+      } else if (cleanBatchId.startsWith("orphan_")) {
+        filter.batch = decodeURIComponent(cleanBatchId.slice(7));
+      } else {
+        filter.batch = "__NON_EXISTENT_BATCH__";
+      }
+    } else {
+      const batch = searchParams.get("batch");
+      if (batch && batch.trim()) {
+        filter.batch = batch.trim();
+      }
+    }
+
+    // Optional active status filter
+    const isActive = searchParams.get("isActive");
+    if (isActive !== null) {
+      filter.isActive = isActive === "true";
+    }
+
+    // Optional student search (Teacher: strictly name/rollNumber only; Owner: name/phone/rollNumber)
+    const search =
+      searchParams.get("search") ||
+      searchParams.get("query") ||
+      searchParams.get("q");
+    if (search && search.trim()) {
+      const sanitized = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const searchRegex = new RegExp(sanitized, "i");
+      const searchOrConditions: Array<Record<string, unknown>> = [
+        { name: { $regex: searchRegex } },
+        { rollNumber: { $regex: searchRegex } },
+      ];
+
+      // Security defense: Teachers must never be able to probe full phone numbers via search regex
+      if (user.role !== "teacher") {
+        searchOrConditions.push({ parentWhatsApp: { $regex: searchRegex } });
+      }
+
+      const searchCondition = { $or: searchOrConditions };
+
+      if (filter.$or) {
+        const existingOr = filter.$or;
+        delete filter.$or;
+        filter.$and = [{ $or: existingOr }, searchCondition];
+      } else if (filter.$and && Array.isArray(filter.$and)) {
+        filter.$and.push(searchCondition);
+      } else {
+        filter.$or = searchCondition.$or;
+      }
+    }
+
+    const students = await Student.find(filter).sort({ createdAt: -1 });
+
+    // REQ-02: Sanitize student phone numbers for teacher roles
+    const sanitizedStudents = sanitizeStudentListForRole(
+      students.map((s) => (s.toObject ? s.toObject() : { ...s })),
+      user.role
+    );
+
+    return NextResponse.json(
+      { success: true, count: sanitizedStudents.length, data: sanitizedStudents },
+      { status: 200, headers: corsHeaders }
+    );
+  } catch (error: unknown) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to fetch students";
+
+    return NextResponse.json(
+      { success: false, error: errorMessage },
+      { status: 500, headers: corsHeaders }
+    );
+  }
 }
 
 export async function POST(request: NextRequest) {
+  const corsHeaders = getCorsHeaders(request);
+
   try {
+    // 1. Authenticate user from verified JWT
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "Authentication required" },
+        { status: 401, headers: corsHeaders }
+      );
+    }
+
+    if (user.role !== "owner" && user.role !== "teacher") {
+      return NextResponse.json(
+        { success: false, error: "Access denied: Unauthorized role" },
+        { status: 403, headers: corsHeaders }
+      );
+    }
+
+    // 2. Connect to database only after authentication and authorization
     await connectDB();
 
-    const authCenterId = await getAuthenticatedCenterId(request);
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const {
-      centerId,
       name,
       batch,
       parentWhatsApp,
@@ -24,17 +243,17 @@ export async function POST(request: NextRequest) {
       joiningDate,
       monthlyFee,
       billingCycleDate,
+      assignedTeacherId: requestedTeacherId,
     } = body;
 
-    const targetCenterId = authCenterId || centerId;
-
-    if (!targetCenterId || !name || !batch || !parentWhatsApp) {
+    // Validate required fields
+    if (!name || !String(name).trim() || !batch || !String(batch).trim() || !parentWhatsApp) {
       return NextResponse.json(
         {
           success: false,
-          error: "centerId, name, batch, and parentWhatsApp are required",
+          error: "name, batch, and parentWhatsApp are required",
         },
-        { status: 400 }
+        { status: 400, headers: corsHeaders }
       );
     }
 
@@ -45,80 +264,239 @@ export async function POST(request: NextRequest) {
           success: false,
           error: "parentWhatsApp must be a valid 10 to 15 digit phone number",
         },
-        { status: 400 }
+        { status: 400, headers: corsHeaders }
       );
     }
 
+    // 3. Determine assignedTeacherId based on authenticated role
+    let finalAssignedTeacherId: mongoose.Types.ObjectId | null = null;
+
+    if (user.role === "teacher") {
+      // Teachers MUST be automatically assigned to themselves; client-supplied ID is strictly ignored
+      if (!user.teacherId || !mongoose.Types.ObjectId.isValid(user.teacherId)) {
+        return NextResponse.json(
+          { success: false, error: "Teacher profile invalid" },
+          { status: 403, headers: corsHeaders }
+        );
+      }
+      finalAssignedTeacherId = new mongoose.Types.ObjectId(user.teacherId);
+    } else {
+      // Owner can assign to Owner (null) or an active Teacher in the same institute
+      if (
+        requestedTeacherId !== undefined &&
+        requestedTeacherId !== null &&
+        requestedTeacherId !== "" &&
+        requestedTeacherId !== "owner"
+      ) {
+        if (!mongoose.Types.ObjectId.isValid(String(requestedTeacherId))) {
+          return NextResponse.json(
+            { success: false, error: "Invalid assignedTeacherId format" },
+            { status: 400, headers: corsHeaders }
+          );
+        }
+
+        const targetTeacher = await Teacher.findOne({
+          _id: requestedTeacherId,
+          centerId: user.centerId,
+        });
+
+        if (!targetTeacher) {
+          return NextResponse.json(
+            { success: false, error: "Teacher not found in this institute" },
+            { status: 400, headers: corsHeaders }
+          );
+        }
+
+        if (!targetTeacher.isActive) {
+          return NextResponse.json(
+            { success: false, error: "Cannot assign student to an inactive teacher" },
+            { status: 400, headers: corsHeaders }
+          );
+        }
+
+        finalAssignedTeacherId = targetTeacher._id as mongoose.Types.ObjectId;
+      }
+    }
+
+    // 4. Create student strictly scoped to user's authenticated centerId
     const newStudent = await Student.create({
-      centerId: targetCenterId,
-      name: name.trim(),
-      batch: batch.trim(),
+      centerId: user.centerId,
+      name: String(name).trim(),
+      batch: String(batch).trim(),
       parentWhatsApp: cleanParentWhatsApp,
       isActive: isActive !== undefined ? Boolean(isActive) : true,
       joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
       monthlyFee: monthlyFee !== undefined ? Number(monthlyFee) : 0,
       billingCycleDate:
         billingCycleDate !== undefined ? Number(billingCycleDate) : 5,
+      assignedTeacherId: finalAssignedTeacherId,
     });
 
-    // Automated WhatsApp Welcome Notification (non-blocking, scoped to center)
+    // 5. Single Student Admission: Auto-generate portal link -> Send WhatsApp Welcome Message INSTANTLY
     try {
-      const center = await Center.findOne({ centerId: targetCenterId });
-      const template =
-        center?.messagingTemplates?.admission ||
-        center?.welcomeMessageTemplate ||
-        DEFAULT_ADMISSION_TEMPLATE;
+      const cleanCenterId = String(user.centerId).trim();
 
-      const magicLink = buildMagicLink(newStudent._id);
+      // Ensure proper country code structure (defaulting to 91 for standard Indian mobile numbers)
+      let formattedPhone = cleanParentWhatsApp;
+      if (formattedPhone.length === 10) {
+        formattedPhone = `91${formattedPhone}`;
+      } else if (formattedPhone.length === 11 && formattedPhone.startsWith("0")) {
+        formattedPhone = `91${formattedPhone.slice(1)}`;
+      }
 
-      const customMessage = formatTemplate(template, {
-        studentName: newStudent.name,
-        magicLink,
-      });
+      let portalUrl: string | null = null;
+      let isExistingActivePortal = false;
 
-      sendWelcomeMessage(
-        newStudent.centerId,
-        newStudent.parentWhatsApp,
-        customMessage,
-        newStudent._id.toString()
-      )
-        .then((result) => {
-          const maskedPhone =
-            newStudent.parentWhatsApp && newStudent.parentWhatsApp.length >= 4
-              ? `***${newStudent.parentWhatsApp.slice(-4)}`
-              : "****";
-          if (result.simulated) {
-            console.log(
-              `[ADMISSION NOTIFICATION SIMULATED] Student: ${newStudent.name} (${newStudent._id}) | Center: ${newStudent.centerId} | Recipient: ${maskedPhone} | Simulation mode active.`
-            );
-          } else if (result.success) {
-            console.log(
-              `[ADMISSION NOTIFICATION DISPATCHED] Student: ${newStudent.name} (${newStudent._id}) | Center: ${newStudent.centerId} | Recipient: ${maskedPhone} | Provider accepted ID: ${result.messageId}`
-            );
+      // Programmatically call parentAccessService to auto-generate portal access token
+      try {
+        const accessResult = await getOrCreateParentAccess(
+          cleanCenterId,
+          newStudent._id,
+          {
+            parentPhone: formattedPhone,
+            parentName: newStudent.name,
+          }
+        );
+        // Prefer the token just created; otherwise reuse the token already
+        // issued to this student's ParentAccess (never regenerated).
+        const invitationToken =
+          accessResult?.rawToken ||
+          getRecoverableInvitationToken(accessResult?.parentAccess);
+
+        if (invitationToken) {
+          const urlRes = resolvePortalAppBaseUrl();
+          if (urlRes.success) {
+            portalUrl = buildPortalActivationUrl(invitationToken, urlRes.url);
+          } else if (!isProductionEnvironment()) {
+            portalUrl = buildPortalActivationUrl(invitationToken, "http://localhost:3000");
           } else {
             console.warn(
-              `[ADMISSION NOTIFICATION FAILED] Student: ${newStudent.name} (${newStudent._id}) | Center: ${newStudent.centerId} | Recipient: ${maskedPhone} | Error: ${result.error || "Unknown send failure"}`
+              `[ADMISSION WELCOME] Skipping portal link generation in production due to invalid app URL: ${urlRes.error}`
             );
           }
-        })
-        .catch((whatsappErr) => {
-          const errMsg =
-            whatsappErr instanceof Error ? whatsappErr.message : "Unknown error";
-          console.error(
-            `[ADMISSION NOTIFICATION ERROR] Center: ${newStudent.centerId} | Student ID: ${newStudent._id} | Error: ${errMsg}`
-          );
+        } else if (accessResult && !accessResult.created) {
+          isExistingActivePortal = true;
+        }
+      } catch (accessErr) {
+        console.warn(
+          "[ADMISSION WELCOME] ParentAccess token generation notice:",
+          accessErr instanceof Error ? accessErr.message : accessErr
+        );
+      }
+
+      // Fetch institute/center name cleanly
+      const centerDoc = await Center.findOne({
+        $or: [
+          { centerId: cleanCenterId },
+          { centerId: cleanCenterId.toLowerCase() },
+          ...(mongoose.Types.ObjectId.isValid(cleanCenterId)
+            ? [{ _id: new mongoose.Types.ObjectId(cleanCenterId) }]
+            : []),
+        ],
+      }).select("name");
+      const instituteName = centerDoc?.name || "Tuition Center";
+
+      // Dispatch WhatsApp Welcome Message INSTANTLY
+      let dispatchRes: any = null;
+      try {
+        dispatchRes = await sendAdmissionWelcomeMessage({
+          centerId: cleanCenterId,
+          phone: formattedPhone,
+          studentName: newStudent.name,
+          instituteName,
+          batchName: newStudent.batch,
+          portalUrl,
+          isExistingActivePortal,
         });
-    } catch (dispatchErr) {
-      const errMsg =
-        dispatchErr instanceof Error ? dispatchErr.message : "Unknown error";
+
+        if (!dispatchRes?.success && !dispatchRes?.simulated) {
+          console.error(
+            `[ADMISSION WELCOME] Dispatch failed for student ${newStudent._id} (${newStudent.name}):`,
+            dispatchRes?.error || "Unknown dispatch error"
+          );
+        }
+      } catch (sendErr) {
+        console.error(
+          `[ADMISSION WELCOME] Direct dispatch exception for student ${newStudent._id} (${newStudent.name}):`,
+          sendErr instanceof Error ? sendErr.message : sendErr
+        );
+        dispatchRes = {
+          success: false,
+          error: sendErr instanceof Error ? sendErr.message : "Dispatch exception",
+        };
+      }
+
+      // Record durable job status in AdmissionWelcomeJob for tracking & queue compatibility
+      try {
+        const idempotencyKey = buildAdmissionWelcomeIdempotencyKey(
+          cleanCenterId,
+          newStudent._id
+        );
+        await AdmissionWelcomeJob.create({
+          centerId: cleanCenterId,
+          studentId: newStudent._id,
+          idempotencyKey,
+          parentPhone: formattedPhone,
+          studentName: newStudent.name,
+          batchName: newStudent.batch,
+          status: dispatchRes?.simulated
+            ? "simulated"
+            : dispatchRes?.success
+            ? "sent"
+            : "failed",
+          attempts: 1,
+          maxAttempts: 3,
+          parentAccessStatus: portalUrl
+            ? "provisioned"
+            : isExistingActivePortal
+            ? "existing_active"
+            : "failed",
+          dispatchedAt: new Date(),
+          simulated: Boolean(dispatchRes?.simulated),
+          failureReason: dispatchRes?.error || null,
+        });
+      } catch (jobErr) {
+        console.warn(
+          "[ADMISSION WELCOME] Direct job creation notice (falling back to enqueue):",
+          jobErr instanceof Error ? jobErr.message : jobErr
+        );
+        enqueueAdmissionWelcomeJob({
+          centerId: cleanCenterId,
+          studentId: newStudent._id,
+          parentPhone: formattedPhone,
+          studentName: newStudent.name,
+          batchName: newStudent.batch,
+        }).catch(() => {});
+      }
+    } catch (welcomeErr) {
       console.error(
-        `[ADMISSION NOTIFICATION INIT ERROR] Center: ${targetCenterId} | Error: ${errMsg}`
+        "[ADMISSION WELCOME] Instant welcome dispatch notice (non-blocking):",
+        welcomeErr instanceof Error ? welcomeErr.message : welcomeErr
       );
     }
 
+    // Event Notification Dispatch (Assigned Teacher & Parent)
+    try {
+      await notifyStudentAdmissionEvents({
+        centerId: String(user.centerId).trim(),
+        studentId: String(newStudent._id),
+        studentName: newStudent.name || "Student",
+        batchName: newStudent.batch,
+        assignedTeacherId: finalAssignedTeacherId ? String(finalAssignedTeacherId) : undefined,
+        parentPhone: cleanParentWhatsApp,
+      });
+    } catch (notifErr) {
+      console.warn("[STUDENT ADMISSION] Notification dispatch error:", notifErr);
+    }
+
+    const sanitizedNewStudent = sanitizeStudentForRole(
+      newStudent.toObject ? newStudent.toObject() : { ...newStudent },
+      user.role
+    );
+
     return NextResponse.json(
-      { success: true, data: newStudent },
-      { status: 201 }
+      { success: true, data: sanitizedNewStudent },
+      { status: 201, headers: corsHeaders }
     );
   } catch (error: unknown) {
     const errorMessage =
@@ -126,45 +504,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(
       { success: false, error: errorMessage },
-      { status: 500 }
-    );
-  }
-}
-
-export async function GET(request: NextRequest) {
-  try {
-    await connectDB();
-
-    const { searchParams } = request.nextUrl;
-    const authCenterId = await getAuthenticatedCenterId(request);
-    const centerId = authCenterId || searchParams.get("centerId");
-
-    if (!centerId) {
-      return NextResponse.json(
-        { success: false, error: "Authentication or centerId query parameter is required" },
-        { status: 400 }
-      );
-    }
-
-    const filter: Record<string, unknown> = { centerId };
-    const batch = searchParams.get("batch");
-    if (batch) {
-      filter.batch = batch;
-    }
-
-    const students = await Student.find(filter).sort({ createdAt: -1 });
-
-    return NextResponse.json(
-      { success: true, data: students },
-      { status: 200 }
-    );
-  } catch (error: unknown) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Failed to fetch students";
-
-    return NextResponse.json(
-      { success: false, error: errorMessage },
-      { status: 500 }
+      { status: 500, headers: corsHeaders }
     );
   }
 }

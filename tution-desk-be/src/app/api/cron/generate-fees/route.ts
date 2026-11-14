@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server.js";
 import crypto from "crypto";
-import { generateMonthlyFees } from "@/lib/feeGenerator.ts";
+import { generateMonthlyFees } from "../../../../lib/feeGenerator.ts";
 
 export async function OPTIONS() {
   return new NextResponse(null, {
@@ -64,6 +64,9 @@ async function handleGenerateFees(request: NextRequest) {
     const centerId =
       (searchParams.get("centerId") || body.centerId || "")?.trim() || undefined;
 
+    const studentId =
+      (searchParams.get("studentId") || body.studentId || "")?.trim() || undefined;
+
     const forceAllStudents =
       searchParams.get("forceAll") === "true" || body.forceAll === true;
 
@@ -71,6 +74,7 @@ async function handleGenerateFees(request: NextRequest) {
     const result = await generateMonthlyFees({
       overrideDay,
       centerId,
+      studentId,
       forceAllStudents,
     });
 

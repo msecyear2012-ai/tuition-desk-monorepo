@@ -76,7 +76,7 @@ export default function BottomNav() {
     <nav
       id="mobile-bottom-nav"
       aria-label="Main Navigation"
-      className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl md:max-w-4xl lg:max-w-5xl glass-surface border-t border-slate-200/80 px-2 sm:px-6 pt-1.5 pb-2.5 z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.04)]"
+      className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md sm:max-w-2xl md:max-w-4xl lg:max-w-5xl bg-white/95 backdrop-blur-md border-t border-slate-200/90 px-2 sm:px-6 pt-1.5 pb-[calc(0.625rem+env(safe-area-inset-bottom,0px))] z-50 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]"
     >
       <div className="grid grid-cols-5 gap-1 items-center">
         {tabs.map((tab) => {

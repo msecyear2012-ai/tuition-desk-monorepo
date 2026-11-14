@@ -1,4 +1,4 @@
-import { AlertCircle, TrendingUp, Users } from "lucide-react";
+import { AlertCircle, TrendingUp } from "lucide-react";
 
 interface FeesSummaryHeroCardProps {
   totalOverdueAmount: number;
@@ -17,34 +17,34 @@ export default function FeesSummaryHeroCard({
     totalDemand > 0 ? Math.round(((collectedAmount || 0) / totalDemand) * 100) : 0;
 
   return (
-    <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-rose-600 via-orange-500 to-amber-500 p-5 text-white shadow-lg shadow-orange-500/25">
+    <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-br from-rose-600 via-orange-500 to-amber-500 p-4 sm:p-5 text-white shadow-lg shadow-orange-500/25">
       {/* Decorative ambient glass glows */}
       <div className="absolute -right-10 -top-10 h-36 w-36 rounded-full bg-white/15 blur-xl pointer-events-none" />
       <div className="absolute -bottom-8 -left-8 h-32 w-32 rounded-full bg-rose-800/20 blur-lg pointer-events-none" />
 
       {/* Top Header Row */}
-      <div className="relative z-10 flex items-center justify-between">
+      <div className="relative z-10 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-1.5 text-orange-100">
           <AlertCircle className="h-4 w-4 text-orange-200 stroke-[2.3]" />
-          <span className="text-[12px] font-bold uppercase tracking-wider">
+          <span className="text-[11px] min-[380px]:text-[12px] font-bold uppercase tracking-wider">
             Total Overdue
           </span>
         </div>
 
         {/* Top-Right Semi-Transparent Glass Pill */}
-        <div className="flex items-center gap-1.5 rounded-full border border-white/25 bg-white/20 px-3 py-1 text-[11px] font-bold text-white backdrop-blur-md shadow-xs">
+        <div className="flex items-center gap-1.5 rounded-full border border-white/25 bg-white/20 px-2.5 sm:px-3 py-1 text-[10px] min-[380px]:text-[11px] font-bold text-white backdrop-blur-md shadow-xs flex-shrink-0">
           <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
           <span>{pendingStudentsCount} Students Due</span>
         </div>
       </div>
 
       {/* Main ₹ Amount with Bold Typography */}
-      <div className="relative z-10 my-3.5">
-        <div className="text-4xl font-extrabold tracking-tight text-white font-mono drop-shadow-xs">
+      <div className="relative z-10 my-3 sm:my-3.5">
+        <div className="text-2xl min-[380px]:text-3xl sm:text-4xl font-extrabold tracking-tight text-white font-mono drop-shadow-xs truncate">
           ₹{formatINR(totalOverdueAmount)}
         </div>
-        <p className="mt-1 text-[12px] text-orange-100 font-medium">
-          Requires follow-up • Class 9th, 10th &amp; 12th batches
+        <p className="mt-1 text-[11px] sm:text-[12px] text-orange-100 font-medium">
+          Requires follow-up • Unpaid student invoices across active batches
         </p>
       </div>
 

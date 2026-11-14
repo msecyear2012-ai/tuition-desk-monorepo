@@ -3,11 +3,16 @@ import Student from "../models/Student.ts";
 import type { IStudentDocument } from "../models/Student.ts";
 import type { IFeeDocument } from "../models/Fee.ts";
 import { generateOrGetMonthlyFee } from "./feeService.ts";
-import { getISTDateComponents } from "./dateUtils.ts";
+import {
+  getISTDateComponents,
+  getDaysInISTMonth,
+  getEligibleBillingCycleDates,
+} from "./dateUtils.ts";
 
 export interface FeeGenerationOptions {
   overrideDay?: number;
   centerId?: string;
+  studentId?: string;
   forceAllStudents?: boolean;
   referenceDate?: Date;
 }
@@ -53,16 +58,27 @@ export async function generateMonthlyFees(
     isActive: { $ne: false },
   };
 
-  // If not forcing all students, filter by billingCycleDate matching cycleDay
+  // If not forcing all students, filter by billingCycleDate matching cycleDay,
+  // deterministically clamping dates 29, 30, 31 to the final calendar day in shorter months.
   if (!options.forceAllStudents) {
     if (isNaN(cycleDay) || cycleDay < 1 || cycleDay > 31) {
       throw new Error(`Invalid cycle day: ${cycleDay}. Must be between 1 and 31.`);
     }
-    studentQuery.billingCycleDate = cycleDay;
+    const daysInMonth = getDaysInISTMonth(dateComp.year, dateComp.month);
+    const eligibleCycleDays = getEligibleBillingCycleDates(cycleDay, daysInMonth);
+    if (eligibleCycleDays.length === 1) {
+      studentQuery.billingCycleDate = eligibleCycleDays[0];
+    } else {
+      studentQuery.billingCycleDate = { $in: eligibleCycleDays };
+    }
   }
 
   if (options.centerId) {
     studentQuery.centerId = options.centerId;
+  }
+
+  if (options.studentId && options.studentId.trim()) {
+    studentQuery._id = options.studentId.trim();
   }
 
   const eligibleStudents = (await Student.find(studentQuery)) as IStudentDocument[];

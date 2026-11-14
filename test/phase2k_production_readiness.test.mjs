@@ -498,7 +498,7 @@ test("TuitionDesk Phase 2K: Production Launch Readiness Suite", async (t) => {
     // Complete valid environment
     const testEnvComplete = {
       NODE_ENV: "production",
-      MONGODB_URI: "mongodb+srv://mock_app_user:mock_password_123@cluster0.generic-mock.mongodb.net/test",
+      MONGODB_URI: "mongodb+srv://example-mock-user:mock-placeholder-key@cluster0.invalid/test",
       JWT_SECRET: "strong_production_jwt_secret_min_32_characters_long",
       YOUPI_WEBHOOK_SECRET: "youpi_pg_prod_webhook_secret_2026",
       CRON_SECRET: "cron_scheduler_production_secret_key_32_chars",

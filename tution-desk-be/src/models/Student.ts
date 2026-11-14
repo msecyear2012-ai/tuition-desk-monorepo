@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document, Model } from "mongoose";
+import mongoose, { Schema, Document, Model, Types } from "mongoose";
 
 export interface IStudent {
   centerId: string;
@@ -9,6 +9,9 @@ export interface IStudent {
   joiningDate?: Date;
   monthlyFee: number;
   billingCycleDate: number;
+  assignedTeacherId?: Types.ObjectId | null;
+  importedBatchId?: string;
+  rollNumber?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -61,17 +64,39 @@ const StudentSchema = new Schema<IStudentDocument>(
       max: [31, "Billing cycle date must be between 1 and 31"],
       default: 5,
     },
+    assignedTeacherId: {
+      type: Schema.Types.ObjectId,
+      ref: "Teacher",
+      default: null,
+      index: true,
+    },
+    importedBatchId: {
+      type: String,
+      trim: true,
+      index: true,
+    },
+    rollNumber: {
+      type: String,
+      trim: true,
+    },
   },
   {
     timestamps: true,
   }
 );
 
-// Compound index for efficient multi-tenant queries by center and batch
+// Compound indexes for multi-tenant isolation, assignment, and batch queries
 StudentSchema.index({ centerId: 1, batch: 1 });
+StudentSchema.index({ centerId: 1, assignedTeacherId: 1 });
+StudentSchema.index({ centerId: 1, assignedTeacherId: 1, isActive: 1 });
+StudentSchema.index({ centerId: 1, name: "text" });
 
 // In development, ensure Mongoose reloads new schema properties
-if (process.env.NODE_ENV !== "production" && mongoose.models.Student) {
+if (
+  process.env.NODE_ENV !== "production" &&
+  mongoose.models.Student &&
+  !mongoose.models.Student.schema.path("assignedTeacherId")
+) {
   delete (mongoose.models as Record<string, unknown>).Student;
 }
 

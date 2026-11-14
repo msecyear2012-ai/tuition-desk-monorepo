@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback, useMemo, useDeferredValue } from "react";
 import dynamic from "next/dynamic";
 import { apiClient, getCurrentCenterId, getApiCache } from "@/lib/apiClient";
-import { TestRecord, BatchRecord } from "@/types";
+import { getAuthenticatedCenter, type CenterInfo } from "@/lib/centerProfile";
+import { TestRecord, BatchRecord, TeacherRecord } from "@/types";
 
 const CreateTestModal = dynamic(
   () => import("@/components/modals/CreateTestModal"),
@@ -52,6 +53,9 @@ export default function TestsPage() {
 
   const [tests, setTests] = useState<TestRecord[]>(() => cachedTests?.data || []);
   const [batches, setBatches] = useState<BatchRecord[]>(() => cachedBatches?.data || []);
+  const [userProfile, setUserProfile] = useState<CenterInfo | null>(null);
+  const [teachers, setTeachers] = useState<TeacherRecord[]>([]);
+  const [selectedTeacherFilter, setSelectedTeacherFilter] = useState<string>("all");
   const [loading, setLoading] = useState(() => !cachedTests && !cachedBatches);
   const [selectedBatchFilter, setSelectedBatchFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -71,6 +75,21 @@ export default function TestsPage() {
       setToastMessage(null);
     }, 4000);
   };
+
+  // Fetch teachers for Owner faculty filters
+  const fetchTeachers = useCallback(async () => {
+    try {
+      const res = await apiClient<{ data?: TeacherRecord[] }>("/teachers?isActive=true");
+      const list = Array.isArray(res.data)
+        ? res.data
+        : res.data && Array.isArray((res.data as { data?: TeacherRecord[] }).data)
+        ? ((res.data as { data?: TeacherRecord[] }).data as TeacherRecord[])
+        : [];
+      setTeachers(list.filter((t) => t.isActive !== false));
+    } catch (err) {
+      console.error("Failed to fetch teachers for tests:", err);
+    }
+  }, []);
 
   // Fetch tests from backend
   const fetchTests = useCallback(async (isRefresh = false) => {
@@ -103,11 +122,31 @@ export default function TestsPage() {
       if (!cachedTests && !cachedBatches) {
         setLoading(true);
       }
-      await Promise.all([fetchTests(), fetchBatches()]);
-      setLoading(false);
+      try {
+        const profile = await getAuthenticatedCenter();
+        setUserProfile(profile);
+        const promises: Promise<unknown>[] = [fetchTests(), fetchBatches()];
+        if (profile?.role === "owner") {
+          promises.push(fetchTeachers());
+        }
+        await Promise.all(promises);
+      } catch (err) {
+        console.error("Failed to load tests page data:", err);
+      } finally {
+        setLoading(false);
+      }
     }
     loadData();
-  }, [fetchTests, fetchBatches, cachedTests, cachedBatches]);
+  }, [fetchTests, fetchBatches, fetchTeachers, cachedTests, cachedBatches]);
+
+  // Quick teacher ID to name lookup map
+  const teacherMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    teachers.forEach((t) => {
+      map[t._id] = t.name;
+    });
+    return map;
+  }, [teachers]);
 
   // Extract all unique batch names
   const allBatchNames = useMemo(() => {
@@ -129,10 +168,15 @@ export default function TestsPage() {
         q === "" ||
         t.title.toLowerCase().includes(q) ||
         t.batch.toLowerCase().includes(q);
+      const matchTeacher =
+        userProfile?.role !== "owner" ||
+        selectedTeacherFilter === "all" ||
+        (selectedTeacherFilter === "owner" && !t.assignedTeacherId) ||
+        t.assignedTeacherId === selectedTeacherFilter;
 
-      return matchBatch && matchSearch;
+      return matchBatch && matchSearch && matchTeacher;
     });
-  }, [tests, selectedBatchFilter, deferredSearchQuery]);
+  }, [tests, selectedBatchFilter, deferredSearchQuery, selectedTeacherFilter, userProfile]);
 
   // Summary Metrics
   const metrics = useMemo(() => {
@@ -281,6 +325,56 @@ export default function TestsPage() {
             )}
           </div>
 
+          {/* Teacher / Faculty Filter Pills (Owner View) */}
+          {userProfile?.role === "owner" && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs font-bold">
+              <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap mr-0.5">
+                Faculty:
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedTeacherFilter("all")}
+                className={`px-3 py-1 rounded-xl whitespace-nowrap transition-colors ${
+                  selectedTeacherFilter === "all"
+                    ? "bg-slate-900 text-white shadow-xs"
+                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                All Tests ({tests.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedTeacherFilter("owner")}
+                className={`px-3 py-1 rounded-xl whitespace-nowrap transition-colors ${
+                  selectedTeacherFilter === "owner"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                Myself (Owner) ({tests.filter((t) => !t.assignedTeacherId).length})
+              </button>
+              {teachers.map((t) => {
+                const count = tests.filter(
+                  (test) => test.assignedTeacherId === t._id
+                ).length;
+                return (
+                  <button
+                    key={t._id}
+                    type="button"
+                    onClick={() => setSelectedTeacherFilter(t._id)}
+                    className={`px-3 py-1 rounded-xl whitespace-nowrap transition-colors ${
+                      selectedTeacherFilter === t._id
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {t.name} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* Batch Filter Tabs */}
           {allBatchNames.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
@@ -397,12 +491,25 @@ export default function TestsPage() {
                   key={test._id}
                   className="p-4 rounded-3xl border border-slate-200/90 bg-white shadow-xs hover:border-indigo-200 transition-all space-y-3"
                 >
-                  {/* Card Header: Batch & Date */}
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 text-[11px] font-bold border border-indigo-100">
-                      <Layers className="w-3 h-3" />
-                      <span>{test.batch}</span>
-                    </span>
+                  {/* Card Header: Batch, Faculty Badge & Date */}
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 text-[11px] font-bold border border-indigo-100">
+                        <Layers className="w-3 h-3" />
+                        <span>{test.batch}</span>
+                      </span>
+
+                      {/* Faculty Badge */}
+                      {test.assignedTeacherId ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-blue-50 text-blue-700 text-[11px] font-bold border border-blue-200">
+                          <span>Faculty: {teacherMap[test.assignedTeacherId] || "Teacher"}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-200">
+                          <span>Faculty: Myself (Owner)</span>
+                        </span>
+                      )}
+                    </div>
 
                     <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 font-medium">
                       <Calendar className="w-3 h-3 text-slate-400" />

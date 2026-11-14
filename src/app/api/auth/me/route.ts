@@ -14,7 +14,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const payload = await verifyToken<{ role: string; centerId: string }>(token);
+    const payload = await verifyToken<{
+      role?: string;
+      centerId: string;
+      userId?: string;
+      teacherId?: string;
+      name?: string;
+    }>(token);
 
     if (!payload || !payload.centerId) {
       return NextResponse.json(
@@ -40,16 +46,34 @@ export async function GET(request: NextRequest) {
       if (beRes.ok) {
         const beData = await beRes.json();
         if (beData?.success && beData?.center) {
+          const resolvedTeacher =
+            beData.teacher ||
+            (payload.role === "teacher" && (payload.name || payload.teacherId || payload.userId)
+              ? {
+                  id: payload.teacherId || payload.userId,
+                  name: payload.name,
+                }
+              : undefined);
+
           return NextResponse.json({
             success: true,
             center: beData.center,
-            role: payload.role,
+            role: beData.role || payload.role || "owner",
+            ...(resolvedTeacher ? { teacher: resolvedTeacher } : {}),
           });
         }
       }
     } catch {
       // Backend unreachable fallback
     }
+
+    const fallbackTeacher =
+      payload.role === "teacher" && (payload.name || payload.teacherId || payload.userId)
+        ? {
+            id: payload.teacherId || payload.userId,
+            name: payload.name,
+          }
+        : undefined;
 
     return NextResponse.json({
       success: true,
@@ -58,7 +82,8 @@ export async function GET(request: NextRequest) {
         name: payload.centerId,
         ownerName: "Owner",
       },
-      role: payload.role,
+      role: payload.role || "owner",
+      ...(fallbackTeacher ? { teacher: fallbackTeacher } : {}),
     });
   } catch (err: unknown) {
     return NextResponse.json(

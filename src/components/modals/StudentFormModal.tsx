@@ -14,9 +14,11 @@ import {
   Loader2,
   AlertCircle,
   Sparkles,
+  GraduationCap,
 } from "lucide-react";
 import { apiClient, getCurrentCenterId } from "@/lib/apiClient";
-import { StudentRecord, BatchRecord } from "@/types";
+import { getAuthenticatedCenter, type CenterInfo } from "@/lib/centerProfile";
+import { StudentRecord, BatchRecord, TeacherRecord } from "@/types";
 
 export interface StudentFormData {
   _id?: string;
@@ -27,6 +29,7 @@ export interface StudentFormData {
   joiningDate?: string | Date;
   monthlyFee: number;
   billingCycleDate: number;
+  assignedTeacherId?: string | null;
   isActive?: boolean;
 }
 
@@ -36,6 +39,7 @@ interface StudentFormModalProps {
   onSuccess: (student: StudentRecord) => void;
   studentToEdit?: StudentFormData | null;
   availableBatches?: string[];
+  initialBatch?: string;
 }
 
 const DEFAULT_FALLBACK_BATCHES = [
@@ -55,6 +59,7 @@ export default function StudentFormModal({
   onSuccess,
   studentToEdit,
   availableBatches = [],
+  initialBatch,
 }: StudentFormModalProps) {
   const isEditing = Boolean(studentToEdit?._id);
 
@@ -66,34 +71,61 @@ export default function StudentFormModal({
   const [monthlyFee, setMonthlyFee] = useState<number | string>(2500);
   const [billingCycleDate, setBillingCycleDate] = useState<number>(5);
   const [isActive, setIsActive] = useState(true);
+  const [assignedTeacherId, setAssignedTeacherId] = useState<string>("");
 
   // Batches state fetched from backend
   const [fetchedBatches, setFetchedBatches] = useState<string[]>([]);
   const [loadingBatches, setLoadingBatches] = useState(false);
 
+  // User Profile & Teacher Management states
+  const [userProfile, setUserProfile] = useState<CenterInfo | null>(null);
+  const [teachers, setTeachers] = useState<TeacherRecord[]>([]);
+  const [loadingTeachers, setLoadingTeachers] = useState(false);
+
   // UI States
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 1. Fetch real batches from /api/batches on mount and when modal opens
+  // 1. Fetch real batches and user profile on mount / open
   useEffect(() => {
-    async function loadBatches() {
+    async function loadInitialData() {
       if (!isOpen) return;
       try {
         setLoadingBatches(true);
-        const res = await apiClient<BatchRecord[]>("/batches", {
-          params: { centerId: getCurrentCenterId() },
-        });
-        if (res.data && res.data.length > 0) {
-          setFetchedBatches(res.data.map((b) => b.name));
+        const [batchRes, profile] = await Promise.all([
+          apiClient<BatchRecord[]>("/batches", {
+            params: { centerId: getCurrentCenterId() },
+          }),
+          getAuthenticatedCenter(),
+        ]);
+
+        if (batchRes.data && batchRes.data.length > 0) {
+          setFetchedBatches(batchRes.data.map((b) => b.name));
+        }
+
+        setUserProfile(profile);
+
+        // If user is Owner, fetch active teachers for assignment dropdown
+        if (profile?.role === "owner") {
+          setLoadingTeachers(true);
+          const teacherRes = await apiClient<{ data?: TeacherRecord[] }>(
+            "/teachers?isActive=true"
+          );
+          const list = Array.isArray(teacherRes.data)
+            ? teacherRes.data
+            : teacherRes.data && "data" in teacherRes.data && Array.isArray(teacherRes.data.data)
+            ? (teacherRes.data.data as TeacherRecord[])
+            : [];
+          setTeachers(list.filter((t) => t.isActive !== false));
         }
       } catch (err) {
-        console.error("Failed to load batches from API:", err);
+        console.error("Failed to load batches or teachers:", err);
       } finally {
         setLoadingBatches(false);
+        setLoadingTeachers(false);
       }
     }
-    loadBatches();
+    loadInitialData();
   }, [isOpen]);
 
   // Combine fetched batches, passed available batches, student batch, and fallbacks
@@ -134,20 +166,27 @@ export default function StudentFormModal({
       setIsActive(
         studentToEdit.isActive !== undefined ? studentToEdit.isActive : true
       );
+      setAssignedTeacherId(studentToEdit.assignedTeacherId || "");
     } else {
       // Defaults for new admission
       setName("");
-      setBatch(batchOptions[0] || "Class 10 - Science");
+      setBatch(initialBatch || batchOptions[0] || "Class 10 - Science");
       setParentWhatsApp("");
       setJoiningDate(new Date().toISOString().split("T")[0]);
       setMonthlyFee(2500);
       setBillingCycleDate(5);
       setIsActive(true);
+      // For Teacher: locks to their own account; for Owner: defaults to "" (Myself/Owner)
+      setAssignedTeacherId(
+        userProfile?.role === "teacher" ? userProfile.teacherId || "" : ""
+      );
     }
     setError(null);
-  }, [studentToEdit, isOpen, fetchedBatches.length]);
+  }, [studentToEdit, isOpen, fetchedBatches.length, userProfile, initialBatch]);
 
   if (!isOpen) return null;
+
+  const isTeacherUser = userProfile?.role === "teacher";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -170,9 +209,13 @@ export default function StudentFormModal({
       return;
     }
 
-    if (!cleanPhone || cleanPhone.length < 10) {
-      setError("Please enter a valid 10-digit Parent WhatsApp number.");
-      return;
+    const isTeacherUser = userProfile?.role === "teacher";
+
+    if (!isEditing || !isTeacherUser) {
+      if (!cleanPhone || cleanPhone.length < 10) {
+        setError("Please enter a valid 10-digit Parent WhatsApp number.");
+        return;
+      }
     }
 
     if (isNaN(parsedFee) || parsedFee < 0) {
@@ -184,43 +227,61 @@ export default function StudentFormModal({
       setError("Billing cycle date must be a day of the month between 1 and 31.");
       return;
     }
+    // For Owner: empty string or "owner" evaluates to null (Myself/Owner)
+    const payloadTeacherId = isTeacherUser
+      ? undefined
+      : assignedTeacherId && assignedTeacherId !== "owner"
+      ? assignedTeacherId
+      : null;
 
     setLoading(true);
 
     try {
       if (isEditing && studentToEdit?._id) {
         // Edit existing student via PUT /api/students/[id]
+        const updateBody: Record<string, unknown> = {
+          name: cleanName,
+          joiningDate,
+          monthlyFee: parsedFee,
+          billingCycleDate: parsedCycle,
+          isActive,
+        };
+
+        if (!isTeacherUser) {
+          updateBody.batch = finalBatch;
+          updateBody.parentWhatsApp = cleanPhone;
+          updateBody.assignedTeacherId = payloadTeacherId;
+        }
+
         const res = await apiClient<StudentRecord>(
           `/students/${studentToEdit._id}`,
           {
             method: "PUT",
-            body: {
-              name: cleanName,
-              batch: finalBatch,
-              parentWhatsApp: cleanPhone,
-              joiningDate,
-              monthlyFee: parsedFee,
-              billingCycleDate: parsedCycle,
-              isActive,
-            },
+            body: updateBody,
           }
         );
 
         onSuccess(res.data);
       } else {
         // Add new student via POST /api/students
+        const createBody: Record<string, unknown> = {
+          centerId: getCurrentCenterId(),
+          name: cleanName,
+          batch: finalBatch,
+          parentWhatsApp: cleanPhone,
+          joiningDate,
+          monthlyFee: parsedFee,
+          billingCycleDate: parsedCycle,
+          isActive: true,
+        };
+
+        if (!isTeacherUser) {
+          createBody.assignedTeacherId = payloadTeacherId;
+        }
+
         const res = await apiClient<StudentRecord>("/students", {
           method: "POST",
-          body: {
-            centerId: getCurrentCenterId(),
-            name: cleanName,
-            batch: finalBatch,
-            parentWhatsApp: cleanPhone,
-            joiningDate,
-            monthlyFee: parsedFee,
-            billingCycleDate: parsedCycle,
-            isActive: true,
-          },
+          body: createBody,
         });
 
         onSuccess(res.data);
@@ -237,13 +298,13 @@ export default function StudentFormModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-fade-in overflow-y-auto">
-      <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-200/90 overflow-hidden my-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/65 backdrop-blur-sm animate-fade-in overflow-y-auto">
+      <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-200/90 my-auto sm:my-8 flex flex-col max-h-[92vh] overflow-hidden">
         {/* Modal Top Decorative Accent */}
-        <div className="h-1.5 w-full bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-500" />
+        <div className="h-1.5 w-full bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-500 flex-shrink-0" />
 
         {/* Modal Header */}
-        <div className="p-5 border-b border-slate-100 flex items-start justify-between bg-slate-50/50">
+        <div className="p-5 sm:px-6 sm:py-5 border-b border-slate-100 flex items-start justify-between bg-slate-50/70 flex-shrink-0">
           <div className="flex items-center gap-3">
             <div
               className={`w-11 h-11 rounded-2xl flex items-center justify-center shadow-md ${
@@ -264,7 +325,7 @@ export default function StudentFormModal({
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 {isEditing
-                  ? "Update student enrollment and recurring billing parameters"
+                  ? "Update student enrollment, teacher assignment, and billing rules"
                   : "Enroll a new student with automated monthly fee rules"}
               </p>
             </div>
@@ -281,138 +342,226 @@ export default function StudentFormModal({
 
         {/* Error Alert Banner */}
         {error && (
-          <div className="mx-5 mt-4 p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start gap-2.5 text-xs animate-shake">
+          <div className="mx-5 sm:mx-6 mt-4 p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start gap-2.5 text-xs animate-shake flex-shrink-0">
             <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
             <span className="font-semibold leading-tight">{error}</span>
           </div>
         )}
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {/* Field 1: Student Name */}
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-              Student Full Name <span className="text-rose-500">*</span>
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <User className="w-4 h-4" />
-              </div>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  if (error) setError(null);
-                }}
-                placeholder="e.g. Aryan Gupta"
-                required
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-10 pr-4 py-2.5 text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 transition-all"
-              />
-            </div>
-          </div>
-
-          {/* Field 2: Parent WhatsApp Number */}
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
-              Parent WhatsApp Number <span className="text-rose-500">*</span>
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500 font-bold text-xs">
-                <Phone className="w-4 h-4 mr-1 text-slate-400" />
-                <span>+91</span>
-              </div>
-              <input
-                type="tel"
-                value={parentWhatsApp}
-                onChange={(e) => {
-                  setParentWhatsApp(e.target.value);
-                  if (error) setError(null);
-                }}
-                placeholder="98765 43210"
-                maxLength={10}
-                required
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-16 pr-4 py-2.5 text-sm font-semibold font-mono tracking-wide text-slate-900 placeholder:text-slate-400 placeholder:font-normal focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 transition-all"
-              />
-            </div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Used for VIP Parent Magic Links and automated fee receipts.
-            </p>
-          </div>
-
-          {/* Field 3: Assigned Batch (Clean <select> populated from GET /api/batches) */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label
-                htmlFor="student-batch-select"
-                className="block text-xs font-bold uppercase tracking-wider text-slate-600"
-              >
-                Assigned Batch <span className="text-rose-500">*</span>
+        <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-4 sm:space-y-5 overflow-y-auto flex-1">
+          {/* Section: Basic Details (2-col on sm) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Field 1: Student Name */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                Student Full Name <span className="text-rose-500">*</span>
               </label>
-              {loadingBatches && (
-                <span className="text-[10px] text-blue-600 flex items-center gap-1 font-semibold">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  Loading batches...
-                </span>
-              )}
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <User className="w-4 h-4" />
+                </div>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    if (error) setError(null);
+                  }}
+                  placeholder="e.g. Aryan Gupta"
+                  required
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-10 pr-4 py-2.5 text-sm font-semibold text-slate-900 placeholder:text-slate-400 placeholder:font-normal focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 transition-all"
+                />
+              </div>
             </div>
 
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <Users className="w-4 h-4" />
-              </div>
-              <select
-                id="student-batch-select"
-                value={batch}
-                onChange={(e) => {
-                  setBatch(e.target.value);
-                  if (error) setError(null);
-                }}
-                required
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-10 pr-8 py-2.5 text-sm font-semibold text-slate-800 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 transition-all cursor-pointer"
-              >
-                {batchOptions.length === 0 ? (
-                  <option value="" disabled>
-                    No batches available — create a batch first
-                  </option>
+            {/* Field 2: Parent WhatsApp Number */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                Parent WhatsApp Number <span className="text-rose-500">*</span>
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500 font-bold text-xs">
+                  <Phone className="w-4 h-4 mr-1 text-slate-400" />
+                  <span>+91</span>
+                </div>
+                {isEditing && isTeacherUser ? (
+                  <input
+                    type="text"
+                    value={parentWhatsApp || "••••••••••"}
+                    disabled
+                    aria-label="Parent contact number masked for privacy"
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-100 pl-16 pr-4 py-2.5 text-sm font-semibold font-mono tracking-wide text-slate-500 cursor-not-allowed"
+                  />
                 ) : (
-                  batchOptions.map((b) => (
-                    <option key={b} value={b}>
-                      {b}
-                    </option>
-                  ))
+                  <input
+                    type="tel"
+                    value={parentWhatsApp}
+                    onChange={(e) => {
+                      setParentWhatsApp(e.target.value);
+                      if (error) setError(null);
+                    }}
+                    placeholder="98765 43210"
+                    maxLength={10}
+                    required
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-16 pr-4 py-2.5 text-sm font-semibold font-mono tracking-wide text-slate-900 placeholder:text-slate-400 placeholder:font-normal focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 transition-all"
+                  />
                 )}
-              </select>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Used for VIP Parent Magic Links and automated fee receipts.
+              </p>
             </div>
           </div>
 
-          {/* Row of Two: Joining Date & Monthly Fee */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            {/* Field 4: Joining Date */}
+          {/* Section: Academic Allocation (2-col on sm) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Field 3: Assigned Batch */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label
+                  htmlFor="student-batch-select"
+                  className="block text-xs font-bold uppercase tracking-wider text-slate-600"
+                >
+                  Assigned Batch <span className="text-rose-500">*</span>
+                </label>
+                {loadingBatches && (
+                  <span className="text-[10px] text-blue-600 flex items-center gap-1 font-semibold">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Loading...
+                  </span>
+                )}
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <Users className="w-4 h-4" />
+                </div>
+                <select
+                  id="student-batch-select"
+                  value={batch}
+                  disabled={isEditing && isTeacherUser}
+                  onChange={(e) => {
+                    setBatch(e.target.value);
+                    if (error) setError(null);
+                  }}
+                  required
+                  className={`w-full rounded-2xl border border-slate-200 pl-10 pr-8 py-2.5 text-sm font-semibold text-slate-800 transition-all ${
+                    isEditing && isTeacherUser
+                      ? "bg-slate-100/90 text-slate-500 cursor-not-allowed"
+                      : "bg-slate-50/50 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 cursor-pointer"
+                  }`}
+                >
+                  {batchOptions.length === 0 ? (
+                    <option value="" disabled>
+                      No batches available — create a batch first
+                    </option>
+                  ) : (
+                    batchOptions.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))
+                  )}
+                </select>
+                {isEditing && isTeacherUser && (
+                  <p className="text-[10px] text-slate-400 mt-1 font-medium">
+                    Batch cannot be directly modified by teachers. Submit a batch assignment request for Owner approval.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Field 4: Assigned Faculty / Teacher */}
+            {userProfile?.role === "teacher" ? (
+              <div className="flex flex-col justify-end">
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex-shrink-0 flex items-center justify-center font-bold text-xs shadow-xs">
+                      <GraduationCap className="w-4 h-4 stroke-[2.2]" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block truncate">
+                        Assigned Faculty
+                      </span>
+                      <span className="text-xs font-bold text-slate-900 truncate block">
+                        {userProfile.teacherName || "Teacher"} (You)
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-extrabold text-indigo-700 bg-white px-2 py-0.5 rounded-full border border-indigo-200 shadow-2xs flex-shrink-0 ml-1">
+                    LOCKED
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label
+                    htmlFor="assigned-teacher-select"
+                    className="block text-xs font-bold uppercase tracking-wider text-slate-600"
+                  >
+                    Assigned Faculty / Teacher
+                  </label>
+                  {loadingTeachers && (
+                    <span className="text-[10px] text-indigo-600 flex items-center gap-1 font-semibold">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Loading...
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                    <GraduationCap className="w-4 h-4" />
+                  </div>
+                  <select
+                    id="assigned-teacher-select"
+                    value={assignedTeacherId}
+                    onChange={(e) => {
+                      setAssignedTeacherId(e.target.value);
+                      if (error) setError(null);
+                    }}
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-10 pr-8 py-2.5 text-sm font-semibold text-slate-800 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 transition-all cursor-pointer"
+                  >
+                    <option value="">Myself (Owner)</option>
+                    {teachers.map((t) => (
+                      <option key={t._id} value={t._id}>
+                        {t.name} ({t.loginId})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Section: Admission Date & Fee Setup (2-col on sm) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Field 5: Joining Date */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
                 Joining Date
               </label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
                   <Calendar className="w-4 h-4" />
                 </div>
                 <input
                   type="date"
                   value={joiningDate}
                   onChange={(e) => setJoiningDate(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-9 pr-3 py-2 text-sm font-semibold text-slate-800 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-10 pr-3 py-2.5 text-sm font-semibold text-slate-800 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 transition-all"
                 />
               </div>
             </div>
 
-            {/* Field 5: Monthly Fee Amount */}
+            {/* Field 6: Monthly Fee Amount */}
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
                 Monthly Fee (₹) <span className="text-rose-500">*</span>
               </label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500 font-bold text-xs">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500 font-bold text-xs">
                   <IndianRupee className="w-4 h-4 mr-0.5 text-slate-400" />
                 </div>
                 <input
@@ -423,23 +572,23 @@ export default function StudentFormModal({
                   onChange={(e) => setMonthlyFee(e.target.value)}
                   placeholder="2500"
                   required
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-8 pr-3 py-2 text-sm font-bold text-slate-900 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-10 pr-3 py-2.5 text-sm font-bold text-slate-900 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 transition-all"
                 />
               </div>
             </div>
           </div>
 
           {/* Quick Fee Amount Chips */}
-          <div className="flex items-center gap-1.5 flex-wrap">
+          <div className="flex items-center gap-1.5 flex-wrap px-0.5">
             <span className="text-[11px] text-slate-400 font-medium">Quick fee:</span>
             {PRESET_FEES.map((fee) => (
               <button
                 key={fee}
                 type="button"
                 onClick={() => setMonthlyFee(fee)}
-                className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors ${
+                className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold transition-colors ${
                   Number(monthlyFee) === fee
-                    ? "bg-blue-600 text-white"
+                    ? "bg-blue-600 text-white shadow-xs"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
@@ -448,9 +597,9 @@ export default function StudentFormModal({
             ))}
           </div>
 
-          {/* Field 6: Billing Cycle Date (Day of Month 1-31) */}
-          <div className="rounded-2xl border border-slate-200/90 bg-slate-50/60 p-3.5 space-y-2.5">
-            <div className="flex items-center justify-between">
+          {/* Field 7: Billing Cycle Date (Day of Month 1-31) */}
+          <div className="rounded-2xl border border-slate-200/90 bg-slate-50/60 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-4">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
                   Billing Cycle Due Date
@@ -459,7 +608,7 @@ export default function StudentFormModal({
                   Day of the month when monthly invoice is generated (1 to 31)
                 </p>
               </div>
-              <div className="relative w-20">
+              <div className="relative w-20 flex-shrink-0">
                 <input
                   type="number"
                   min="1"
@@ -467,13 +616,13 @@ export default function StudentFormModal({
                   value={billingCycleDate}
                   onChange={(e) => setBillingCycleDate(Number(e.target.value))}
                   required
-                  className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-center text-sm font-bold text-slate-900 focus:border-blue-600 focus:ring-2 focus:ring-blue-100 transition-all"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-center text-sm font-bold text-slate-900 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 transition-all shadow-2xs"
                 />
               </div>
             </div>
 
             {/* Quick Cycle Chips */}
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
               <span className="text-[11px] text-slate-400 font-medium">
                 Standard cycle:
               </span>
@@ -484,7 +633,7 @@ export default function StudentFormModal({
                   onClick={() => setBillingCycleDate(day)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
                     billingCycleDate === day
-                      ? "bg-slate-900 text-white"
+                      ? "bg-slate-900 text-white shadow-xs"
                       : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
                   }`}
                 >
@@ -495,9 +644,9 @@ export default function StudentFormModal({
             </div>
           </div>
 
-          {/* Field 7: Active Student Status (if editing) */}
+          {/* Field 8: Active Student Status (if editing) */}
           {isEditing && (
-            <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-200">
+            <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
               <div>
                 <span className="text-xs font-bold text-slate-800">
                   Enrollment Status
@@ -523,12 +672,12 @@ export default function StudentFormModal({
           )}
 
           {/* Action Buttons */}
-          <div className="pt-2 flex items-center gap-3">
+          <div className="pt-2 sm:pt-3 flex items-center gap-3">
             <button
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="tap-bounce flex-1 h-11 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors"
+              className="tap-bounce flex-1 h-11 sm:h-12 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs sm:text-sm transition-colors"
             >
               Cancel
             </button>
@@ -536,7 +685,7 @@ export default function StudentFormModal({
             <button
               type="submit"
               disabled={loading}
-              className={`tap-bounce flex-1 h-11 rounded-2xl text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all disabled:opacity-60 ${
+              className={`tap-bounce flex-1 h-11 sm:h-12 rounded-2xl text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg transition-all disabled:opacity-60 ${
                 isEditing
                   ? "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/30"
                   : "bg-blue-600 hover:bg-blue-700 shadow-blue-600/30"

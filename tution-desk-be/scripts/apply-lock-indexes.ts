@@ -2,7 +2,7 @@
  * TuitionDesk Phase 2I.6.4 — Execute Approved Production Lock Indexes
  *
  * Target:
- *   Database:   test
+ *   Database:   Explicitly confirmed via --expected-db=<dbname> or EXPECTED_DB_NAME
  *   Collection: feecreationlocks
  *
  * Indexes to apply:
@@ -14,6 +14,10 @@ import mongoose from "mongoose";
 import fs from "fs";
 import path from "path";
 import { sanitizeMongoUri } from "../src/lib/reconciliationEngine.ts";
+import {
+  resolveMigrationTargetDatabase,
+  verifyConnectedDatabaseName,
+} from "../src/lib/migrationTargetHelper.ts";
 
 // Automatically load local .env if present
 try {
@@ -39,36 +43,30 @@ try {
 }
 
 async function main() {
-  const rawUri = process.env.MONGODB_AUDIT_URI || process.env.MONGODB_URI;
+  const target = resolveMigrationTargetDatabase({
+    argv: process.argv.slice(2),
+    rawUri: process.env.MONGODB_AUDIT_URI || process.env.MONGODB_URI,
+    env: process.env,
+  });
 
-  if (!rawUri || !rawUri.trim()) {
-    console.error("❌ ERROR: Missing database connection URI.");
+  if (!target.valid) {
+    console.error("\n❌ TARGET DATABASE CONFIRMATION FAILED:");
+    console.error(target.error);
+    console.error("\nUsage example:");
+    console.error("  npx tsx scripts/apply-lock-indexes.ts --expected-db=<target_database_name>");
     process.exit(1);
-  }
-
-  // Normalize URI to target database 'test' if no database specified in path
-  let targetUri = rawUri.trim();
-  const httpEquiv = targetUri.replace(/^mongodb(\+srv)?:\/\//i, "http://");
-  try {
-    const parsed = new URL(httpEquiv);
-    const pathname = parsed.pathname.replace(/^\/+/, "");
-    if (!pathname) {
-      targetUri = targetUri.replace(/\/?(\?|$)/, "/test$1");
-    }
-  } catch {
-    // Retain targetUri if URL parsing fails
   }
 
   console.log("===============================================================================");
   console.log(" TuitionDesk Phase 2I.6.4: Execute Approved Lock Indexes");
-  console.log(" TARGET: Database 'test', Collection 'feecreationlocks'");
+  console.log(` TARGET: Database '${target.expectedDbName}', Collection 'feecreationlocks'`);
   console.log("===============================================================================");
-  console.log(`Connection URI: ${sanitizeMongoUri(targetUri)}`);
+  console.log(`Connection URI: ${target.sanitizedUri}`);
 
   let connection: typeof mongoose | null = null;
 
   try {
-    connection = await mongoose.connect(targetUri, {
+    connection = await mongoose.connect(target.targetUri, {
       autoIndex: false,
       bufferCommands: false,
       serverSelectionTimeoutMS: 8000,
@@ -80,12 +78,10 @@ async function main() {
       throw new Error("Failed to access MongoDB database instance.");
     }
 
-    // Step 1: Final safety check
+    // Step 1: Final safety check - verify active database strictly matches expected database
     const dbName = db.databaseName;
     console.log(`[VERIFY 1] Active Database Name: '${dbName}'`);
-    if (dbName !== "test") {
-      throw new Error(`ABORT: Expected database 'test', but active database is '${dbName}'.`);
-    }
+    verifyConnectedDatabaseName(dbName, target.expectedDbName);
 
     const collectionName = "feecreationlocks";
     console.log(`[VERIFY 2] Target Collection: '${collectionName}'`);

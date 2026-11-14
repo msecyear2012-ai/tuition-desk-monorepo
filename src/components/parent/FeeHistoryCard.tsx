@@ -20,6 +20,7 @@ export interface FeeHistoryItem {
   month: string;
   title?: string;
   amountDue: number;
+  paidAmount?: number;
   dueDate?: string | null;
   status: string;
   utrNumber?: string;
@@ -49,6 +50,19 @@ function formatPaidDate(dateString?: string | null): string {
   } catch {
     return String(dateString);
   }
+}
+
+function getClearedAmount(fee: FeeHistoryItem | null | undefined): number {
+  if (!fee) return 0;
+  const paid = Number(fee.paidAmount);
+  if (!isNaN(paid) && paid > 0) {
+    return paid;
+  }
+  const due = Number(fee.amountDue);
+  if (!isNaN(due) && due > 0) {
+    return due;
+  }
+  return 0;
 }
 
 export default function FeeHistoryCard({
@@ -188,7 +202,7 @@ export default function FeeHistoryCard({
                   <div className="flex items-center justify-between sm:justify-end gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 flex-shrink-0">
                     <div className="text-left sm:text-right">
                       <div className="text-[15px] font-extrabold text-emerald-700 font-mono tracking-tight">
-                        ₹{Number(fee.amountDue || 0).toLocaleString("en-IN")}
+                        ₹{getClearedAmount(fee).toLocaleString("en-IN")}
                       </div>
                       <span className="inline-flex items-center gap-0.5 text-[10px] font-extrabold text-emerald-600">
                         <ShieldCheck className="h-3 w-3 stroke-[2.4]" />
@@ -347,7 +361,7 @@ export default function FeeHistoryCard({
                   Total Amount Received
                 </span>
                 <div className="text-3xl font-black font-mono text-emerald-900 tracking-tight">
-                  ₹{Number(selectedReceiptFee.amountDue || 0).toLocaleString("en-IN")}
+                  ₹{getClearedAmount(selectedReceiptFee).toLocaleString("en-IN")}
                 </div>
                 <p className="text-[10px] text-emerald-700 font-medium">
                   Official automated entry from center ledger

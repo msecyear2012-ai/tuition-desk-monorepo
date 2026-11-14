@@ -5,6 +5,7 @@ export type AttendanceStatusType = "Present" | "Absent";
 export interface IAttendance {
   centerId: string;
   studentId: Types.ObjectId;
+  assignedTeacherId?: Types.ObjectId | null;
   date: Date;
   batch: string;
   status: AttendanceStatusType;
@@ -27,6 +28,12 @@ const AttendanceSchema = new Schema<IAttendanceDocument>(
       type: Schema.Types.ObjectId,
       ref: "Student",
       required: [true, "Student ID is required"],
+      index: true,
+    },
+    assignedTeacherId: {
+      type: Schema.Types.ObjectId,
+      ref: "Teacher",
+      default: null,
       index: true,
     },
     date: {
@@ -56,6 +63,15 @@ const AttendanceSchema = new Schema<IAttendanceDocument>(
 // Compound indexes for multi-tenant querying
 AttendanceSchema.index({ centerId: 1, studentId: 1, date: 1 });
 AttendanceSchema.index({ centerId: 1, batch: 1, date: 1 });
+AttendanceSchema.index({ centerId: 1, assignedTeacherId: 1, date: -1 });
+
+// Ensure schema path exists during Next.js hot-reloading
+if (
+  mongoose.models.Attendance &&
+  !mongoose.models.Attendance.schema.path("assignedTeacherId")
+) {
+  delete mongoose.models.Attendance;
+}
 
 export const Attendance: Model<IAttendanceDocument> =
   (mongoose.models.Attendance as Model<IAttendanceDocument>) ||

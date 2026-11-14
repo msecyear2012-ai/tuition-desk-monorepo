@@ -17,6 +17,14 @@ import {
   Calendar,
   Sparkles,
   GraduationCap,
+  Lock,
+  Unlock,
+  ShieldCheck,
+  ShieldAlert,
+  Users,
+  KeyRound,
+  X,
+  ChevronRight,
 } from "lucide-react";
 
 interface ApiStudent {
@@ -64,6 +72,7 @@ interface ApiFees {
     month: string;
     title?: string;
     amountDue: number;
+    paidAmount?: number;
     dueDate?: string | null;
     status: string;
     utrNumber?: string;
@@ -87,12 +96,31 @@ interface ApiTestResult {
   isAbsent?: boolean;
 }
 
+interface LinkedStudentInfo {
+  _id: string;
+  name: string;
+  batch?: string;
+  rollNumber?: string;
+}
+
+interface ParentInfo {
+  id: string;
+  parentName?: string;
+  parentPhone?: string;
+  isPasswordProtected: boolean;
+  linkedStudents: LinkedStudentInfo[];
+  selectedStudentId?: string;
+}
+
 interface ParentPortalPayload {
+  parent?: ParentInfo;
   student: ApiStudent;
   center: ApiCenter;
   attendanceStats: ApiAttendanceStats;
   fees: ApiFees;
   testResults: ApiTestResult[];
+  requirePassword?: boolean;
+  sessionToken?: string;
 }
 
 function getInitials(name: string): string {
@@ -120,7 +148,7 @@ function formatDate(dateString?: string | null): string {
 
 export default function ParentMagicLinkPage() {
   const routeParams = useParams();
-  const studentId =
+  const rawTokenOrId =
     typeof routeParams?.studentId === "string"
       ? routeParams.studentId
       : Array.isArray(routeParams?.studentId)
@@ -129,55 +157,268 @@ export default function ParentMagicLinkPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isRevoked, setIsRevoked] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
+  const [requirePassword, setRequirePassword] = useState(false);
+  const [unlockPassword, setUnlockPassword] = useState("");
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const [unlockLoading, setUnlockLoading] = useState(false);
 
   const [data, setData] = useState<ParentPortalPayload | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState<string>("");
   const [isPaid, setIsPaid] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Password Management Modal State
+  const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [securityActionLoading, setSecurityActionLoading] = useState(false);
+  const [securityError, setSecurityError] = useState<string | null>(null);
+
+  const backendUrl =
+    process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
+
   // Fetch real Parent Portal data on mount from backend API
-  const loadPortalData = useCallback(async () => {
-    if (!studentId) {
-      setError("No student ID specified in link.");
-      setLoading(false);
-      return;
-    }
+  const loadPortalData = useCallback(
+    async (targetStudentId?: string) => {
+      if (!rawTokenOrId) {
+        setError("No portal access token specified in link.");
+        setLoading(false);
+        return;
+      }
 
-    setLoading(true);
-    setError(null);
+      // If opening with a high-entropy portal token (pt_...), seamlessly redirect to canonical /portal#token=... flow
+      if (rawTokenOrId.startsWith("pt_") && typeof window !== "undefined") {
+        window.location.replace(`/portal#token=${rawTokenOrId}`);
+        return;
+      }
 
-    try {
-      const backendUrl =
-        process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
+      setLoading(true);
+      setError(null);
+      setIsRevoked(false);
+      setIsLocked(false);
 
-      const res = await fetch(`${backendUrl}/parent/${studentId}`, {
-        method: "GET",
-        headers: {
+      try {
+        const queryParams = new URLSearchParams();
+        if (targetStudentId) {
+          queryParams.set("studentId", targetStudentId);
+        }
+
+        const url = `${backendUrl}/parent/portal/${rawTokenOrId}${
+          queryParams.toString() ? `?${queryParams.toString()}` : ""
+        }`;
+
+        const headers: Record<string, string> = {
           "Content-Type": "application/json",
-        },
-      });
+        };
+        const storedToken =
+          typeof window !== "undefined"
+            ? sessionStorage.getItem("parent_portal_session_token") ||
+              localStorage.getItem("parent_portal_session_token")
+            : null;
+        if (storedToken) {
+          headers["Authorization"] = `Bearer ${storedToken}`;
+        }
 
-      const json = await res.json();
+        const res = await fetch(url, {
+          method: "GET",
+          headers,
+          credentials: "include", // send/receive session cookie
+        });
 
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || "Failed to load student portal records");
+        const json = await res.json();
+
+        // 1. Check for password requirement
+        if (json.requirePassword) {
+          setRequirePassword(true);
+          setData(json);
+          setLoading(false);
+          return;
+        }
+
+        if (!res.ok || !json.success) {
+          if (res.status === 401 && typeof window !== "undefined") {
+            sessionStorage.removeItem("parent_portal_session_token");
+            localStorage.removeItem("parent_portal_session_token");
+          }
+          if (res.status === 403 || json.revoked) {
+            setIsRevoked(true);
+            throw new Error(
+              json.error || "This portal access link has been revoked."
+            );
+          }
+          if (res.status === 429 || json.locked) {
+            setIsLocked(true);
+            throw new Error(
+              json.error ||
+                "Portal access locked due to failed password attempts."
+            );
+          }
+          throw new Error(json.error || "Failed to load portal records");
+        }
+
+        if (json.sessionToken && typeof window !== "undefined") {
+          sessionStorage.setItem("parent_portal_session_token", json.sessionToken);
+          localStorage.setItem("parent_portal_session_token", json.sessionToken);
+        }
+
+        setRequirePassword(false);
+        setData(json);
+
+        const currentChildId =
+          json.parent?.selectedStudentId || json.student?._id;
+        setSelectedStudentId(currentChildId);
+
+        // Clean-URL exchange: strip raw token pt_... from address bar once authenticated
+        if (
+          typeof window !== "undefined" &&
+          currentChildId &&
+          window.location.pathname.includes("pt_")
+        ) {
+          window.history.replaceState(
+            { studentId: currentChildId },
+            "",
+            `/p/${currentChildId}`
+          );
+        }
+
+        if (
+          json.fees?.status === "Paid" ||
+          json.fees?.pendingAmount === 0
+        ) {
+          setIsPaid(true);
+        } else {
+          setIsPaid(false);
+        }
+      } catch (err: unknown) {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : "Unable to load student information";
+        setError(msg);
+      } finally {
+        setLoading(false);
       }
-
-      setData(json.data);
-      if (json.data.fees?.status === "Paid" || json.data.fees?.pendingAmount === 0) {
-        setIsPaid(true);
-      }
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "Unable to load student information";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [studentId]);
+    },
+    [rawTokenOrId, backendUrl]
+  );
 
   useEffect(() => {
     loadPortalData();
   }, [loadPortalData]);
+
+  // Handle password unlock submission
+  const handleUnlockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!unlockPassword.trim()) return;
+
+    setUnlockLoading(true);
+    setUnlockError(null);
+
+    try {
+      const res = await fetch(
+        `${backendUrl}/parent/portal/${rawTokenOrId}/unlock`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ password: unlockPassword.trim() }),
+        }
+      );
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(
+          json.error ||
+            `Incorrect password.${
+              json.remainingAttempts !== undefined
+                ? ` (${json.remainingAttempts} attempts remaining)`
+                : ""
+            }`
+        );
+      }
+
+      setRequirePassword(false);
+      setUnlockPassword("");
+      await loadPortalData();
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to unlock portal";
+      setUnlockError(msg);
+    } finally {
+      setUnlockLoading(false);
+    }
+  };
+
+  // Handle Child Switcher with Clean-URL preservation
+  const handleSelectChild = (childId: string) => {
+    if (childId === selectedStudentId) return;
+    loadPortalData(childId);
+    if (typeof window !== "undefined") {
+      window.history.replaceState({ studentId: childId }, "", `/p/${childId}`);
+    }
+  };
+
+  // Handle Password Setup / Removal
+  const handleSaveSecurity = async (action: "set" | "remove") => {
+    setSecurityActionLoading(true);
+    setSecurityError(null);
+
+    try {
+      if (action === "set") {
+        if (!newPassword || newPassword.length < 4) {
+          throw new Error("Password must be at least 4 characters long");
+        }
+        if (newPassword !== confirmPassword) {
+          throw new Error("Passwords do not match");
+        }
+      } else {
+        if (!currentPassword) {
+          throw new Error("Current password is required to disable protection");
+        }
+      }
+
+      const res = await fetch(
+        `${backendUrl}/parent/portal/${rawTokenOrId}/password`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            action,
+            newPassword,
+            currentPassword,
+          }),
+        }
+      );
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to update password settings");
+      }
+
+      setToastMessage(
+        action === "set"
+          ? "PIN/Password protection enabled successfully!"
+          : "Password protection removed. Direct link access restored."
+      );
+      setTimeout(() => setToastMessage(null), 4000);
+
+      setShowSecurityModal(false);
+      setNewPassword("");
+      setConfirmPassword("");
+      setCurrentPassword("");
+      await loadPortalData();
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Security update error";
+      setSecurityError(msg);
+    } finally {
+      setSecurityActionLoading(false);
+    }
+  };
 
   const handlePaymentSuccess = () => {
     setIsPaid(true);
@@ -198,7 +439,7 @@ export default function ParentMagicLinkPage() {
           showLogout={false}
         />
         <div className="p-4 space-y-4 max-w-lg mx-auto w-full animate-pulse">
-          {/* Header Profile Skeleton */}
+          <div className="h-10 w-full rounded-2xl bg-slate-200/90" />
           <div className="h-28 rounded-3xl bg-slate-200/90 p-4 flex items-center gap-4">
             <div className="h-16 w-16 rounded-2xl bg-slate-300" />
             <div className="flex-1 space-y-2">
@@ -206,36 +447,78 @@ export default function ParentMagicLinkPage() {
               <div className="h-3 w-48 bg-slate-300 rounded" />
             </div>
           </div>
-
-          {/* Fee Card Skeleton */}
           <div className="h-40 rounded-3xl bg-slate-200/80 p-5 space-y-3">
             <div className="h-4 w-28 bg-slate-300 rounded" />
             <div className="h-8 w-44 bg-slate-300 rounded-lg" />
             <div className="h-10 w-full bg-slate-300/80 rounded-xl" />
-          </div>
-
-          {/* Attendance Skeleton */}
-          <div className="h-32 rounded-3xl bg-slate-200/80 p-4 flex items-center justify-between">
-            <div className="space-y-2">
-              <div className="h-4 w-32 bg-slate-300 rounded" />
-              <div className="h-3 w-40 bg-slate-300 rounded" />
-            </div>
-            <div className="h-20 w-20 rounded-full bg-slate-300" />
-          </div>
-
-          {/* Tests Skeleton */}
-          <div className="h-36 rounded-3xl bg-slate-200/80 p-4 flex flex-col justify-center items-center gap-2 text-slate-400">
-            <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
-            <span className="text-xs font-semibold text-slate-500">
-              Loading student progress...
-            </span>
           </div>
         </div>
       </div>
     );
   }
 
-  // 2. Error State (e.g. 404 Student Not Found)
+  // 2. Password Protection Gate Modal / View
+  if (requirePassword) {
+    return (
+      <div className="flex flex-col min-h-screen bg-slate-50">
+        <TopHeader
+          title={data?.center?.name || "Tuition Center"}
+          subtitle="VIP Parent Portal • Protected Access"
+          badgeText="Protected"
+          showLogout={false}
+        />
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="max-w-sm w-full rounded-3xl border border-slate-200 bg-white p-6 shadow-xl space-y-5 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-purple-50 text-purple-600 border border-purple-100">
+              <Lock className="h-7 w-7" />
+            </div>
+
+            <div className="space-y-1">
+              <h2 className="text-lg font-bold text-slate-900">
+                Enter Portal PIN / Password
+              </h2>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                This portal link has been password-protected by the parent for
+                added privacy.
+              </p>
+            </div>
+
+            {unlockError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs font-semibold text-left">
+                {unlockError}
+              </div>
+            )}
+
+            <form onSubmit={handleUnlockSubmit} className="space-y-3.5">
+              <input
+                type="password"
+                required
+                placeholder="Enter your PIN or password"
+                value={unlockPassword}
+                onChange={(e) => setUnlockPassword(e.target.value)}
+                className="w-full h-11 px-3.5 rounded-2xl border border-slate-200 text-center text-sm font-bold tracking-widest focus:outline-hidden focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              />
+
+              <button
+                type="submit"
+                disabled={unlockLoading || !unlockPassword.trim()}
+                className="tap-bounce w-full h-11 rounded-2xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md shadow-purple-600/25 transition-all disabled:opacity-50"
+              >
+                {unlockLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Unlock className="w-4 h-4" />
+                )}
+                <span>Unlock Student Portal</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Error States (Revoked / Locked / Invalid)
   if (error || !data || !data.student) {
     return (
       <div className="flex flex-col min-h-screen bg-slate-50">
@@ -247,31 +530,62 @@ export default function ParentMagicLinkPage() {
         />
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="max-w-sm w-full rounded-3xl border border-slate-200 bg-white p-6 text-center shadow-lg space-y-4">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-rose-600 border border-rose-100">
-              <AlertCircle className="h-7 w-7" />
+            <div
+              className={`mx-auto flex h-14 w-14 items-center justify-center rounded-2xl ${
+                isRevoked
+                  ? "bg-amber-50 text-amber-600 border border-amber-100"
+                  : isLocked
+                  ? "bg-purple-50 text-purple-600 border border-purple-100"
+                  : "bg-rose-50 text-rose-600 border border-rose-100"
+              }`}
+            >
+              {isRevoked ? (
+                <ShieldAlert className="h-7 w-7" />
+              ) : isLocked ? (
+                <Lock className="h-7 w-7" />
+              ) : (
+                <AlertCircle className="h-7 w-7" />
+              )}
             </div>
             <div className="space-y-1">
               <h2 className="text-lg font-bold text-slate-900">
-                Portal Record Not Found
+                {isRevoked
+                  ? "Access Link Revoked"
+                  : isLocked
+                  ? "Portal Temporarily Locked"
+                  : error?.includes("Authentication required")
+                  ? "Active Parent Session Required"
+                  : "Portal Record Not Found"}
               </h2>
               <p className="text-xs text-slate-500 leading-relaxed">
-                {error ||
-                  "The requested student magic link is invalid or may have expired."}
+                {error?.includes("Authentication required")
+                  ? "To view this student's records, please open the private VIP portal link sent to your registered WhatsApp number, or contact your institute."
+                  : error ||
+                    "The requested student magic link is invalid or may have expired."}
               </p>
             </div>
-            <button
-              onClick={() => loadPortalData()}
-              className="tap-bounce w-full h-11 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center shadow-md shadow-blue-600/20"
-            >
-              Try Again
-            </button>
+            {error?.includes("Authentication required") ? (
+              <a
+                href="/portal"
+                className="tap-bounce w-full h-11 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center shadow-md shadow-blue-600/20"
+              >
+                Go to Parent Portal
+              </a>
+            ) : (
+              <button
+                onClick={() => loadPortalData()}
+                className="tap-bounce w-full h-11 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center justify-center shadow-md shadow-blue-600/20"
+              >
+                Try Again
+              </button>
+            )}
           </div>
         </div>
       </div>
     );
   }
 
-  const { student, center, attendanceStats, fees, testResults } = data;
+  const { student, center, attendanceStats, fees, testResults, parent } = data;
 
   const studentName = student.name || "Student";
   const batchName = student.batch || "Regular Batch";
@@ -305,14 +619,52 @@ export default function ParentMagicLinkPage() {
 
       {/* Main Content Area */}
       <div className="p-4 space-y-4 pb-24 max-w-lg mx-auto w-full">
-        {/* 1. Header & Profile Card: Real Student & Batch */}
-        <ChildProfileHeader
-          childName={studentName}
-          batchName={batchName}
-          rollNumber={student._id.slice(-4).toUpperCase()}
-          initials={initials}
-          avatarColor="bg-blue-100 text-blue-700 border-blue-200"
-        />
+        {/* Child Switcher Navigation (If 2+ siblings linked to this parent) */}
+        {parent?.linkedStudents && parent.linkedStudents.length > 1 && (
+          <div className="rounded-2xl bg-slate-200/80 p-1 flex items-center gap-1 overflow-x-auto shadow-2xs">
+            {parent.linkedStudents.map((child) => {
+              const isSelected = child._id === selectedStudentId;
+              return (
+                <button
+                  key={child._id}
+                  onClick={() => handleSelectChild(child._id)}
+                  className={`tap-bounce flex-1 min-w-[120px] py-1.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                    isSelected
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span className="truncate">{child.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 1. Header & Profile Card: Real Student & Batch + Security Toggle */}
+        <div className="relative">
+          <ChildProfileHeader
+            childName={studentName}
+            batchName={batchName}
+            rollNumber={student._id.slice(-4).toUpperCase()}
+            initials={initials}
+            avatarColor="bg-blue-100 text-blue-700 border-blue-200"
+          />
+
+          {/* Quick Security / PIN Protection Trigger */}
+          <button
+            onClick={() => setShowSecurityModal(true)}
+            className="absolute top-3.5 right-3.5 p-2 rounded-xl bg-slate-50/80 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors border border-slate-200/60"
+            title="Portal Privacy & Password Settings"
+          >
+            {parent?.isPasswordProtected ? (
+              <Lock className="w-4 h-4 text-purple-600" />
+            ) : (
+              <KeyRound className="w-4 h-4 text-slate-400" />
+            )}
+          </button>
+        </div>
 
         {/* 2. Crucial Fee Action Card (Real fee from MongoDB) */}
         <FeeActionCard
@@ -328,19 +680,19 @@ export default function ParentMagicLinkPage() {
           utrNumber={fees.utrNumber}
           onPaymentSuccess={() => {
             handlePaymentSuccess();
-            loadPortalData();
+            loadPortalData(selectedStudentId);
           }}
           onUtrSubmitted={(utr) => {
             setToastMessage(`Payment reference ${utr} submitted for verification!`);
             setTimeout(() => setToastMessage(null), 4500);
-            loadPortalData();
+            loadPortalData(selectedStudentId);
           }}
           onAdvancePaymentSuccess={() => {
             setToastMessage(
               "Advance payment submitted successfully! Awaiting center verification."
             );
             setTimeout(() => setToastMessage(null), 4500);
-            loadPortalData();
+            loadPortalData(selectedStudentId);
           }}
           isPaid={isPaid || fees.status === "Paid"}
         />
@@ -427,7 +779,6 @@ export default function ParentMagicLinkPage() {
                         </div>
                       </div>
 
-                      {/* Marks & Percentage Badge */}
                       <div className="text-right flex-shrink-0">
                         {test.isAbsent ? (
                           <span
@@ -455,7 +806,6 @@ export default function ParentMagicLinkPage() {
                       </div>
                     </div>
 
-                    {/* Progress track */}
                     {!test.isAbsent && (
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
                         <div
@@ -467,7 +817,10 @@ export default function ParentMagicLinkPage() {
                               : "bg-amber-500"
                           }`}
                           style={{
-                            width: `${Math.min(100, Math.max(0, test.percentage))}%`,
+                            width: `${Math.min(
+                              100,
+                              Math.max(0, test.percentage)
+                            )}%`,
                           }}
                         />
                       </div>
@@ -491,6 +844,7 @@ export default function ParentMagicLinkPage() {
           <div className="flex items-center gap-2 pt-1">
             <a
               href={`tel:+91${center?.phone || "9876543210"}`}
+              rel="noreferrer"
               className="tap-bounce flex-1 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
             >
               <Phone className="h-3.5 w-3.5 text-slate-600" />
@@ -499,7 +853,7 @@ export default function ParentMagicLinkPage() {
             <a
               href={`https://wa.me/91${center?.phone || "9876543210"}`}
               target="_blank"
-              rel="noopener noreferrer"
+              rel="noreferrer"
               className="tap-bounce flex-1 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-colors"
             >
               <MessageCircle className="h-3.5 w-3.5" />
@@ -508,6 +862,127 @@ export default function ParentMagicLinkPage() {
           </div>
         </div>
       </div>
+
+      {/* Parent Security Modal (PIN Setup / Removal) */}
+      {showSecurityModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in">
+          <div className="max-w-sm w-full bg-white rounded-3xl p-5 shadow-2xl space-y-4 border border-slate-100">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-purple-600" />
+                <span>Portal Privacy &amp; Security</span>
+              </h4>
+              <button
+                onClick={() => {
+                  setShowSecurityModal(false);
+                  setSecurityError(null);
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {securityError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs font-semibold">
+                {securityError}
+              </div>
+            )}
+
+            {parent?.isPasswordProtected ? (
+              <div className="space-y-3.5">
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  This portal is currently protected with a password. Enter your
+                  current password to remove protection and restore direct link
+                  access.
+                </p>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    Current Password:
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="Enter current password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl border border-slate-200 text-xs font-bold"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => setShowSecurityModal(false)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleSaveSecurity("remove")}
+                    disabled={securityActionLoading || !currentPassword}
+                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                  >
+                    {securityActionLoading && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    )}
+                    <span>Remove Password</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3.5">
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Direct link access is active. You can optionally set a 4–32
+                  character PIN or password for extra privacy.
+                </p>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    New PIN / Password:
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="Minimum 4 characters"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl border border-slate-200 text-xs font-bold"
+                  />
+                  <input
+                    type="password"
+                    placeholder="Confirm password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl border border-slate-200 text-xs font-bold"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => setShowSecurityModal(false)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => handleSaveSecurity("set")}
+                    disabled={
+                      securityActionLoading ||
+                      !newPassword ||
+                      newPassword !== confirmPassword
+                    }
+                    className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+                  >
+                    {securityActionLoading && (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    )}
+                    <span>Set Password</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

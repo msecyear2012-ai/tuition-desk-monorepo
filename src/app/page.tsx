@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Loader2, RefreshCw, AlertCircle } from "lucide-react";
 import PendingFeesHeroCard from "@/components/dashboard/PendingFeesHeroCard";
-import { getAuthenticatedCenter } from "@/lib/centerProfile";
+import { getAuthenticatedCenter, getCachedCenter } from "@/lib/centerProfile";
 import StatsRow from "@/components/dashboard/StatsRow";
 import QuickActions from "@/components/dashboard/QuickActions";
 import dynamic from "next/dynamic";
@@ -51,16 +51,25 @@ function formatRelativeTime(dateString?: string): string {
 
 export default function DashboardPage() {
   const cachedDashboard = getApiCache<OwnerDashboardData>("/dashboard/owner");
+  const cachedCenter = getCachedCenter();
 
   const [loading, setLoading] = useState(() => !cachedDashboard);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [centerInfo, setCenterInfo] = useState({
-    name: "Tuition Center",
-    ownerName: "Owner",
-    tagline: "Excellence in Coaching & Mentorship",
-  });
+  const [centerInfo, setCenterInfo] = useState<{
+    name: string;
+    ownerName: string;
+    tagline: string;
+    role?: "owner" | "teacher";
+    teacherName?: string;
+  }>(() => ({
+    name: cachedCenter?.name || "Tuition Center",
+    ownerName: cachedCenter?.ownerName || "Owner",
+    tagline: cachedCenter?.tagline || "Excellence in Coaching & Mentorship",
+    role: cachedCenter?.role,
+    teacherName: cachedCenter?.teacherName,
+  }));
 
   const [metrics, setMetrics] = useState<DashboardMetrics>(() => {
     if (cachedDashboard?.data) {
@@ -179,6 +188,8 @@ export default function DashboardPage() {
               name: center.name,
               ownerName: center.ownerName || prev.ownerName,
               tagline: center.tagline || prev.tagline,
+              role: center.role || prev.role,
+              teacherName: center.teacherName || prev.teacherName,
             }));
           }
         })
@@ -255,7 +266,9 @@ export default function DashboardPage() {
               Welcome back,
             </p>
             <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
-              {centerInfo.ownerName}
+              {centerInfo.role === "teacher"
+                ? centerInfo.teacherName || "Teacher"
+                : centerInfo.ownerName || "Owner"}
             </h1>
           </div>
           <div className="flex items-center gap-2">

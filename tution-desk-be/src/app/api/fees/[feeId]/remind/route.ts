@@ -11,7 +11,7 @@ export async function OPTIONS(request: NextRequest) {
 
 export async function POST(
   request: NextRequest,
-  context: { params: Promise<{ feeId: string }> | { feeId: string } }
+  context: { params: Promise<{ feeId: string }> }
 ) {
   const corsHeaders = getCorsHeaders(request);
 

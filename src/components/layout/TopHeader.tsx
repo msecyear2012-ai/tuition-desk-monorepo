@@ -15,8 +15,8 @@ import {
   ChevronRight,
   X,
 } from "lucide-react";
-import { useHeader, type AlertItem } from "@/components/layout/HeaderContext";
-import { getAuthenticatedCenter, clearCachedCenter } from "@/lib/centerProfile";
+import { useHeader } from "@/components/layout/HeaderContext";
+import { getAuthenticatedCenter, clearCachedCenter, type CenterInfo } from "@/lib/centerProfile";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
 
 export interface TopHeaderProps {
@@ -34,7 +34,7 @@ const ROUTE_DEFAULTS: Record<
   { title?: string; subtitle: string; badgeText?: string }
 > = {
   "/": {
-    subtitle: "Classes 8th - 12th • CBSE & State",
+    subtitle: "Institute Dashboard & Daily Overview",
     badgeText: "Owner",
   },
   "/attendance": {
@@ -52,6 +52,16 @@ const ROUTE_DEFAULTS: Record<
   },
   "/admissions": {
     subtitle: "Admissions & Student Management",
+    badgeText: "Owner",
+  },
+  "/teachers": {
+    title: "Teacher Management",
+    subtitle: "Staff Logins, Access & Subject Allocations",
+    badgeText: "Owner",
+  },
+  "/reports": {
+    title: "Financial Reports",
+    subtitle: "Owner Financial Reports & Collection Analytics",
     badgeText: "Owner",
   },
 };
@@ -73,17 +83,24 @@ export default function TopHeader(props: TopHeaderProps) {
   const config = headerContext?.headerConfig || {};
 
   const isParentPortal =
-    pathname.startsWith("/p/") || pathname === "/login" || pathname === "/parent";
+    pathname.startsWith("/p/") ||
+    pathname === "/login" ||
+    pathname === "/parent" ||
+    pathname === "/portal" ||
+    pathname.startsWith("/portal/");
   const isSettingsPage = pathname === "/settings";
 
   const routeDefault = ROUTE_DEFAULTS[pathname];
+
+  const [centerProfile, setCenterProfile] = useState<CenterInfo | null>(null);
 
   const title = props.title ?? config.title ?? routeDefault?.title;
   const subtitle =
     props.subtitle ??
     config.subtitle ??
+    (pathname === "/" && centerProfile?.tagline ? centerProfile.tagline : undefined) ??
     routeDefault?.subtitle ??
-    "Classes 8th - 12th • CBSE & State";
+    "Institute Management";
   const badgeText = props.badgeText ?? config.badgeText ?? routeDefault?.badgeText;
   const showNotifications =
     props.showNotifications ?? config.showNotifications ?? true;
@@ -102,6 +119,32 @@ export default function TopHeader(props: TopHeaderProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  const handleMarkAllRead = async () => {
+    try {
+      await fetch("/api/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ markAllRead: true }),
+      });
+      await headerContext?.refreshAlerts();
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleClearAll = async () => {
+    try {
+      await fetch("/api/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clearAll: true }),
+      });
+      await headerContext?.refreshAlerts();
+    } catch {
+      // ignore
+    }
+  };
+
   // 1. Fetch authenticated Center Profile (cached & deduplicated, skipped on public parent portal)
   useEffect(() => {
     if (isParentPortal) return;
@@ -109,6 +152,7 @@ export default function TopHeader(props: TopHeaderProps) {
     getAuthenticatedCenter()
       .then((center) => {
         if (center?.name) {
+          setCenterProfile(center);
           const name = center.name;
           setCenterName(name);
           setInitials(computeInitials(name));
@@ -146,6 +190,12 @@ export default function TopHeader(props: TopHeaderProps) {
     setIsLoggingOut(true);
     try {
       clearCachedCenter();
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("user_role");
+        localStorage.removeItem("teacher_name");
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("user_center_id");
+      }
       await fetch("/api/auth/logout", {
         method: "POST",
       });
@@ -162,13 +212,14 @@ export default function TopHeader(props: TopHeaderProps) {
     return <div className="hidden" aria-hidden="true" />;
   }
 
-  const displayTitle =
-    title &&
-    title !== "Aroven Classes" &&
-    title !== "Apex Tutorials" &&
-    title !== "Aroven"
-      ? title
-      : centerName;
+  const isTeacher = centerProfile?.role === "teacher";
+  const displayBadgeText = isTeacher
+    ? centerProfile?.teacherName
+      ? `Teacher: ${centerProfile.teacherName}`
+      : "Teacher"
+    : badgeText;
+
+  const displayTitle = title || centerName;
 
   const resolvedInitials =
     initials ||
@@ -195,9 +246,9 @@ export default function TopHeader(props: TopHeaderProps) {
                 displayTitle
               )}
             </h1>
-            {badgeText && (
+            {displayBadgeText && (
               <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-[var(--primary-light)] text-[var(--primary-color)]">
-                {badgeText}
+                {displayBadgeText}
               </span>
             )}
           </div>
@@ -209,16 +260,19 @@ export default function TopHeader(props: TopHeaderProps) {
 
       {!isParentPortal && (
         <div className="flex items-center gap-2 relative" ref={dropdownRef}>
-          <Link
-            href="/settings"
-            aria-label="Settings & WhatsApp"
-            title="WhatsApp Integration & Settings"
-            className="tap-bounce w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 hover:border-slate-300 shadow-xs transition-colors"
-          >
-            <Settings className="w-4 h-4 stroke-[2]" />
-          </Link>
+          {/* Settings button hidden for Teachers (DEC-MSEC-01/02) */}
+          {!isTeacher && (
+            <Link
+              href="/settings"
+              aria-label="Settings & WhatsApp"
+              title="WhatsApp Integration & Settings"
+              className="tap-bounce w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-600 hover:text-slate-900 hover:border-slate-300 shadow-xs transition-colors"
+            >
+              <Settings className="w-4 h-4 stroke-[2]" />
+            </Link>
+          )}
 
-          {showNotifications && isNotificationGranted && (
+          {showNotifications && (
             <div className="relative">
               <button
                 type="button"
@@ -256,13 +310,24 @@ export default function TopHeader(props: TopHeaderProps) {
                         </span>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsDropdownOpen(false)}
-                      className="h-6 w-6 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex items-center justify-center"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      {unreadCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleMarkAllRead}
+                          className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 px-1.5 py-0.5 rounded hover:bg-blue-50 transition-colors"
+                        >
+                          Mark all read
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setIsDropdownOpen(false)}
+                        className="h-6 w-6 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 flex items-center justify-center"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Alerts List */}
@@ -345,17 +410,24 @@ export default function TopHeader(props: TopHeaderProps) {
                   </div>
 
                   {/* Dropdown Footer */}
-                  {alerts.length > 0 && (
-                    <div className="border-t border-slate-100 pt-2 px-1 text-center">
+                  <div className="border-t border-slate-100 pt-2 px-1 flex items-center justify-between">
+                    <Link
+                      href="/notifications"
+                      onClick={() => setIsDropdownOpen(false)}
+                      className="text-[11px] font-bold text-blue-600 hover:text-blue-800 transition-colors"
+                    >
+                      View All Notifications &rarr;
+                    </Link>
+                    {alerts.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => setAlerts?.([])}
-                        className="text-[11px] font-bold text-slate-400 hover:text-slate-600"
+                        onClick={handleClearAll}
+                        className="text-[11px] font-medium text-slate-400 hover:text-slate-600"
                       >
-                        Clear all notifications
+                        Clear all
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               )}
             </div>

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyOwnerRequest } from "@/lib/authOwner";
-import { isLiveDispatchEnabled } from "@/lib/whatsappService";
+import {
+  isLiveDispatchEnabled,
+  isTestDispatchAllowed,
+} from "@/lib/whatsappService";
 
 const WHATSAPP_SERVICE_URL =
   process.env.WHATSAPP_SERVICE_URL || "http://localhost:3005";
@@ -50,8 +53,11 @@ export async function POST(request: NextRequest) {
           "en-IN"
         )}`;
 
-  // Fail-closed simulation guard: zero network requests unless explicitly opted into live mode
-  if (!isLiveDispatchEnabled()) {
+  // Fail-closed simulation guard: zero network requests unless explicitly opted into live or isolated test dispatch
+  const isAuthorizedForTestPing =
+    isLiveDispatchEnabled(cleanDigits) || isTestDispatchAllowed(cleanDigits);
+
+  if (!isAuthorizedForTestPing) {
     const maskedPhone =
       cleanDigits.length >= 4 ? `***${cleanDigits.slice(-4)}` : "****";
     console.log(
@@ -65,7 +71,7 @@ export async function POST(request: NextRequest) {
       centerId,
       messageId: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       message:
-        "Simulation mode active: WhatsApp outbound dispatch is simulated (zero outbound network requests). Configure WHATSAPP_MODE=live and ENABLE_LIVE_WHATSAPP=true to enable live message delivery.",
+        "Simulation mode active: WhatsApp outbound dispatch is simulated (zero outbound network requests). For local test ping delivery, configure ALLOW_TEST_WHATSAPP_DISPATCH=true in local development. For production live delivery, configure WHATSAPP_MODE=live and ENABLE_LIVE_WHATSAPP=true.",
     });
   }
 
@@ -105,14 +111,29 @@ export async function POST(request: NextRequest) {
 
     const data = await res.json().catch(() => null);
 
-    if (res.ok && data) {
-      return NextResponse.json(data, { status: res.status });
+    // Verify upstream microservice acceptance before reporting accepted: true
+    // Preserves accepted: true, delivered: false semantics (never reports delivered without delivery receipt)
+    if (res.ok && data && data.success) {
+      return NextResponse.json(
+        {
+          success: true,
+          simulated: false,
+          accepted: Boolean(data.accepted ?? true),
+          delivered: false,
+          centerId,
+          messageId: data.messageId || "sent",
+          status: data.status || "accepted",
+        },
+        { status: res.status }
+      );
     }
 
     return NextResponse.json(
       {
         success: false,
         centerId,
+        accepted: false,
+        delivered: false,
         error: data?.error || "Failed to dispatch test message",
       },
       { status: res.status || 502 }
@@ -126,6 +147,8 @@ export async function POST(request: NextRequest) {
       {
         success: false,
         centerId,
+        accepted: false,
+        delivered: false,
         error: isTimeout
           ? "WhatsApp message request timed out"
           : "WhatsApp service is currently unreachable",

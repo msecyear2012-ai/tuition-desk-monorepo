@@ -11,7 +11,8 @@ export type ReminderDispatchStatus =
   | "provider_accepted"
   | "delivered"
   | "dispatch_uncertain"
-  | "failed";
+  | "failed"
+  | "sent";
 
 export interface IFeeReminderLog {
   centerId: string;
@@ -29,6 +30,8 @@ export interface IFeeReminderLog {
   failureReason?: string;
   attemptedAt: Date;
   retryLockUntil?: Date;
+  isArchived?: boolean;
+  archivedAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -92,6 +95,7 @@ const FeeReminderLogSchema = new Schema<IFeeReminderLogDocument>(
           "delivered",
           "dispatch_uncertain",
           "failed",
+          "sent",
         ],
         message: "{VALUE} is not a valid reminder dispatch status",
       },
@@ -127,6 +131,15 @@ const FeeReminderLogSchema = new Schema<IFeeReminderLogDocument>(
     retryLockUntil: {
       type: Date,
     },
+    isArchived: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    archivedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -137,6 +150,7 @@ const FeeReminderLogSchema = new Schema<IFeeReminderLogDocument>(
 // Compound indexes for fast audit and center log retrieval
 FeeReminderLogSchema.index({ feeId: 1, attemptedAt: -1 });
 FeeReminderLogSchema.index({ centerId: 1, attemptedAt: -1 });
+FeeReminderLogSchema.index({ centerId: 1, isArchived: 1, attemptedAt: -1 });
 
 if (process.env.NODE_ENV !== "production" && mongoose.models.FeeReminderLog) {
   delete (mongoose.models as Record<string, unknown>).FeeReminderLog;

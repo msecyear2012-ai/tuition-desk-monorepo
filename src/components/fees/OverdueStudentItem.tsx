@@ -1,9 +1,10 @@
-import { Check, Clock, CheckCircle2, Loader2, ShieldCheck, Sparkles, Trash2, Banknote, Receipt } from "lucide-react";
+import { Check, Clock, CheckCircle2, Loader2, ShieldCheck, Sparkles, Trash2, Banknote, Receipt, UserCheck, GraduationCap } from "lucide-react";
 import { OverdueFeeStudent } from "@/types";
 
 interface OverdueStudentItemProps {
   student: OverdueFeeStudent;
   tabType?: "pending" | "review" | "paid";
+  userRole?: string;
   onSendReminder?: (student: OverdueFeeStudent) => void;
   isReminderSent?: boolean;
   isSendingReminder?: boolean;
@@ -13,6 +14,8 @@ interface OverdueStudentItemProps {
   isVerifyingPaid?: boolean;
   onRejectFee?: (student: OverdueFeeStudent) => void;
   isRejectingFee?: boolean;
+  onViewDetails?: (student: OverdueFeeStudent) => void;
+  onViewReceipt?: (student: OverdueFeeStudent) => void;
 }
 
 function WhatsAppIcon({ className = "w-5 h-5" }: { className?: string }) {
@@ -31,6 +34,7 @@ function WhatsAppIcon({ className = "w-5 h-5" }: { className?: string }) {
 export default function OverdueStudentItem({
   student,
   tabType,
+  userRole = "owner",
   onSendReminder,
   isReminderSent = false,
   isSendingReminder = false,
@@ -40,6 +44,8 @@ export default function OverdueStudentItem({
   isVerifyingPaid = false,
   onRejectFee,
   isRejectingFee = false,
+  onViewDetails,
+  onViewReceipt,
 }: OverdueStudentItemProps) {
   const isCritical = student.daysLate >= 7;
   const isVerificationPending = student.status === "Verification Pending";
@@ -54,6 +60,11 @@ export default function OverdueStudentItem({
   const isReviewTab = tabType === "review" || isVerificationPending;
   const isPaidTab = tabType === "paid" || isPaid;
   const isCash = Boolean(student.paymentMode && /cash/i.test(student.paymentMode));
+
+  // In Paid tab, display the actual paidAmount (or total settled amount)
+  const displayAmount = isPaidTab
+    ? (amountPaidSoFar > 0 ? amountPaidSoFar : (student.totalAmount || 0))
+    : student.pendingAmount;
 
   // Check if fee title, batchName, or month indicates an Advance Payment
   const isAdvance = Boolean(
@@ -185,18 +196,45 @@ export default function OverdueStudentItem({
               </span>
             </div>
           )}
+
+          {/* Paid Fee Attribution: Cash Collector & Academic Faculty Snapshots */}
+          {isPaidTab && (
+            <div
+              className="mt-2 flex flex-wrap items-center gap-1.5 sm:gap-2 text-[11px]"
+              data-testid="paid-fee-attribution"
+            >
+              {/* Collected By (Physical/Digital Cash Custody) */}
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100/90 text-slate-700 border border-slate-200 shadow-2xs">
+                <UserCheck className="h-3.5 w-3.5 text-emerald-600 flex-shrink-0" />
+                <span className="text-slate-500 font-medium">Collected By:</span>
+                <strong className="text-slate-900 font-bold">
+                  {student.receivedByName || (student.receivedByRole === "teacher" ? "Teacher" : "Owner")}
+                </strong>
+                <span className="text-[9.5px] px-1 py-0.2 rounded font-extrabold uppercase bg-white border border-slate-200 text-slate-600">
+                  {student.receivedByRole === "teacher" ? "Teacher" : "Owner"}
+                </span>
+              </span>
+
+              {/* Academic Teacher (Faculty at Payment Snapshot) */}
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50/80 text-indigo-900 border border-indigo-200/80 shadow-2xs">
+                <GraduationCap className="h-3.5 w-3.5 text-indigo-600 flex-shrink-0" />
+                <span className="text-indigo-500 font-medium">Academic Teacher:</span>
+                <strong className="text-indigo-950 font-bold">
+                  {student.assignedTeacherName || "Owner"}
+                </strong>
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Right Side: Amount + Action Buttons */}
       <div
-        className={`flex flex-wrap sm:flex-nowrap items-center justify-between sm:justify-end gap-2.5 flex-shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 ${
-          isReviewTab ? "w-full sm:w-auto" : ""
-        }`}
+        className="flex flex-wrap sm:flex-nowrap items-center justify-between sm:justify-end gap-2.5 flex-shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 w-full sm:w-auto"
       >
         <div className="text-left sm:text-right mr-1">
           <div className="text-[15px] font-extrabold text-slate-900 font-mono tracking-tight">
-            ₹{student.pendingAmount.toLocaleString("en-IN")}
+            ₹{displayAmount.toLocaleString("en-IN")}
           </div>
           {isPartialPaid ? (
             <div className="text-[10px] text-amber-800 text-left sm:text-right font-medium">
@@ -216,49 +254,67 @@ export default function OverdueStudentItem({
           )}
         </div>
 
-        <div className={`flex items-center gap-2 ${isReviewTab ? "w-full sm:w-auto" : ""}`}>
-          {/* Action 1: Green "Approve & Mark Paid" + Red "Reject & Delete" Button for Awaiting Review */}
-          {isReviewTab && (onVerifyPaid || onRejectFee) ? (
-            <div className="flex flex-col min-[380px]:flex-row items-stretch min-[380px]:items-center gap-2 w-full sm:w-auto">
-              {onVerifyPaid && (
-                <button
-                  type="button"
-                  onClick={() => onVerifyPaid(student)}
-                  disabled={isVerifyingPaid || isRejectingFee}
-                  aria-label={`Approve and mark fee for ${student.name} as paid`}
-                  title="Approve & Mark Paid (Online/UPI)"
-                  className="tap-bounce h-10 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/25 disabled:opacity-50 flex-1 sm:flex-initial text-center"
-                >
-                  {isVerifyingPaid ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-white" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4 text-white stroke-[2.5]" />
-                  )}
-                  <span>Approve &amp; Mark Paid</span>
-                </button>
-              )}
+        <div className={`flex items-center gap-1.5 sm:gap-2 flex-wrap sm:flex-nowrap ${isReviewTab ? "w-full sm:w-auto" : ""}`}>
+          {/* Action 1: Green "Approve & Mark Paid" + Red "Reject & Delete" Button for Awaiting Review (Owner Only) */}
+          {isReviewTab ? (
+            userRole === "owner" && (onVerifyPaid || onRejectFee) ? (
+              <div className="flex flex-col min-[380px]:flex-row items-stretch min-[380px]:items-center gap-2 w-full sm:w-auto">
+                {onVerifyPaid && (
+                  <button
+                    type="button"
+                    onClick={() => onVerifyPaid(student)}
+                    disabled={isVerifyingPaid || isRejectingFee}
+                    aria-label={`Approve and mark fee for ${student.name} as paid`}
+                    title="Approve & Mark Paid (Online/UPI)"
+                    className="tap-bounce h-9 sm:h-10 px-3 sm:px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/25 disabled:opacity-50 flex-1 sm:flex-initial text-center cursor-pointer"
+                  >
+                    {isVerifyingPaid ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-white" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4 text-white stroke-[2.5]" />
+                    )}
+                    <span>Approve &amp; Mark Paid</span>
+                  </button>
+                )}
 
-              {onRejectFee && (
-                <button
-                  type="button"
-                  onClick={() => onRejectFee(student)}
-                  disabled={isVerifyingPaid || isRejectingFee}
-                  aria-label={`Reject and delete fee submission for ${student.name}`}
-                  title="Reject & Delete (Remove invalid/fake submission)"
-                  className="tap-bounce h-10 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md shadow-rose-600/25 disabled:opacity-50 flex-1 sm:flex-initial text-center"
-                >
-                  {isRejectingFee ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-white" />
-                  ) : (
-                    <Trash2 className="h-4 w-4 text-white stroke-[2.2]" />
-                  )}
-                  <span>Reject &amp; Delete</span>
-                </button>
-              )}
-            </div>
+                {onRejectFee && (
+                  <button
+                    type="button"
+                    onClick={() => onRejectFee(student)}
+                    disabled={isVerifyingPaid || isRejectingFee}
+                    aria-label={`Reject and delete fee submission for ${student.name}`}
+                    title="Reject & Delete (Remove invalid/fake submission)"
+                    className="tap-bounce h-9 sm:h-10 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md shadow-rose-600/25 disabled:opacity-50 flex-1 sm:flex-initial text-center cursor-pointer"
+                  >
+                    {isRejectingFee ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-white" />
+                    ) : (
+                      <Trash2 className="h-4 w-4 text-white stroke-[2.2]" />
+                    )}
+                    <span>Reject &amp; Delete</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold">
+                  <Clock className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Awaiting Owner Review</span>
+                </span>
+                {onViewDetails && (
+                  <button
+                    type="button"
+                    onClick={() => onViewDetails(student)}
+                    className="tap-bounce h-9 px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center gap-1 shadow-2xs"
+                  >
+                    <span>Details</span>
+                  </button>
+                )}
+              </div>
+            )
           ) : isPaidTab ? (
-            /* Action 2: Paid Tab Receipt Badge & Mode Indicator */
-            <div className="flex flex-col sm:flex-row items-end sm:items-center gap-1.5">
+            /* Action 2: Paid Tab Receipt Badge & Mode Indicator + View Receipt / Details */
+            <div className="flex flex-wrap items-center justify-start sm:justify-end gap-1.5 sm:gap-2">
               {isCash ? (
                 <span className="text-[11px] font-bold text-emerald-800 bg-emerald-100/90 px-2.5 py-1 rounded-xl border border-emerald-300 flex items-center gap-1 shadow-2xs">
                   <Banknote className="h-3.5 w-3.5 text-emerald-700" />
@@ -272,37 +328,75 @@ export default function OverdueStudentItem({
 
               {student.receiptNumber && (
                 <span
-                  className="text-[11px] font-mono font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-xl border border-slate-200/90 select-all shadow-2xs"
+                  className="text-[11px] font-mono font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-xl border border-slate-200/90 select-all shadow-2xs flex items-center gap-1"
                   title="Official Receipt Number"
                 >
+                  <Receipt className="h-3 w-3 text-slate-500" />
                   {student.receiptNumber}
                 </span>
               )}
 
               {student.paidDate && (
-                <span className="text-[11px] text-slate-400 font-medium hidden md:inline">
+                <span className="text-[11px] text-slate-500 font-medium inline-flex items-center gap-1 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200 shadow-2xs">
+                  <Clock className="h-3 w-3 text-slate-400" />
                   {student.paidDate}
                 </span>
               )}
+
+              {onViewReceipt && (
+                <button
+                  type="button"
+                  onClick={() => onViewReceipt(student)}
+                  className="tap-bounce h-8.5 px-2.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold flex items-center gap-1 shadow-2xs cursor-pointer"
+                  title="View official receipt slip"
+                >
+                  <Receipt className="h-3.5 w-3.5 text-emerald-700" />
+                  <span>Receipt</span>
+                </button>
+              )}
+
+              {onViewDetails && (
+                <button
+                  type="button"
+                  onClick={() => onViewDetails(student)}
+                  className="tap-bounce h-8.5 px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center gap-1 shadow-2xs cursor-pointer"
+                  title="View complete payment history"
+                >
+                  <span>Details</span>
+                </button>
+              )}
             </div>
           ) : (
-            /* Action 3: Pending Tab Actions (Mark Paid Cash + WhatsApp Reminder) */
+            /* Action 3: Pending Tab Actions (Record Payment Cash + Details + WhatsApp Reminder) */
             <>
               {onMarkPaid && (
                 <button
                   type="button"
                   onClick={() => onMarkPaid(student)}
                   disabled={isMarkingPaid}
-                  aria-label={`Mark fee for ${student.name} as paid via cash`}
-                  title="Mark as Paid (Cash)"
-                  className="tap-bounce h-10 px-2.5 sm:px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-800 border border-emerald-300/80 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs disabled:opacity-50"
+                  aria-label={`Record payment for ${student.name}`}
+                  title="Record manual payment (Cash)"
+                  className="tap-bounce h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-800 border border-emerald-300/80 text-xs font-bold flex items-center gap-1 sm:gap-1.5 transition-all shadow-2xs disabled:opacity-50 cursor-pointer flex-shrink-0"
                 >
                   {isMarkingPaid ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                    <Loader2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 animate-spin text-emerald-600" />
                   ) : (
-                    <Banknote className="h-4 w-4 text-emerald-700 stroke-[2.3]" />
+                    <Banknote className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-700 stroke-[2.3]" />
                   )}
-                  <span className="hidden sm:inline">Mark Paid (Cash)</span>
+                  <span className="hidden min-[420px]:inline">Record Payment</span>
+                  <span className="min-[420px]:hidden inline">Pay</span>
+                </button>
+              )}
+
+              {onViewDetails && (
+                <button
+                  type="button"
+                  onClick={() => onViewDetails(student)}
+                  className="tap-bounce h-9 sm:h-10 px-2 sm:px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center gap-1 shadow-2xs cursor-pointer flex-shrink-0"
+                  title="View fee details and payment history"
+                >
+                  <Receipt className="h-3.5 w-3.5 text-slate-500" />
+                  <span className="hidden min-[360px]:inline">Details</span>
                 </button>
               )}
 
@@ -312,7 +406,7 @@ export default function OverdueStudentItem({
                   onClick={() => onSendReminder(student)}
                   disabled={isSendingReminder}
                   aria-label={`Send WhatsApp reminder to ${student.name}'s parent`}
-                  className={`tap-bounce h-10 w-10 sm:h-11 sm:w-11 rounded-full flex items-center justify-center transition-all shadow-md ${
+                  className={`tap-bounce h-9 w-9 sm:h-10 sm:w-10 rounded-full flex items-center justify-center transition-all shadow-md flex-shrink-0 ${
                     isSendingReminder
                       ? "bg-slate-300 text-slate-600 cursor-not-allowed"
                       : isReminderSent
@@ -321,11 +415,11 @@ export default function OverdueStudentItem({
                   }`}
                 >
                   {isSendingReminder ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 animate-spin" />
                   ) : isReminderSent ? (
-                    <Check className="h-5 w-5 stroke-[2.8]" />
+                    <Check className="h-4 w-4 sm:h-5 sm:w-5 stroke-[2.8]" />
                   ) : (
-                    <WhatsAppIcon className="h-5 w-5" />
+                    <WhatsAppIcon className="h-4 w-4 sm:h-5 sm:w-5" />
                   )}
                 </button>
               )}

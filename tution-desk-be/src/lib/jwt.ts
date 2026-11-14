@@ -53,4 +53,8 @@ export async function verifyToken<T = JWTPayload>(
   }
 }
 
-export { getAuthenticatedCenterId } from "./auth.ts";
+export {
+  getAuthenticatedCenterId,
+  getAuthenticatedUser,
+  type AuthPayload,
+} from "./auth.ts";

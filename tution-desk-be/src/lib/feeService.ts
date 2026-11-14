@@ -1,4 +1,4 @@
-import mongoose, { Types } from "mongoose";
+import { Types } from "mongoose";
 import crypto from "crypto";
 import connectDB from "./db.ts";
 import Fee, { type IFeeDocument } from "../models/Fee.ts";
@@ -23,10 +23,10 @@ export interface GenerateFeeOptions {
   pollIntervalMs?: number;
   maxPollAttempts?: number;
   models?: {
-    Fee?: any;
-    Student?: any;
-    Center?: any;
-    FeeCreationLock?: any;
+    Fee?: unknown;
+    Student?: unknown;
+    Center?: unknown;
+    FeeCreationLock?: unknown;
   };
 }
 
@@ -55,9 +55,12 @@ export interface FeeServiceResult {
 export async function generateOrGetMonthlyFee(
   options: GenerateFeeOptions
 ): Promise<FeeServiceResult> {
-  const FeeModel = options.models?.Fee || Fee;
-  const StudentModel = options.models?.Student || Student;
-  const CenterModel = options.models?.Center || Center;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const FeeModel = (options.models?.Fee as any) || Fee;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const StudentModel = (options.models?.Student as any) || Student;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const CenterModel = (options.models?.Center as any) || Center;
 
   if (!options.models) {
     await connectDB();
@@ -163,7 +166,7 @@ export async function generateOrGetMonthlyFee(
 
   // Ambiguous legacy records safety check
   if (legacyCandidates.length > 1) {
-    const statuses = legacyCandidates.map((c: any) => c.status).join(", ");
+    const statuses = legacyCandidates.map((c) => c.status).join(", ");
     return {
       success: false,
       fee: null,
@@ -193,7 +196,8 @@ export async function generateOrGetMonthlyFee(
   }
 
   const hasInjectedModels = Boolean(options.models);
-  const FeeCreationLockModel = options.models?.FeeCreationLock || (hasInjectedModels ? null : FeeCreationLock);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const FeeCreationLockModel = (options.models?.FeeCreationLock as any) || (hasInjectedModels ? null : FeeCreationLock);
 
   // 5. Atomic Lock Coordination Setup
   const lockKey = `${options.centerId}:${student._id}:${targetBillingMonth}:monthly_recurring`;
@@ -236,8 +240,13 @@ export async function generateOrGetMonthlyFee(
         status: "LOCKED",
       });
       acquiredLock = true;
-    } catch (lockErr: any) {
-      if (!lockErr || lockErr.code !== 11000) {
+    } catch (lockErr: unknown) {
+      if (
+        !lockErr ||
+        typeof lockErr !== "object" ||
+        !("code" in lockErr) ||
+        (lockErr as { code: number }).code !== 11000
+      ) {
         throw lockErr;
       }
     }
@@ -335,8 +344,13 @@ export async function generateOrGetMonthlyFee(
             });
             acquiredLock = true;
             break;
-          } catch (err: any) {
-            if (err && err.code === 11000) {
+          } catch (err: unknown) {
+            if (
+              err &&
+              typeof err === "object" &&
+              "code" in err &&
+              (err as { code: number }).code === 11000
+            ) {
               continue;
             }
             throw err;
@@ -423,11 +437,15 @@ export async function generateOrGetMonthlyFee(
       const newFee = (await FeeModel.create({
         centerId: options.centerId,
         studentId: student._id,
+        assignedTeacherId: student.assignedTeacherId || null,
+        batchAtPayment: student.batch || "",
         billingMonth: targetBillingMonth,
         month: displayMonth,
         title: `${displayMonth} Tuition Fee`,
+        originalAmountDue: feeAmount,
         amountDue: feeAmount,
         paidAmount: 0,
+        paymentHistory: [],
         dueDate,
         status: "Pending",
         feeType: "monthly_recurring",

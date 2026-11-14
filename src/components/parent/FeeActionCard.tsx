@@ -141,6 +141,20 @@ export default function FeeActionCard({
   // Target UPI ID
   const targetUpiId = upiId || "9876543210@paytm";
 
+  // Helper for Parent Portal Auth Headers
+  const getParentPortalAuthHeaders = (): Record<string, string> => {
+    if (typeof window === "undefined") return { Accept: "application/json" };
+    const token =
+      sessionStorage.getItem("parent_portal_session_token") ||
+      localStorage.getItem("parent_portal_session_token") ||
+      localStorage.getItem("auth_token");
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
   // Construct regular payment UPI Intent Deep-Link with Transaction Note
   const customRef = `FEE-${(feeId || "").toString().slice(-6)}`;
   const upiLink = `upi://pay?pa=${encodeURIComponent(
@@ -207,27 +221,78 @@ export default function FeeActionCard({
     const backendUrl =
       process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
+    let isSubscribed = true;
+    let pollCount = 0;
+    let consecutiveErrors = 0;
+    const MAX_POLL_COUNT = 100; // 5 minutes max at 3s intervals (avoids hanging indefinitely)
+    const controller = new AbortController();
+
     const pollInterval = setInterval(async () => {
+      pollCount++;
+      if (pollCount > MAX_POLL_COUNT) {
+        clearInterval(pollInterval);
+        return;
+      }
+
       try {
-        const res = await fetch(`${backendUrl}/fees/${feeId}`);
+        const res = await fetch(`${backendUrl}/fees/${feeId}`, {
+          method: "GET",
+          credentials: "include",
+          headers: getParentPortalAuthHeaders(),
+          signal: controller.signal,
+        });
+
+        if (!isSubscribed) return;
+
+        // Terminal HTTP error states: 401 (unauthenticated), 403 (unauthorized/cross-tenant), 404 (not found)
+        if (res.status === 401 || res.status === 403 || res.status === 404) {
+          clearInterval(pollInterval);
+          return;
+        }
+
         if (res.ok) {
+          consecutiveErrors = 0;
           const json = await res.json();
-          if (json?.data?.status === "Paid") {
+          const feeStatus = json?.data?.status;
+
+          if (feeStatus === "Paid") {
             clearInterval(pollInterval);
             setRegularPaymentSuccess(true);
             setTimeout(() => {
+              if (!isSubscribed) return;
               setShowUpiModal(false);
               setCurrentStatus("Paid");
               if (onPaymentSuccess) onPaymentSuccess();
             }, 3000); // exactly 3 seconds
+          } else if (feeStatus === "Cancelled") {
+            clearInterval(pollInterval);
+          } else if (feeStatus === "Verification Pending") {
+            setCurrentStatus("Verification Pending");
+            if (json?.data?.utrNumber) {
+              setSavedUtr(json.data.utrNumber);
+            }
+          }
+        } else {
+          consecutiveErrors++;
+          if (consecutiveErrors >= 5) {
+            clearInterval(pollInterval);
           }
         }
-      } catch (err) {
-        // Silently catch polling network fluctuations
+      } catch (err: unknown) {
+        if (!isSubscribed) return;
+        if (err instanceof Error && err.name === "AbortError") return;
+        consecutiveErrors++;
+        if (consecutiveErrors >= 5) {
+          clearInterval(pollInterval);
+        }
       }
     }, 3000); // 3 seconds interval
 
-    return () => clearInterval(pollInterval);
+    return () => {
+      isSubscribed = false;
+      clearInterval(pollInterval);
+      controller.abort();
+    };
   }, [showUpiModal, feeId, regularPaymentSuccess, onPaymentSuccess]);
 
   // =========================================================================
@@ -256,15 +321,45 @@ export default function FeeActionCard({
     const backendUrl =
       process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
+    let isSubscribed = true;
+    let pollCount = 0;
+    let consecutiveErrors = 0;
+    const MAX_POLL_COUNT = 100; // 5 minutes max at 3s intervals
+    const controller = new AbortController();
+
     const pollInterval = setInterval(async () => {
+      pollCount++;
+      if (pollCount > MAX_POLL_COUNT) {
+        clearInterval(pollInterval);
+        return;
+      }
+
       try {
-        const res = await fetch(`${backendUrl}/fees/${createdAdvanceFee._id}`);
+        const res = await fetch(`${backendUrl}/fees/${createdAdvanceFee._id}`, {
+          method: "GET",
+          credentials: "include",
+          headers: getParentPortalAuthHeaders(),
+          signal: controller.signal,
+        });
+
+        if (!isSubscribed) return;
+
+        // Terminal HTTP error states: 401, 403, 404
+        if (res.status === 401 || res.status === 403 || res.status === 404) {
+          clearInterval(pollInterval);
+          return;
+        }
+
         if (res.ok) {
+          consecutiveErrors = 0;
           const json = await res.json();
-          if (json?.data?.status === "Paid") {
+          const feeStatus = json?.data?.status;
+
+          if (feeStatus === "Paid") {
             clearInterval(pollInterval);
             setAdvancePaymentSuccess(true);
             setTimeout(() => {
+              if (!isSubscribed) return;
               setShowAdvanceModal(false);
               setCreatedAdvanceFee(null);
               setAdvancePaymentSuccess(false);
@@ -274,14 +369,30 @@ export default function FeeActionCard({
                 onPaymentSuccess();
               }
             }, 3000); // exactly 3 seconds
+          } else if (feeStatus === "Cancelled") {
+            clearInterval(pollInterval);
+          }
+        } else {
+          consecutiveErrors++;
+          if (consecutiveErrors >= 5) {
+            clearInterval(pollInterval);
           }
         }
-      } catch (err) {
-        // Silently catch polling network fluctuations
+      } catch (err: unknown) {
+        if (!isSubscribed) return;
+        if (err instanceof Error && err.name === "AbortError") return;
+        consecutiveErrors++;
+        if (consecutiveErrors >= 5) {
+          clearInterval(pollInterval);
+        }
       }
     }, 3000); // 3 seconds interval
 
-    return () => clearInterval(pollInterval);
+    return () => {
+      isSubscribed = false;
+      clearInterval(pollInterval);
+      controller.abort();
+    };
   }, [
     createdAdvanceFee?._id,
     advancePaymentSuccess,
@@ -305,7 +416,11 @@ export default function FeeActionCard({
 
       const res = await fetch(`${backendUrl}/fees/advance`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...getParentPortalAuthHeaders(),
+        },
         body: JSON.stringify({
           studentId,
           centerId,
@@ -354,9 +469,25 @@ export default function FeeActionCard({
       const backendUrl =
         process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
+      const token =
+        typeof window !== "undefined"
+          ? sessionStorage.getItem("parent_portal_session_token") ||
+            localStorage.getItem("parent_portal_session_token") ||
+            localStorage.getItem("auth_token")
+          : null;
+
+      const authHeaders: Record<string, string> = {};
+      if (token) {
+        authHeaders["Authorization"] = `Bearer ${token}`;
+      }
+
       const res = await fetch(`${backendUrl}/fees/${feeId}/submit-utr`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders,
+        },
         body: JSON.stringify({ utrNumber: cleanUtr }),
       });
 
@@ -398,11 +529,27 @@ export default function FeeActionCard({
       const backendUrl =
         process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
+      const token =
+        typeof window !== "undefined"
+          ? sessionStorage.getItem("parent_portal_session_token") ||
+            localStorage.getItem("parent_portal_session_token") ||
+            localStorage.getItem("auth_token")
+          : null;
+
+      const authHeaders: Record<string, string> = {};
+      if (token) {
+        authHeaders["Authorization"] = `Bearer ${token}`;
+      }
+
       const res = await fetch(
         `${backendUrl}/fees/${createdAdvanceFee._id}/submit-utr`,
         {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders,
+          },
           body: JSON.stringify({ utrNumber: cleanUtr }),
         }
       );

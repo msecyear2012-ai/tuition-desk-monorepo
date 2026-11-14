@@ -274,17 +274,17 @@ test("TuitionDesk Phase 2B.1: Read-Only Legacy Fee Reconciliation Preflight Suit
 
     // 9.2 Silent collision with primary MONGODB_URI fails closed
     const collision = validateDatabaseTarget({
-      auditUri: "mongodb+srv://user:pass@cluster.mongodb.net/tuitiondesk_prod?retryWrites=true",
-      primaryUri: "mongodb+srv://user:pass@cluster.mongodb.net/tuitiondesk_prod?retryWrites=true",
+      auditUri: "mongodb+srv://example-mock-user:mock-placeholder-key@cluster0.invalid/tuitiondesk_prod?retryWrites=true",
+      primaryUri: "mongodb+srv://example-mock-user:mock-placeholder-key@cluster0.invalid/tuitiondesk_prod?retryWrites=true",
     });
     assert.equal(collision.valid, false);
     assert.ok(collision.error.includes("Target collision detected"));
-    assert.ok(!collision.error.includes("pass"), "Passwords must never appear in error messages");
+    assert.ok(!collision.error.includes("mock-placeholder-key"), "Passwords must never appear in error messages");
 
     // 9.3 Collision with explicit override allowed
     const collisionAllowed = validateDatabaseTarget({
-      auditUri: "mongodb+srv://user:pass@cluster.mongodb.net/tuitiondesk_audit?retryWrites=true",
-      primaryUri: "mongodb+srv://user:pass@cluster.mongodb.net/tuitiondesk_audit?retryWrites=true",
+      auditUri: "mongodb+srv://example-mock-user:mock-placeholder-key@cluster0.invalid/tuitiondesk_audit?retryWrites=true",
+      primaryUri: "mongodb+srv://example-mock-user:mock-placeholder-key@cluster0.invalid/tuitiondesk_audit?retryWrites=true",
       allowPrimaryDb: true,
     });
     assert.equal(collisionAllowed.valid, true);
@@ -298,7 +298,7 @@ test("TuitionDesk Phase 2B.1: Read-Only Legacy Fee Reconciliation Preflight Suit
 
     // 9.5 Database name mismatch fails closed
     const mismatch = validateDatabaseTarget({
-      auditUri: "mongodb+srv://user:pass@cluster.mongodb.net/tuitiondesk_prod?retryWrites=true",
+      auditUri: "mongodb+srv://example-mock-user:mock-placeholder-key@cluster0.invalid/tuitiondesk_prod?retryWrites=true",
       expectedDbName: "tuitiondesk_audit_backup",
     });
     assert.equal(mismatch.valid, false);
@@ -308,13 +308,13 @@ test("TuitionDesk Phase 2B.1: Read-Only Legacy Fee Reconciliation Preflight Suit
 
     // 9.6 Valid isolated target succeeds
     const valid = validateDatabaseTarget({
-      auditUri: "mongodb+srv://readonly_user:secret_pass@cluster.mongodb.net/tuitiondesk_audit_replica?readPreference=secondaryPreferred",
+      auditUri: "mongodb+srv://example-mock-user:mock-placeholder-key@cluster0.invalid/tuitiondesk_audit_replica?readPreference=secondaryPreferred",
       expectedDbName: "tuitiondesk_audit_replica",
     });
     assert.equal(valid.valid, true);
     assert.equal(valid.databaseName, "tuitiondesk_audit_replica");
     assert.ok(valid.sanitizedUri.includes("***:***@"));
-    assert.ok(!valid.sanitizedUri.includes("secret_pass"));
+    assert.ok(!valid.sanitizedUri.includes("mock-placeholder-key"));
 
     // 9.7 URI sanitization utility
     const sanitized = sanitizeMongoUri("mongodb://user:superSecret@mongo.internal:27017/db");

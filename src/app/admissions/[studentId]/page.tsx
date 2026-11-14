@@ -16,7 +16,7 @@ async function StudentProfileContent({
 
 export default function StudentProfilePage({ params }: PageProps) {
   return (
-    <div className="w-full max-w-full overflow-x-hidden">
+    <div className="w-full max-w-full overflow-x-hidden pb-28">
       <Suspense
         fallback={
           <div className="p-8 text-center animate-pulse text-gray-500">

@@ -1,16 +1,133 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server.js";
 import mongoose from "mongoose";
-import connectDB from "@/lib/db";
-import Fee, { IFeeDocument } from "@/models/Fee";
-import Student from "@/models/Student";
-import { getAuthenticatedCenterId } from "@/lib/auth";
-import { getCorsHeaders, handleCorsPreflight } from "@/lib/cors";
-import { getISTDateComponents } from "@/lib/dateUtils";
-import { sendPaymentReceipt } from "@/lib/whatsappService";
+import connectDB from "../../../../lib/db.ts";
+import Fee, {
+  type IFee,
+  type IFeeDocument,
+  type IPaymentEntry,
+  calculateFeeCustody,
+  getFeePaymentEntries,
+} from "../../../../models/Fee.ts";
+import Student from "../../../../models/Student.ts";
+import StaffNotification from "../../../../models/StaffNotification.ts";
+import { getAuthenticatedUser } from "../../../../lib/auth.ts";
+import { getCorsHeaders, handleCorsPreflight } from "../../../../lib/cors.ts";
+import { getISTDateComponents } from "../../../../lib/dateUtils.ts";
+import { sendPaymentReceipt } from "../../../../lib/whatsappService.ts";
+import { sanitizePopulatedStudentDoc } from "../../../../lib/privacyUtils.ts";
+
+function formatFeeResponse(fee: unknown, role: string) {
+  if (!fee) return fee;
+  return sanitizePopulatedStudentDoc(
+    typeof (fee as { toObject?: () => Record<string, unknown> }).toObject === "function"
+      ? (fee as { toObject: () => Record<string, unknown> }).toObject()
+      : (fee as Record<string, unknown>),
+    "studentId",
+    role
+  );
+}
 
 export async function OPTIONS(request: NextRequest) {
   return handleCorsPreflight(request, "POST, OPTIONS");
 }
+
+// In-flight idempotency key lock set (process-local concurrency guard)
+const inFlightIdempotencyKeys = new Set<string>();
+
+interface IdempotentReplayVerificationParams {
+  existingFee: IFeeDocument;
+  matchingEntry: IPaymentEntry;
+  incomingCenterId: string;
+  incomingStudentId: string;
+  incomingAmount: number;
+  incomingFeeId?: string | null;
+  incomingBillingMonth?: string | null;
+  incomingFeeType: string;
+  incomingPaymentMode: string;
+  incomingUtrNumber?: string | null;
+}
+
+function verifyIdempotentPayloadMatch(params: IdempotentReplayVerificationParams): {
+  isMatch: boolean;
+  mismatchReason?: string;
+} {
+  // 1. Center isolation check
+  if (params.existingFee.centerId !== params.incomingCenterId) {
+    return { isMatch: false, mismatchReason: "centerId mismatch" };
+  }
+
+  // 2. Student ID check
+  const existingStudentId = String(
+    (params.existingFee.studentId as unknown as { _id?: unknown })?._id ||
+      params.existingFee.studentId
+  );
+  if (existingStudentId !== String(params.incomingStudentId)) {
+    return { isMatch: false, mismatchReason: "studentId mismatch" };
+  }
+
+  // 3. Amount check (within 0.001)
+  const entryAmount = Number(params.matchingEntry.amount);
+  if (Math.abs(entryAmount - params.incomingAmount) >= 0.001) {
+    return { isMatch: false, mismatchReason: "amount mismatch" };
+  }
+
+  // 4. Targeted Fee ID check (if client specified a specific feeId)
+  if (params.incomingFeeId) {
+    const existingFeeId = String(params.existingFee._id);
+    if (existingFeeId !== String(params.incomingFeeId)) {
+      return { isMatch: false, mismatchReason: "feeId mismatch" };
+    }
+  }
+
+  // 5. Fee Type check
+  const existingFeeType =
+    params.existingFee.feeType ||
+    (params.existingFee.isAdvance ? "advance" : "monthly_recurring");
+  if (existingFeeType !== params.incomingFeeType) {
+    return { isMatch: false, mismatchReason: "feeType mismatch" };
+  }
+
+  // 6. Billing Month check (for recurring fees or when specified)
+  if (params.incomingFeeType === "monthly_recurring") {
+    const existingMonth =
+      params.existingFee.billingMonth || params.existingFee.month;
+    if (
+      params.incomingBillingMonth &&
+      existingMonth &&
+      existingMonth !== params.incomingBillingMonth
+    ) {
+      return { isMatch: false, mismatchReason: "billingMonth mismatch" };
+    }
+  }
+
+  // 7. Payment Mode check (case-insensitive)
+  const existingMode = String(params.matchingEntry.paymentMode || "").trim().toLowerCase();
+  const incomingMode = String(params.incomingPaymentMode || "").trim().toLowerCase();
+  if (existingMode && incomingMode && existingMode !== incomingMode) {
+    return { isMatch: false, mismatchReason: "paymentMode mismatch" };
+  }
+
+  // 8. Applicable UTR / Reference check
+  const existingUtr = String(params.existingFee.utrNumber || "").trim();
+  const incomingUtr = String(params.incomingUtrNumber || "").trim();
+  if (existingUtr !== incomingUtr) {
+    return { isMatch: false, mismatchReason: "UTR / reference number mismatch" };
+  }
+
+  return { isMatch: true };
+}
+
+const FORBIDDEN_FIELDS = [
+  "recordedBy",
+  "recordedByRole",
+  "receivedBy",
+  "receivedByRole",
+  "paymentHistory",
+  "allocations",
+  "custodyStatus",
+  "isProvisional",
+  "originalAmountDue",
+];
 
 function generateReceiptNumber(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -21,16 +138,244 @@ function generateReceiptNumber(): string {
   return `RCPT-${random}`;
 }
 
+function resolveCustody(feeDoc: unknown) {
+  try {
+    if (!feeDoc) return null;
+    return calculateFeeCustody(feeDoc as IFee);
+  } catch {
+    return null;
+  }
+}
+
+async function createCollectionNotifications({
+  centerId,
+  amount,
+  studentId,
+  studentName,
+  collectorId,
+  collectorName,
+  collectorRole,
+  feeId,
+  paymentId,
+  receiptNumber,
+  idempotencyKey,
+  session,
+}: {
+  centerId: string;
+  amount: number;
+  studentId?: string;
+  studentName: string;
+  collectorId: string;
+  collectorName: string;
+  collectorRole: "owner" | "teacher";
+  feeId: string;
+  paymentId: string;
+  receiptNumber: string;
+  idempotencyKey?: string;
+  session?: mongoose.ClientSession;
+}) {
+  try {
+    if (mongoose.connection?.readyState !== 1) {
+      return;
+    }
+    const formattedAmount = `₹${amount.toLocaleString("en-IN")}`;
+    const baseKey = idempotencyKey || `${feeId}_${paymentId}`;
+
+    if (collectorRole === "teacher") {
+      // 1. Owner Notification
+      const ownerKey = `notif_owner_${baseKey}`;
+      const existingOwner = await StaffNotification.findOne({ idempotencyKey: ownerKey });
+      if (!existingOwner) {
+        const ownerNotif = new StaffNotification({
+          centerId,
+          recipientId: centerId,
+          recipientRole: "owner",
+          type: "cash_collection",
+          title: "New Cash Collection",
+          message: `${collectorName} collected ${formattedAmount} from ${studentName}. Status: Teacher In-Hand.`,
+          amount,
+          statusLabel: "Teacher In-Hand",
+          feeId,
+          paymentId,
+          studentName,
+          collectorId,
+          collectorName,
+          link: `/fees?tab=payments&sub=paid&feeId=${feeId}`,
+          isRead: false,
+          idempotencyKey: ownerKey,
+          metadata: { receiptNumber, paymentId, feeId, collectorRole },
+        });
+        if (session) {
+          await ownerNotif.save({ session });
+        } else {
+          await ownerNotif.save();
+        }
+      }
+
+      // 2. Teacher Notification
+      const teacherKey = `notif_teacher_${baseKey}`;
+      const existingTeacher = await StaffNotification.findOne({ idempotencyKey: teacherKey });
+      if (!existingTeacher) {
+        const teacherNotif = new StaffNotification({
+          centerId,
+          recipientId: String(collectorId),
+          recipientRole: "teacher",
+          type: "cash_collection",
+          title: "Payment Recorded",
+          message: `${formattedAmount} collected from ${studentName}. Status: In Your Custody.`,
+          amount,
+          statusLabel: "In Your Custody",
+          feeId,
+          paymentId,
+          studentName,
+          collectorId,
+          collectorName,
+          link: `/fees?tab=payments&sub=paid&feeId=${feeId}`,
+          isRead: false,
+          idempotencyKey: teacherKey,
+          metadata: { receiptNumber, paymentId, feeId, collectorRole },
+        });
+        if (session) {
+          await teacherNotif.save({ session });
+        } else {
+          await teacherNotif.save();
+        }
+      }
+    } else {
+      // Owner direct collection
+      const ownerDirectKey = `notif_owner_${baseKey}`;
+      const existing = await StaffNotification.findOne({ idempotencyKey: ownerDirectKey });
+      if (!existing) {
+        const ownerNotif = new StaffNotification({
+          centerId,
+          recipientId: centerId,
+          recipientRole: "owner",
+          type: "cash_collection",
+          title: "Payment Recorded",
+          message: `${formattedAmount} collected from ${studentName}. Status: In Owner Safe Custody.`,
+          amount,
+          statusLabel: "In Owner Safe Custody",
+          feeId,
+          paymentId,
+          studentName,
+          collectorId,
+          collectorName,
+          link: `/fees?tab=payments&sub=paid&feeId=${feeId}`,
+          isRead: false,
+          idempotencyKey: ownerDirectKey,
+          metadata: { receiptNumber, paymentId, feeId, collectorRole },
+        });
+        if (session) {
+          await ownerNotif.save({ session });
+        } else {
+          await ownerNotif.save();
+        }
+      }
+    }
+
+    // 3. Parent Receipt Notification
+    if (studentId) {
+      const parentKey = `notif_parent_${baseKey}`;
+      const existingParent = await StaffNotification.findOne({ idempotencyKey: parentKey });
+      if (!existingParent) {
+        const parentNotif = new StaffNotification({
+          centerId,
+          recipientId: String(studentId),
+          recipientRole: "parent",
+          category: "fee",
+          type: "cash_collection",
+          title: "Fee Payment Received",
+          message: `Payment of ${formattedAmount} received for ${studentName}. Receipt #${receiptNumber}.`,
+          amount,
+          statusLabel: "Paid",
+          feeId,
+          paymentId,
+          studentId: String(studentId),
+          studentName,
+          entityType: "Fee",
+          entityId: feeId,
+          link: "/portal",
+          deepLink: "/portal",
+          isRead: false,
+          idempotencyKey: parentKey,
+          metadata: { receiptNumber, paymentId, feeId },
+        });
+        if (session) {
+          await parentNotif.save({ session });
+        } else {
+          await parentNotif.save();
+        }
+      }
+    }
+  } catch (err: unknown) {
+    console.warn(
+      "[MANUAL COLLECTION] Notification dispatch warning:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
 export async function POST(request: NextRequest) {
   const corsHeaders = getCorsHeaders(request);
+  let inFlightLockKey: string | null = null;
 
   try {
     await connectDB();
 
     const body = await request.json().catch(() => ({}));
-    const { studentId, centerId, amount, type, notes } = body;
 
-    // 1. Validate studentId
+    // -------------------------------------------------------------------------
+    // 0. API Perimeter Defense: Reject Client-Supplied Attribution / Ledger Fields
+    // -------------------------------------------------------------------------
+    const hasForbiddenField = FORBIDDEN_FIELDS.some(
+      (field) => body[field] !== undefined
+    );
+    if (hasForbiddenField) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: "IMMUTABLE_FIELD_TAMPERING",
+          error:
+            "Client-supplied attribution, custody, allocation, or paymentHistory fields are strictly forbidden.",
+        },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    const {
+      studentId,
+      amount,
+      type,
+      notes,
+      paymentMode,
+      paymentDate,
+      utrNumber,
+    } = body;
+
+    // -------------------------------------------------------------------------
+    // 1. Idempotency Key Extraction
+    // -------------------------------------------------------------------------
+    const rawIdempotencyKey =
+      request.headers.get("idempotency-key") ||
+      request.headers.get("x-idempotency-key") ||
+      body.idempotencyKey;
+    const clientKey =
+      rawIdempotencyKey && String(rawIdempotencyKey).trim()
+        ? String(rawIdempotencyKey).trim()
+        : null;
+
+    const cleanUtrNumber =
+      utrNumber && String(utrNumber).trim()
+        ? String(utrNumber).trim()
+        : undefined;
+    const resolvedPaymentMode =
+      paymentMode && String(paymentMode).trim()
+        ? String(paymentMode).trim()
+        : "Cash";
+
+    // -------------------------------------------------------------------------
+    // 2. Validate studentId
+    // -------------------------------------------------------------------------
     if (!studentId || !mongoose.Types.ObjectId.isValid(studentId)) {
       return NextResponse.json(
         { success: false, error: "A valid studentId is required" },
@@ -38,7 +383,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Validate amount
+    // -------------------------------------------------------------------------
+    // 3. Validate amount
+    // -------------------------------------------------------------------------
     const parsedAmount = Number(amount);
     if (isNaN(parsedAmount) || parsedAmount <= 0) {
       return NextResponse.json(
@@ -47,7 +394,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Look up student record
+    // -------------------------------------------------------------------------
+    // 4. Authenticate caller strictly from verified JWT claims
+    // -------------------------------------------------------------------------
+    const authUser = await getAuthenticatedUser(request);
+    if (!authUser) {
+      return NextResponse.json(
+        { success: false, error: "Authentication required" },
+        { status: 401, headers: corsHeaders }
+      );
+    }
+    if (authUser.role !== "owner" && authUser.role !== "teacher") {
+      return NextResponse.json(
+        { success: false, error: "Access denied: Unauthorized role" },
+        { status: 403, headers: corsHeaders }
+      );
+    }
+
+    const targetCenterId = authUser.centerId;
+
+    // -------------------------------------------------------------------------
+    // 5. Look up student record & verify tenant scoping
+    // -------------------------------------------------------------------------
     const studentDoc = await Student.findById(studentId);
     if (!studentDoc) {
       return NextResponse.json(
@@ -56,45 +424,196 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 4. Resolve and verify centerId authorization
-    const authCenterId = await getAuthenticatedCenterId(request);
-    let targetCenterId =
-      authCenterId ||
-      (centerId ? String(centerId).trim() : null) ||
-      request.headers.get("x-center-id") ||
-      studentDoc.centerId;
-
-    if (authCenterId && studentDoc.centerId !== authCenterId) {
+    if (studentDoc.centerId !== targetCenterId) {
       return NextResponse.json(
-        { success: false, error: "Unauthorized access to student outside authenticated center" },
+        {
+          success: false,
+          error: "Unauthorized access to student outside authenticated center",
+        },
         { status: 403, headers: corsHeaders }
       );
     }
 
+    // -------------------------------------------------------------------------
+    // 6. Resolve Transaction Context & Financial Parameters
+    // -------------------------------------------------------------------------
+    const collectorId = new mongoose.Types.ObjectId(authUser.userId);
+    const collectorRole = authUser.role;
+    const collectorName =
+      authUser.name || (collectorRole === "owner" ? "Institute Owner" : "Teacher");
+
+    const responsibleTeacherId = studentDoc.assignedTeacherId ?? null;
+    const responsibleBatch = studentDoc.batch ?? "";
+
     const now = new Date();
+    const resolvedPaymentDate =
+      paymentDate && !isNaN(new Date(paymentDate).getTime())
+        ? new Date(paymentDate)
+        : now;
     const dateComp = getISTDateComponents(now);
 
-    // 5. Determine fee category: Non-recurring vs Monthly Recurring
     const isAdvance =
       String(type || "").toLowerCase().includes("advance") ||
       String(notes || "").toLowerCase().includes("advance") ||
       body.isAdvance === true ||
       body.feeType === "advance";
 
-    const resolvedFeeType =
-      isAdvance
-        ? "advance"
-        : body.feeType === "adhoc" || String(type || "").toLowerCase().includes("adhoc")
-        ? "adhoc"
-        : body.feeType === "registration" || String(type || "").toLowerCase().includes("registration")
-        ? "registration"
-        : "monthly_recurring";
+    const resolvedFeeType = isAdvance
+      ? "advance"
+      : body.feeType === "adhoc" || String(type || "").toLowerCase().includes("adhoc")
+      ? "adhoc"
+      : body.feeType === "registration" ||
+        String(type || "").toLowerCase().includes("registration")
+      ? "registration"
+      : "monthly_recurring";
+
+    let targetBillingMonth = body.billingMonth;
+    if (
+      !targetBillingMonth &&
+      body.month &&
+      /^\d{4}-\d{2}$/.test(String(body.month).trim())
+    ) {
+      targetBillingMonth = String(body.month).trim();
+    }
+    if (!targetBillingMonth && resolvedFeeType === "monthly_recurring") {
+      targetBillingMonth = dateComp.billingMonth;
+    }
+
+    if (
+      resolvedFeeType === "monthly_recurring" &&
+      (!targetBillingMonth || !/^\d{4}-\d{2}$/.test(targetBillingMonth))
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Invalid billingMonth format: "${targetBillingMonth}". Expected YYYY-MM.`,
+        },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    const incomingFeeId =
+      body.feeId && String(body.feeId).trim() ? String(body.feeId).trim() : null;
 
     const receiptNumber = generateReceiptNumber();
+    const noteText = notes ? String(notes).trim() : "";
+
+    // -------------------------------------------------------------------------
+    // 7. Idempotency Check & In-Flight Concurrency Guard
+    // -------------------------------------------------------------------------
+    if (clientKey) {
+      inFlightLockKey = `${targetCenterId}:${clientKey}`;
+
+      // 7.1 Check process-level in-flight guard
+      if (inFlightIdempotencyKeys.has(inFlightLockKey)) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: "IDEMPOTENCY_IN_FLIGHT",
+            error:
+              "A payment with this idempotency key is currently being processed. Please retry shortly.",
+          },
+          {
+            status: 409,
+            headers: {
+              ...corsHeaders,
+              "Retry-After": "1",
+            },
+          }
+        );
+      }
+
+      // Mark this key as in-flight BEFORE performing any async DB queries
+      inFlightIdempotencyKeys.add(inFlightLockKey);
+
+      // 7.2 Check durable database for completed idempotent payment
+      const findKeyQuery = Fee.findOne({
+        centerId: targetCenterId,
+        "paymentHistory.idempotencyKey": clientKey,
+      });
+      const existingFeeWithKey = (
+        typeof (findKeyQuery as unknown as { populate?: (path: string) => Promise<unknown> })?.populate === "function"
+          ? await (findKeyQuery as unknown as { populate: (path: string) => Promise<unknown> }).populate("studentId")
+          : await findKeyQuery
+      ) as unknown as IFeeDocument | null;
+
+      if (existingFeeWithKey) {
+        const matchingEntry = (
+          (existingFeeWithKey.paymentHistory as unknown as Array<IPaymentEntry>) || []
+        ).find(
+          (p) =>
+            (p.idempotencyKey ||
+              (p as unknown as { get?: (k: string) => unknown }).get?.("idempotencyKey")) ===
+            clientKey
+        );
+
+        if (matchingEntry) {
+          const verifyRes = verifyIdempotentPayloadMatch({
+            existingFee: existingFeeWithKey,
+            matchingEntry,
+            incomingCenterId: targetCenterId,
+            incomingStudentId: String(studentId),
+            incomingAmount: parsedAmount,
+            incomingFeeId,
+            incomingBillingMonth: targetBillingMonth,
+            incomingFeeType: resolvedFeeType,
+            incomingPaymentMode: resolvedPaymentMode,
+            incomingUtrNumber: cleanUtrNumber,
+          });
+
+          if (verifyRes.isMatch) {
+            // Idempotent replay: return exact existing transaction without duplicate mutations or WhatsApp
+            const custodyBreakdown = resolveCustody(existingFeeWithKey);
+            return NextResponse.json(
+              {
+                success: true,
+                settledExisting: true,
+                idempotentReplay: true,
+                message: `Payment was already successfully recorded (Idempotent replay). Receipt: ${matchingEntry.receiptNumber}`,
+                data: formatFeeResponse(existingFeeWithKey, collectorRole),
+                ...(custodyBreakdown ? { custodyBreakdown } : {}),
+              },
+              { status: 200, headers: corsHeaders }
+            );
+          } else {
+            return NextResponse.json(
+              {
+                success: false,
+                code: "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH",
+                error: `Idempotency key has already been used with a different payment payload (${verifyRes.mismatchReason || "payload parameter mismatch"}).`,
+              },
+              { status: 409, headers: corsHeaders }
+            );
+          }
+        }
+      }
+    }
+
+    const paymentEntryId = new mongoose.Types.ObjectId();
+    const newPaymentEntry: IPaymentEntry = {
+      _id: paymentEntryId,
+      paymentId: paymentEntryId,
+      amount: parsedAmount,
+      paymentDate: resolvedPaymentDate,
+      paymentMode: resolvedPaymentMode,
+      receiptNumber: receiptNumber,
+      isProvisional: collectorRole === "teacher",
+      receivedBy: collectorId,
+      receivedByRole: collectorRole,
+      recordedBy: collectorId,
+      recordedByRole: collectorRole,
+      recordedAt: now,
+      assignedTeacherAtPayment: responsibleTeacherId,
+      batchAtPayment: responsibleBatch,
+      custodyStatus:
+        collectorRole === "teacher" ? "teacher_custody" : "owner_custody",
+      allocations: [],
+      notes: noteText,
+      ...(clientKey ? { idempotencyKey: clientKey } : {}),
+    } as IPaymentEntry;
 
     // -------------------------------------------------------------------------
     // Branch A: Non-Recurring Fees (advance, registration, adhoc)
-    // Preserve existing standalone creation behavior
     // -------------------------------------------------------------------------
     if (resolvedFeeType !== "monthly_recurring") {
       const currentMonthName = now.toLocaleString("en-IN", {
@@ -103,54 +622,171 @@ export async function POST(request: NextRequest) {
       });
 
       const feeTitle = isAdvance
-        ? notes?.trim() || "Advance Fee Payment"
-        : notes?.trim() || `${resolvedFeeType === "registration" ? "Registration Fee" : "Ad-hoc Fee"} (${currentMonthName})`;
+        ? noteText || "Advance Fee Payment"
+        : noteText ||
+          `${
+            resolvedFeeType === "registration"
+              ? "Registration Fee"
+              : "Ad-hoc Fee"
+          } (${currentMonthName})`;
 
       const monthString = isAdvance
         ? `Advance - ${currentMonthName}`
         : currentMonthName;
 
-      const manualNonRecurringFee = await Fee.create({
-        centerId: targetCenterId,
-        studentId: new mongoose.Types.ObjectId(studentId),
-        month: monthString,
-        title: feeTitle,
-        amountDue: parsedAmount,
-        paidAmount: parsedAmount,
-        dueDate: now,
-        status: "Paid",
-        paymentMode: "Cash",
-        feeType: resolvedFeeType,
-        isAdvance: isAdvance,
-        notes: notes ? String(notes).trim() : "",
-        receiptNumber: receiptNumber,
-        paidDate: now,
-        paidAt: now,
-        paymentDate: now,
-      });
+      let manualNonRecurringFee: IFeeDocument;
+      try {
+        manualNonRecurringFee = (await Fee.create({
+          centerId: targetCenterId,
+          studentId: new mongoose.Types.ObjectId(studentId),
+          month: monthString,
+          title: feeTitle,
+          originalAmountDue: parsedAmount,
+          amountDue: parsedAmount,
+          paidAmount: parsedAmount,
+          dueDate: now,
+          status: "Paid",
+          paymentMode: resolvedPaymentMode,
+          feeType: resolvedFeeType,
+          isAdvance: isAdvance,
+          notes: noteText,
+          receiptNumber: receiptNumber,
+          paidDate: resolvedPaymentDate,
+          paidAt: now,
+          paymentDate: resolvedPaymentDate,
+          ...(cleanUtrNumber ? { utrNumber: cleanUtrNumber } : {}),
+          assignedTeacherId: responsibleTeacherId,
+          assignedTeacherAtPayment: responsibleTeacherId,
+          batchAtPayment: responsibleBatch,
+          recordedBy: collectorId,
+          recordedByRole: collectorRole,
+          receivedBy: collectorId,
+          receivedByRole: collectorRole,
+          recordedAt: now,
+          paymentHistory: [newPaymentEntry],
+        })) as unknown as IFeeDocument;
+      } catch (createErr: unknown) {
+        if (
+          clientKey &&
+          (createErr as { code?: number })?.code === 11000
+        ) {
+          const replayQuery = Fee.findOne({
+            centerId: targetCenterId,
+            "paymentHistory.idempotencyKey": clientKey,
+          });
+          const replayFee = (
+            typeof (replayQuery as unknown as { populate?: (path: string) => Promise<unknown> })?.populate === "function"
+              ? await (replayQuery as unknown as { populate: (path: string) => Promise<unknown> }).populate("studentId")
+              : await replayQuery
+          ) as unknown as IFeeDocument | null;
 
-      const populatedFee = await Fee.findById(manualNonRecurringFee._id).populate("studentId");
+          if (replayFee) {
+            const matching = (
+              (replayFee.paymentHistory as unknown as Array<IPaymentEntry>) || []
+            ).find(
+              (p) =>
+                (p.idempotencyKey ||
+                  (p as unknown as { get?: (k: string) => unknown }).get?.("idempotencyKey")) ===
+                clientKey
+            );
+            if (matching) {
+              const verifyRes = verifyIdempotentPayloadMatch({
+                existingFee: replayFee,
+                matchingEntry: matching,
+                incomingCenterId: targetCenterId,
+                incomingStudentId: String(studentId),
+                incomingAmount: parsedAmount,
+                incomingFeeId,
+                incomingBillingMonth: targetBillingMonth,
+                incomingFeeType: resolvedFeeType,
+                incomingPaymentMode: resolvedPaymentMode,
+                incomingUtrNumber: cleanUtrNumber,
+              });
 
-      if (populatedFee?.studentId && (populatedFee.studentId as any).parentWhatsApp) {
-        const studentDoc = populatedFee.studentId as any;
+              if (verifyRes.isMatch) {
+                const custodyBreakdown = resolveCustody(replayFee);
+                return NextResponse.json(
+                  {
+                    success: true,
+                    settledExisting: false,
+                    idempotentReplay: true,
+                    message: `Payment was already successfully recorded (Idempotent replay). Receipt: ${matching.receiptNumber}`,
+                    data: formatFeeResponse(replayFee, collectorRole),
+                    ...(custodyBreakdown ? { custodyBreakdown } : {}),
+                  },
+                  { status: 200, headers: corsHeaders }
+                );
+              } else {
+                return NextResponse.json(
+                  {
+                    success: false,
+                    code: "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH",
+                    error: `Idempotency key has already been used with a different payment payload (${verifyRes.mismatchReason || "payload parameter mismatch"}).`,
+                  },
+                  { status: 409, headers: corsHeaders }
+                );
+              }
+            }
+          }
+        }
+        throw createErr;
+      }
+
+      const findCreated = Fee.findById(manualNonRecurringFee._id);
+      const populatedFee = (
+        typeof (findCreated as unknown as { populate?: (path: string) => Promise<unknown> })?.populate === "function"
+          ? await (findCreated as unknown as { populate: (path: string) => Promise<unknown> }).populate("studentId")
+          : await findCreated
+      ) as unknown as IFeeDocument | null;
+
+      if (
+        populatedFee?.studentId &&
+        (populatedFee.studentId as unknown as { parentWhatsApp?: string }).parentWhatsApp
+      ) {
+        const sDoc = populatedFee.studentId as unknown as {
+          parentWhatsApp?: string;
+          name?: string;
+          _id?: unknown;
+        };
         sendPaymentReceipt(
           targetCenterId,
-          studentDoc.parentWhatsApp,
-          studentDoc.name || "Student",
+          sDoc.parentWhatsApp!,
+          sDoc.name || "Student",
           parsedAmount,
           receiptNumber,
-          studentDoc._id?.toString()
+          sDoc._id?.toString()
         ).catch((dispatchErr) => {
-          console.warn("[MANUAL COLLECTION] WhatsApp receipt dispatch warning:", dispatchErr.message);
+          console.warn(
+            "[MANUAL COLLECTION] WhatsApp receipt dispatch warning:",
+            dispatchErr.message
+          );
         });
       }
+
+      const custodyBreakdown = resolveCustody(populatedFee);
+
+      await createCollectionNotifications({
+        centerId: targetCenterId,
+        amount: parsedAmount,
+        studentId: String(studentDoc._id),
+        studentName: (populatedFee?.studentId as { name?: string })?.name || studentDoc.name || "Student",
+        collectorId: String(collectorId),
+        collectorName,
+        collectorRole,
+        feeId: String(manualNonRecurringFee._id),
+        paymentId: String(newPaymentEntry.paymentId || (manualNonRecurringFee.paymentHistory?.[0] as unknown as { _id?: unknown })?._id || ""),
+        receiptNumber,
+        idempotencyKey: clientKey || undefined,
+      });
 
       return NextResponse.json(
         {
           success: true,
           settledExisting: false,
+          idempotentReplay: false,
           message: `Offline cash payment of ₹${parsedAmount} recorded successfully (Receipt: ${receiptNumber})`,
-          data: populatedFee,
+          data: formatFeeResponse(populatedFee, collectorRole),
+          ...(custodyBreakdown ? { custodyBreakdown } : {}),
         },
         { status: 201, headers: corsHeaders }
       );
@@ -159,23 +795,6 @@ export async function POST(request: NextRequest) {
     // -------------------------------------------------------------------------
     // Branch B: Monthly Recurring Fee Deduplication & Settlement
     // -------------------------------------------------------------------------
-    // Determine canonical billing cycle (YYYY-MM)
-    let targetBillingMonth = body.billingMonth;
-    if (!targetBillingMonth && body.month && /^\d{4}-\d{2}$/.test(String(body.month).trim())) {
-      targetBillingMonth = String(body.month).trim();
-    }
-    if (!targetBillingMonth) {
-      targetBillingMonth = dateComp.billingMonth;
-    }
-
-    if (!/^\d{4}-\d{2}$/.test(targetBillingMonth)) {
-      return NextResponse.json(
-        { success: false, error: `Invalid billingMonth format: "${targetBillingMonth}". Expected YYYY-MM.` },
-        { status: 400, headers: corsHeaders }
-      );
-    }
-
-    // Query candidate fees for this student, center, and billing cycle
     const candidateQuery: Record<string, unknown> = {
       centerId: targetCenterId,
       studentId: new mongoose.Types.ObjectId(studentId),
@@ -195,9 +814,10 @@ export async function POST(request: NextRequest) {
       ],
     };
 
-    const candidates = (await Fee.find(candidateQuery)) as unknown as IFeeDocument[];
+    const candidates = (await Fee.find(
+      candidateQuery
+    )) as unknown as IFeeDocument[];
 
-    // Filter out any explicit advance, adhoc, or registration records
     const eligibleCandidates: IFeeDocument[] = candidates.filter(
       (c) =>
         c.feeType !== "advance" &&
@@ -206,7 +826,7 @@ export async function POST(request: NextRequest) {
         !c.isAdvance
     );
 
-    // Conflict Rule 1: Multiple candidate fees exist
+    // Conflict Rule 1: Multiple candidates
     if (eligibleCandidates.length > 1) {
       const statuses = eligibleCandidates.map((c) => c.status).join(", ");
       return NextResponse.json(
@@ -219,8 +839,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Conflict Rule 2: Online Verification Pending conflict
-    if (eligibleCandidates.length === 1 && eligibleCandidates[0].status === "Verification Pending") {
+    // Conflict Rule 2: Online Verification Pending
+    if (
+      eligibleCandidates.length === 1 &&
+      eligibleCandidates[0].status === "Verification Pending"
+    ) {
       const candidate = eligibleCandidates[0];
       return NextResponse.json(
         {
@@ -233,7 +856,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Conflict Rule 3: Already Paid in Full
-    if (eligibleCandidates.length === 1 && eligibleCandidates[0].status === "Paid") {
+    if (
+      eligibleCandidates.length === 1 &&
+      eligibleCandidates[0].status === "Paid"
+    ) {
       const candidate = eligibleCandidates[0];
       return NextResponse.json(
         {
@@ -249,9 +875,44 @@ export async function POST(request: NextRequest) {
     if (eligibleCandidates.length === 1) {
       const candidate = eligibleCandidates[0];
 
-      // Calculate outstanding balance
-      const currentRemainingDue = Number(candidate.amountDue) || 0;
+      const currentRemainingDue = Number(candidate.amountDue);
       const priorPaidAmount = Number(candidate.paidAmount) || 0;
+
+      // -----------------------------------------------------------------------
+      // 9. Legacy Financial Inconsistency Guard (Reject; Never Silently Repair)
+      // -----------------------------------------------------------------------
+      const isNegativeAmountDue = currentRemainingDue < 0;
+      const isNegativePaidAmount = priorPaidAmount < 0;
+      const isPaidWithActiveDebt =
+        candidate.status === "Paid" && currentRemainingDue > 0;
+      const isPendingZeroZero =
+        candidate.status === "Pending" &&
+        currentRemainingDue === 0 &&
+        priorPaidAmount === 0;
+
+      if (
+        isNegativeAmountDue ||
+        isNegativePaidAmount ||
+        isPaidWithActiveDebt ||
+        isPendingZeroZero
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: "LEGACY_FINANCIAL_INCONSISTENCY",
+            error:
+              "Cannot record payment on corrupted fee ledger record. Administrative reconciliation is required.",
+            details: {
+              feeId: candidate._id,
+              amountDue: candidate.amountDue,
+              paidAmount: candidate.paidAmount,
+              status: candidate.status,
+            },
+            reconciliationRequired: true,
+          },
+          { status: 422, headers: corsHeaders }
+        );
+      }
 
       // Validate payment amount against outstanding balance
       if (parsedAmount > currentRemainingDue) {
@@ -267,125 +928,421 @@ export async function POST(request: NextRequest) {
 
       const isFullPayment = parsedAmount === currentRemainingDue;
       const totalPaidSoFar = priorPaidAmount + parsedAmount;
-      const newRemainingDue = Math.max(0, currentRemainingDue - parsedAmount);
+      const newRemainingDue = isFullPayment ? 0 : currentRemainingDue - parsedAmount;
+      const baselineOriginalAmount =
+        candidate.originalAmountDue || (currentRemainingDue + priorPaidAmount);
 
-      const noteText = notes ? String(notes).trim() : "";
-      const auditEntry = `[${now.toISOString()}] Cash collected: ₹${parsedAmount} (Receipt: ${receiptNumber})${noteText ? ` - ${noteText}` : ""}`;
-      const updatedNotes = candidate.notes ? `${candidate.notes}\n${auditEntry}` : auditEntry;
+      const auditEntry = `[${now.toISOString()}] Cash collected: ₹${parsedAmount} (Receipt: ${receiptNumber})${
+        noteText ? ` - ${noteText}` : ""
+      }`;
+      const updatedNotes = candidate.notes
+        ? `${candidate.notes}\n${auditEntry}`
+        : auditEntry;
 
-      // Atomic update protecting against concurrent double-collection
-      const updatedFee = await Fee.findOneAndUpdate(
-        {
-          _id: candidate._id,
-          status: { $in: ["Pending", "Partial Paid"] }, // Concurrency guard
-        },
+      const attributionSet: Record<string, unknown> = {};
+      const hasPriorPayment =
+        candidate.status === "Partial Paid" ||
+        Boolean(candidate.paymentDate) ||
+        Boolean(candidate.paidDate);
+
+      if (!hasPriorPayment) {
+        attributionSet.assignedTeacherAtPayment = responsibleTeacherId;
+        attributionSet.batchAtPayment = responsibleBatch;
+      }
+      if (!candidate.recordedBy) {
+        attributionSet.recordedBy = collectorId;
+        attributionSet.recordedByRole = collectorRole;
+      }
+      if (!candidate.receivedBy) {
+        attributionSet.receivedBy = collectorId;
+        attributionSet.receivedByRole = collectorRole;
+      }
+      if (!candidate.recordedAt) {
+        attributionSet.recordedAt = now;
+      }
+
+      // -----------------------------------------------------------------------
+      // One Conditional Atomic Update on Fee Document (Single-Document Atomicity)
+      // -----------------------------------------------------------------------
+      const updateQuery: Record<string, unknown> = {
+        _id: candidate._id,
+        centerId: targetCenterId,
+        status: { $in: ["Pending", "Partial Paid"] },
+        amountDue: candidate.amountDue, // Exact optimistic balance guard against concurrent races
+      };
+
+      if (clientKey) {
+        updateQuery["paymentHistory.idempotencyKey"] = { $ne: clientKey };
+      }
+
+      const updateOp = Fee.findOneAndUpdate(
+        updateQuery,
         {
           $set: {
             status: isFullPayment ? "Paid" : "Partial Paid",
             amountDue: isFullPayment ? 0 : newRemainingDue,
             paidAmount: totalPaidSoFar,
+            originalAmountDue: baselineOriginalAmount,
             receiptNumber: receiptNumber,
-            paymentMode: "Cash",
-            paidDate: now,
+            paymentMode: resolvedPaymentMode,
+            paidDate: resolvedPaymentDate,
             paidAt: now,
-            paymentDate: now,
+            paymentDate: resolvedPaymentDate,
             billingMonth: targetBillingMonth,
             feeType: "monthly_recurring",
             notes: updatedNotes,
+            ...(cleanUtrNumber ? { utrNumber: cleanUtrNumber } : {}),
+            ...attributionSet,
+          },
+          $push: {
+            paymentHistory: newPaymentEntry,
           },
         },
         { new: true }
-      ).populate("studentId");
+      );
+
+      const updatedFee = (
+        typeof (updateOp as unknown as { populate?: (path: string) => Promise<unknown> })?.populate === "function"
+          ? await (updateOp as unknown as { populate: (path: string) => Promise<unknown> }).populate("studentId")
+          : await updateOp
+      ) as unknown as IFeeDocument | null;
 
       if (!updatedFee) {
+        // Check if failure was caused by duplicate idempotencyKey submitted concurrently
+        if (clientKey) {
+          const replayQuery = Fee.findOne({
+            centerId: targetCenterId,
+            "paymentHistory.idempotencyKey": clientKey,
+          });
+          const replayFee = (
+            typeof (replayQuery as unknown as { populate?: (path: string) => Promise<unknown> })?.populate === "function"
+              ? await (replayQuery as unknown as { populate: (path: string) => Promise<unknown> }).populate("studentId")
+              : await replayQuery
+          ) as unknown as IFeeDocument | null;
+
+          if (replayFee) {
+            const matching = (
+              (replayFee.paymentHistory as unknown as Array<IPaymentEntry>) || []
+            ).find(
+              (p) =>
+                (p.idempotencyKey ||
+                  (p as unknown as { get?: (k: string) => unknown }).get?.("idempotencyKey")) ===
+                clientKey
+            );
+
+            if (matching) {
+              const verifyRes = verifyIdempotentPayloadMatch({
+                existingFee: replayFee,
+                matchingEntry: matching,
+                incomingCenterId: targetCenterId,
+                incomingStudentId: String(studentId),
+                incomingAmount: parsedAmount,
+                incomingFeeId,
+                incomingBillingMonth: targetBillingMonth,
+                incomingFeeType: resolvedFeeType,
+                incomingPaymentMode: resolvedPaymentMode,
+                incomingUtrNumber: cleanUtrNumber,
+              });
+
+              if (verifyRes.isMatch) {
+                const custodyBreakdown = resolveCustody(replayFee);
+                return NextResponse.json(
+                  {
+                    success: true,
+                    settledExisting: true,
+                    idempotentReplay: true,
+                    message: `Payment was already successfully recorded (Idempotent replay). Receipt: ${matching.receiptNumber}`,
+                    data: formatFeeResponse(replayFee, collectorRole),
+                    ...(custodyBreakdown ? { custodyBreakdown } : {}),
+                  },
+                  { status: 200, headers: corsHeaders }
+                );
+              } else {
+                return NextResponse.json(
+                  {
+                    success: false,
+                    code: "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH",
+                    error: `Idempotency key has already been used with a different payment payload (${verifyRes.mismatchReason || "payload parameter mismatch"}).`,
+                  },
+                  { status: 409, headers: corsHeaders }
+                );
+              }
+            }
+          }
+        }
+
         return NextResponse.json(
           {
             success: false,
             code: "CONCURRENT_MODIFICATION_CONFLICT",
-            error: "Concurrent payment conflict: Fee record was already updated or settled by another transaction.",
+            error:
+              "Concurrent payment conflict: Fee record was already updated or settled by another transaction.",
           },
           { status: 409, headers: corsHeaders }
         );
       }
 
-      if (isFullPayment && updatedFee?.studentId && (updatedFee.studentId as any).parentWhatsApp) {
-        const studentDoc = updatedFee.studentId as any;
+      // WhatsApp receipt dispatch on successful new payment
+      if (
+        isFullPayment &&
+        updatedFee?.studentId &&
+        (updatedFee.studentId as unknown as { parentWhatsApp?: string }).parentWhatsApp
+      ) {
+        const sDoc = updatedFee.studentId as unknown as {
+          parentWhatsApp?: string;
+          name?: string;
+          _id?: unknown;
+        };
         sendPaymentReceipt(
           targetCenterId,
-          studentDoc.parentWhatsApp,
-          studentDoc.name || "Student",
+          sDoc.parentWhatsApp!,
+          sDoc.name || "Student",
           parsedAmount,
           receiptNumber,
-          studentDoc._id?.toString()
+          sDoc._id?.toString()
         ).catch((dispatchErr) => {
-          console.warn("[MANUAL COLLECTION] WhatsApp receipt dispatch warning:", dispatchErr.message);
+          console.warn(
+            "[MANUAL COLLECTION] WhatsApp receipt dispatch warning:",
+            dispatchErr.message
+          );
         });
       }
+
+      const custodyBreakdown = resolveCustody(updatedFee);
+
+      await createCollectionNotifications({
+        centerId: targetCenterId,
+        amount: parsedAmount,
+        studentId: String(studentDoc._id),
+        studentName: (updatedFee?.studentId as { name?: string })?.name || studentDoc.name || "Student",
+        collectorId: String(collectorId),
+        collectorName,
+        collectorRole,
+        feeId: String(updatedFee._id),
+        paymentId: String(newPaymentEntry.paymentId || (newPaymentEntry as unknown as { _id?: unknown })._id || ""),
+        receiptNumber,
+        idempotencyKey: clientKey || undefined,
+      });
 
       return NextResponse.json(
         {
           success: true,
           settledExisting: true,
+          idempotentReplay: false,
           message: isFullPayment
             ? `Offline cash payment of ₹${parsedAmount} recorded successfully. Fee marked as Paid (Receipt: ${receiptNumber})`
             : `Partial cash payment of ₹${parsedAmount} recorded successfully. Remaining balance: ₹${newRemainingDue} (Receipt: ${receiptNumber})`,
-          data: updatedFee,
+          data: formatFeeResponse(updatedFee, collectorRole),
+          ...(custodyBreakdown ? { custodyBreakdown } : {}),
         },
         { status: 200, headers: corsHeaders }
       );
     }
 
     // -------------------------------------------------------------------------
-    // No eligible candidate fee exists -> Create new Fee record set to 'Paid'
+    // Fallback: No candidate fee exists -> Create new Fee record set to 'Paid'
     // -------------------------------------------------------------------------
-    const feeTitle = notes?.trim() || `Regular Monthly Fee (${dateComp.monthLabel})`;
+    const feeTitle =
+      noteText || `Regular Monthly Fee (${dateComp.monthLabel})`;
 
-    const newFee = await Fee.create({
-      centerId: targetCenterId,
-      studentId: new mongoose.Types.ObjectId(studentId),
-      billingMonth: targetBillingMonth,
-      month: dateComp.monthLabel,
-      title: feeTitle,
-      amountDue: parsedAmount,
-      paidAmount: parsedAmount,
-      dueDate: now,
-      status: "Paid",
-      paymentMode: "Cash",
-      feeType: "monthly_recurring",
-      isAdvance: false,
-      notes: notes ? String(notes).trim() : "",
-      receiptNumber: receiptNumber,
-      paidDate: now,
-      paidAt: now,
-      paymentDate: now,
-    });
+    let newFee: IFeeDocument;
+    try {
+      newFee = (await Fee.create({
+        centerId: targetCenterId,
+        studentId: new mongoose.Types.ObjectId(studentId),
+        billingMonth: targetBillingMonth,
+        month: dateComp.monthLabel,
+        title: feeTitle,
+        originalAmountDue: parsedAmount,
+        amountDue: parsedAmount,
+        paidAmount: parsedAmount,
+        dueDate: now,
+        status: "Paid",
+        paymentMode: resolvedPaymentMode,
+        feeType: "monthly_recurring",
+        isAdvance: false,
+        notes: noteText,
+        receiptNumber: receiptNumber,
+        paidDate: resolvedPaymentDate,
+        paidAt: now,
+        paymentDate: resolvedPaymentDate,
+        ...(cleanUtrNumber ? { utrNumber: cleanUtrNumber } : {}),
+        assignedTeacherId: responsibleTeacherId,
+        assignedTeacherAtPayment: responsibleTeacherId,
+        batchAtPayment: responsibleBatch,
+        recordedBy: collectorId,
+        recordedByRole: collectorRole,
+        receivedBy: collectorId,
+        receivedByRole: collectorRole,
+        recordedAt: now,
+        paymentHistory: [newPaymentEntry],
+      })) as unknown as IFeeDocument;
+    } catch (createErr: unknown) {
+      if (
+        clientKey &&
+        (createErr as { code?: number })?.code === 11000
+      ) {
+        const replayQuery = Fee.findOne({
+          centerId: targetCenterId,
+          "paymentHistory.idempotencyKey": clientKey,
+        });
+        const replayFee = (
+          typeof (replayQuery as unknown as { populate?: (path: string) => Promise<unknown> })?.populate === "function"
+            ? await (replayQuery as unknown as { populate: (path: string) => Promise<unknown> }).populate("studentId")
+            : await replayQuery
+        ) as unknown as IFeeDocument | null;
 
-    const populatedFee = await Fee.findById(newFee._id).populate("studentId");
+        if (replayFee) {
+          const matching = (
+            (replayFee.paymentHistory as unknown as Array<IPaymentEntry>) || []
+          ).find(
+            (p) =>
+              (p.idempotencyKey ||
+                (p as unknown as { get?: (k: string) => unknown }).get?.("idempotencyKey")) ===
+              clientKey
+          );
+          if (matching) {
+            const verifyRes = verifyIdempotentPayloadMatch({
+              existingFee: replayFee,
+              matchingEntry: matching,
+              incomingCenterId: targetCenterId,
+              incomingStudentId: String(studentId),
+              incomingAmount: parsedAmount,
+              incomingFeeId,
+              incomingBillingMonth: targetBillingMonth,
+              incomingFeeType: resolvedFeeType,
+              incomingPaymentMode: resolvedPaymentMode,
+              incomingUtrNumber: cleanUtrNumber,
+            });
 
-    if (populatedFee?.studentId && (populatedFee.studentId as any).parentWhatsApp) {
-      const studentDoc = populatedFee.studentId as any;
+            if (verifyRes.isMatch) {
+              const custodyBreakdown = resolveCustody(replayFee);
+              return NextResponse.json(
+                {
+                  success: true,
+                  settledExisting: false,
+                  idempotentReplay: true,
+                  message: `Payment was already successfully recorded (Idempotent replay). Receipt: ${matching.receiptNumber}`,
+                  data: formatFeeResponse(replayFee, collectorRole),
+                  ...(custodyBreakdown ? { custodyBreakdown } : {}),
+                },
+                { status: 200, headers: corsHeaders }
+              );
+            } else {
+              return NextResponse.json(
+                {
+                  success: false,
+                  code: "IDEMPOTENCY_KEY_PAYLOAD_MISMATCH",
+                  error: `Idempotency key has already been used with a different payment payload (${verifyRes.mismatchReason || "payload parameter mismatch"}).`,
+                },
+                { status: 409, headers: corsHeaders }
+              );
+            }
+          }
+        }
+      }
+      throw createErr;
+    }
+
+    const findFallback = Fee.findById(newFee._id);
+    const populatedFee = (
+      typeof (findFallback as unknown as { populate?: (path: string) => Promise<unknown> })?.populate === "function"
+        ? await (findFallback as unknown as { populate: (path: string) => Promise<unknown> }).populate("studentId")
+        : await findFallback
+    ) as unknown as IFeeDocument | null;
+
+    if (
+      populatedFee?.studentId &&
+      (populatedFee.studentId as unknown as { parentWhatsApp?: string }).parentWhatsApp
+    ) {
+      const sDoc = populatedFee.studentId as unknown as {
+        parentWhatsApp?: string;
+        name?: string;
+        _id?: unknown;
+      };
       sendPaymentReceipt(
         targetCenterId,
-        studentDoc.parentWhatsApp,
-        studentDoc.name || "Student",
+        sDoc.parentWhatsApp!,
+        sDoc.name || "Student",
         parsedAmount,
         receiptNumber,
-        studentDoc._id?.toString()
+        sDoc._id?.toString()
       ).catch((dispatchErr) => {
-        console.warn("[MANUAL COLLECTION] WhatsApp receipt dispatch warning:", dispatchErr.message);
+        console.warn(
+          "[MANUAL COLLECTION] WhatsApp receipt dispatch warning:",
+          dispatchErr.message
+        );
       });
     }
+
+    const custodyBreakdown = resolveCustody(populatedFee);
+
+    await createCollectionNotifications({
+      centerId: targetCenterId,
+      amount: parsedAmount,
+      studentId: String(studentDoc._id),
+      studentName:
+        (populatedFee?.studentId as { name?: string })?.name ||
+        studentDoc.name ||
+        "Student",
+      collectorId: String(collectorId),
+      collectorName,
+      collectorRole,
+      feeId: String(newFee._id),
+      paymentId: String(
+        newPaymentEntry.paymentId ||
+          (newFee.paymentHistory?.[0] as unknown as { _id?: unknown })?._id ||
+          ""
+      ),
+      receiptNumber,
+      idempotencyKey: clientKey || undefined,
+    });
 
     return NextResponse.json(
       {
         success: true,
         settledExisting: false,
+        idempotentReplay: false,
         message: `Offline cash payment of ₹${parsedAmount} recorded successfully (Receipt: ${receiptNumber})`,
-        data: populatedFee,
+        data: formatFeeResponse(populatedFee, collectorRole),
+        ...(custodyBreakdown ? { custodyBreakdown } : {}),
       },
       { status: 201, headers: corsHeaders }
     );
   } catch (error: unknown) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code: number }).code === 11000
+    ) {
+      const errObj = error as {
+        keyPattern?: Record<string, unknown>;
+        keyValue?: Record<string, unknown>;
+        message?: unknown;
+      };
+      const isUtrConflict = Boolean(
+        (errObj.keyPattern && "utrNumber" in errObj.keyPattern) ||
+          (errObj.keyValue && "utrNumber" in errObj.keyValue) ||
+          (typeof errObj.message === "string" &&
+            (/utr/i.test(errObj.message) ||
+              errObj.message.includes("centerId_1_utrNumber_1")))
+      );
+
+      if (isUtrConflict) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: "DUPLICATE_UTR",
+            error:
+              "A payment record with this transaction reference (UTR) already exists in this institute. Duplicate UPI/UPI-gateway references are blocked.",
+          },
+          { status: 409, headers: corsHeaders }
+        );
+      }
+      throw error;
+    }
+
     const errorMsg =
       error instanceof Error
         ? error.message
@@ -395,5 +1352,9 @@ export async function POST(request: NextRequest) {
       { success: false, error: errorMsg },
       { status: 500, headers: corsHeaders }
     );
+  } finally {
+    if (inFlightLockKey) {
+      inFlightIdempotencyKeys.delete(inFlightLockKey);
+    }
   }
 }

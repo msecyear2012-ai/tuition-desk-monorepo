@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { getAuthenticatedCenter } from "@/lib/centerProfile";
 import { QRCodeSVG } from "qrcode.react";
 import {
   ArrowLeft,
@@ -29,9 +31,12 @@ import {
   Bell,
   Receipt,
   GraduationCap,
+  BarChart3,
+  ChevronRight,
   X,
 } from "lucide-react";
 import { getCurrentCenterId } from "@/lib/apiClient";
+import MessagingQueueList from "@/components/settings/MessagingQueueList";
 
 interface MicroserviceStatus {
   status:
@@ -39,6 +44,7 @@ interface MicroserviceStatus {
     | "qr_ready"
     | "authenticated"
     | "initializing"
+    | "reconnecting"
     | "disconnected"
     | "loading";
   hasSavedSession?: boolean;
@@ -61,7 +67,7 @@ interface MicroserviceStatus {
  * Encapsulates the 3-second tick timer so the 1,700-line SettingsPage is not re-rendered every 3s.
  */
 function QrFreshnessBadge({ qrGeneratedAt }: { qrGeneratedAt?: number | null }) {
-  const [now, setNow] = useState<number>(Date.now());
+  const [now, setNow] = useState<number>(() => Date.now());
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 3000);
@@ -94,7 +100,45 @@ function QrFreshnessBadge({ qrGeneratedAt }: { qrGeneratedAt?: number | null }) 
 }
 
 export default function SettingsPage() {
+  const router = useRouter();
   const [centerId, setCenterId] = useState<string>("");
+  const [activeSettingsTab, setActiveSettingsTab] = useState<
+    "general" | "messages" | "payments"
+  >("general");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      if (tabParam === "messages" || tabParam === "messaging") {
+        setActiveSettingsTab("messages");
+      } else if (tabParam === "payments") {
+        setActiveSettingsTab("payments");
+      } else if (tabParam === "general") {
+        setActiveSettingsTab("general");
+      }
+    }
+  }, []);
+
+  const handleSettingsTabChange = (
+    tab: "general" | "messages" | "payments"
+  ) => {
+    setActiveSettingsTab(tab);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", tab);
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+
+  // Role Protection (DEC-MSEC-01/02): settings is strictly Owner-only
+  useEffect(() => {
+    getAuthenticatedCenter().then((center) => {
+      if (center?.role === "teacher") {
+        router.replace("/");
+      }
+    });
+  }, [router]);
   const [statusData, setStatusData] = useState<MicroserviceStatus>({
     status: "loading",
     qr: null,
@@ -111,6 +155,7 @@ export default function SettingsPage() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const isMountedRef = useRef<boolean>(true);
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const initTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Synchronize state to refs so the chained polling loop never captures stale closures
   const statusDataRef = useRef<MicroserviceStatus>(statusData);
@@ -129,6 +174,7 @@ export default function SettingsPage() {
       isMountedRef.current = false;
       if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
       if (abortControllerRef.current) abortControllerRef.current.abort();
+      if (initTimeoutRef.current) clearTimeout(initTimeoutRef.current);
     };
   }, []);
 
@@ -360,6 +406,7 @@ export default function SettingsPage() {
           | "qr_ready"
           | "authenticated"
           | "initializing"
+          | "reconnecting"
           | "disconnected" = "disconnected";
 
         if (data?.status === "connected" || data?.ready === true) {
@@ -386,6 +433,10 @@ export default function SettingsPage() {
           setIsRegenerating(false);
         } else if (data?.status === "initializing") {
           resolvedStatus = "initializing";
+        } else if (data?.status === "reconnecting") {
+          resolvedStatus = "reconnecting";
+          setIsInitializing(false);
+          setIsRegenerating(false);
         } else if (data?.status) {
           resolvedStatus = data.status;
           setIsInitializing(false);
@@ -408,8 +459,18 @@ export default function SettingsPage() {
           persistence: data?.persistence,
         };
 
-        setStatusData(newStatus);
-        setIsOffline(false);
+        const prev = statusDataRef.current;
+        const hasChanged =
+          prev.status !== resolvedStatus ||
+          prev.ready !== Boolean(data?.ready || resolvedStatus === "connected") ||
+          prev.hasSavedSession !== Boolean(data?.hasSavedSession) ||
+          prev.qr !== (resolvedStatus === "qr_ready" ? (data?.qr || null) : null) ||
+          prev.error !== (data?.error || undefined);
+
+        if (hasChanged) {
+          setStatusData(newStatus);
+        }
+        setIsOffline((p) => (p !== false ? false : p));
         setLastPolled(new Date());
         return newStatus;
       } catch (err: unknown) {
@@ -458,6 +519,7 @@ export default function SettingsPage() {
       isInit ||
       isRegen ||
       currentStatus === "initializing" ||
+      currentStatus === "reconnecting" ||
       currentStatus === "qr_ready" ||
       currentStatus === "authenticated"
     ) {
@@ -504,6 +566,9 @@ export default function SettingsPage() {
   // Explicitly generate fresh QR code for this center (or reconnect saved session)
   const generateQRCode = async () => {
     if (!centerId || isInitializing || isRegenerating) return;
+    if (statusData.hasSavedSession) {
+      return handleRegenerateQR("refresh");
+    }
     setIsInitializing(true);
     setStatusData((prev) => ({
       ...prev,
@@ -511,6 +576,22 @@ export default function SettingsPage() {
       error: undefined,
     }));
     scheduleNextPoll();
+    if (initTimeoutRef.current) clearTimeout(initTimeoutRef.current);
+    initTimeoutRef.current = setTimeout(() => {
+      if (
+        isMountedRef.current &&
+        (isInitializingRef.current || isRegeneratingRef.current || statusDataRef.current.status === "initializing")
+      ) {
+        setIsInitializing(false);
+        setIsRegenerating(false);
+        setStatusData((prev) => ({
+          ...prev,
+          status: "disconnected",
+          error: "Reconnection attempt timed out. WhatsApp microservice did not respond in time. Click Reconnect to try again.",
+        }));
+        scheduleNextPoll();
+      }
+    }, 25000);
 
     try {
       const res = await fetch("/api/whatsapp/init", {
@@ -522,6 +603,7 @@ export default function SettingsPage() {
           data?.error || `Failed to initialize: HTTP ${res.status}`
         );
       }
+      if (initTimeoutRef.current) { clearTimeout(initTimeoutRef.current); initTimeoutRef.current = null; }
       if (data?.qr) {
         setStatusData((prev) => ({
           ...prev,
@@ -571,6 +653,22 @@ export default function SettingsPage() {
       error: undefined,
     }));
     scheduleNextPoll();
+    if (initTimeoutRef.current) clearTimeout(initTimeoutRef.current);
+    initTimeoutRef.current = setTimeout(() => {
+      if (
+        isMountedRef.current &&
+        (isInitializingRef.current || isRegeneratingRef.current || statusDataRef.current.status === "initializing")
+      ) {
+        setIsInitializing(false);
+        setIsRegenerating(false);
+        setStatusData((prev) => ({
+          ...prev,
+          status: "disconnected",
+          error: "Reconnection attempt timed out. WhatsApp microservice did not respond in time. Click Reconnect to try again.",
+        }));
+        scheduleNextPoll();
+      }
+    }, 25000);
 
     try {
       const res = await fetch("/api/whatsapp/reconnect", {
@@ -587,8 +685,19 @@ export default function SettingsPage() {
         );
       }
 
-      // If backend already has new QR, update state
-      if (data?.qr) {
+      // If backend already has new QR or is ready, update state
+      if (initTimeoutRef.current) { clearTimeout(initTimeoutRef.current); initTimeoutRef.current = null; }
+      if (data?.ready === true || data?.status === "connected") {
+        setStatusData((prev) => ({
+          ...prev,
+          status: "connected",
+          qr: null,
+          ready: true,
+          error: undefined,
+        }));
+        setIsRegenerating(false);
+        setIsInitializing(false);
+      } else if (data?.qr) {
         if (data.qrGeneratedAt) {
           lastQrTimestampRef.current = data.qrGeneratedAt;
         }
@@ -602,10 +711,10 @@ export default function SettingsPage() {
         }));
         setIsRegenerating(false);
       } else {
-        // Awaiting fresh QR generation from newly spawned client
+        // Awaiting fresh QR generation or ready event from newly spawned client
         setStatusData((prev) => ({
           ...prev,
-          status: "initializing",
+          status: (data?.status as any) || "initializing",
           error: undefined,
         }));
       }
@@ -647,6 +756,10 @@ export default function SettingsPage() {
   const handleCancelQR = () => {
     setIsInitializing(false);
     setIsRegenerating(false);
+    if (initTimeoutRef.current) {
+      clearTimeout(initTimeoutRef.current);
+      initTimeoutRef.current = null;
+    }
     if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
     if (abortControllerRef.current) abortControllerRef.current.abort();
     setStatusData((prev) => ({
@@ -716,7 +829,9 @@ export default function SettingsPage() {
       if (data?.simulated) {
         setTestResult({
           type: "warning",
-          message: `⚠️ Simulation Mode: Message was simulated (not sent to WhatsApp). Set WHATSAPP_MODE=live and ENABLE_LIVE_WHATSAPP=true in production environment variables to enable live delivery.`,
+          message:
+            data?.message ||
+            `⚠️ Simulation Mode: Message was simulated (not sent to WhatsApp). Set ALLOW_TEST_WHATSAPP_DISPATCH=true in local development to test dispatch, or WHATSAPP_MODE=live and ENABLE_LIVE_WHATSAPP=true for live delivery.`,
         });
       } else if (res.ok && data?.success) {
         setTestResult({
@@ -749,10 +864,11 @@ export default function SettingsPage() {
   const isAuthenticated = statusData.status === "authenticated";
   const isQrReady = statusData.status === "qr_ready" && Boolean(statusData.qr);
   const isInitState = isInitializing || statusData.status === "initializing";
+  const isReconnecting = statusData.status === "reconnecting";
   const isLoading = statusData.status === "loading";
 
   return (
-    <div className="w-full max-w-3xl mx-auto flex flex-col gap-6 px-4 sm:px-6 py-6 pb-36 animate-fade-in">
+    <div className="w-full max-w-4xl mx-auto flex flex-col gap-6 px-4 sm:px-6 py-6 pb-36 animate-fade-in">
       {/* Top Header / Breadcrumb */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3.5">
@@ -797,7 +913,150 @@ export default function SettingsPage() {
         </button>
       </div>
 
-      {/* Real-time Status Banner Card */}
+      {/* Top-Level Settings Tabs: 3 Equal-Width Segments */}
+      <nav
+        aria-label="Settings navigation"
+        className="grid grid-cols-3 p-1.5 rounded-2xl bg-slate-100/90 border border-slate-200/80 gap-1 sm:gap-2 shadow-2xs"
+      >
+        <button
+          type="button"
+          onClick={() => handleSettingsTabChange("general")}
+          className={`tap-bounce w-full py-2.5 px-2 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+            activeSettingsTab === "general"
+              ? "bg-white text-slate-900 shadow-xs border border-slate-200/80"
+              : "text-slate-600 hover:text-slate-900 hover:bg-white/50 border border-transparent"
+          }`}
+          aria-selected={activeSettingsTab === "general"}
+          role="tab"
+        >
+          <Building2 className="w-4 h-4 flex-shrink-0" />
+          <span className="truncate">General</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleSettingsTabChange("messages")}
+          className={`tap-bounce w-full py-2.5 px-2 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+            activeSettingsTab === "messages"
+              ? "bg-white text-blue-700 shadow-xs border border-slate-200/80"
+              : "text-slate-600 hover:text-slate-900 hover:bg-white/50 border border-transparent"
+          }`}
+          aria-selected={activeSettingsTab === "messages"}
+          role="tab"
+        >
+          <MessageSquare className="w-4 h-4 flex-shrink-0" />
+          <span className="truncate">Messages</span>
+          {isConnected ? (
+            <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+          ) : (
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0" />
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleSettingsTabChange("payments")}
+          className={`tap-bounce w-full py-2.5 px-2 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+            activeSettingsTab === "payments"
+              ? "bg-white text-emerald-700 shadow-xs border border-slate-200/80"
+              : "text-slate-600 hover:text-slate-900 hover:bg-white/50 border border-transparent"
+          }`}
+          aria-selected={activeSettingsTab === "payments"}
+          role="tab"
+        >
+          <CreditCard className="w-4 h-4 flex-shrink-0" />
+          <span className="truncate">Payments</span>
+        </button>
+      </nav>
+
+      {/* TAB 1: GENERAL */}
+      {activeSettingsTab === "general" && (
+        <div className="flex flex-col gap-6">
+          {/* Administration & Staff Management */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Staff & Faculty Management Card */}
+      <Link
+        href="/teachers"
+        className="tap-bounce p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-indigo-50/80 via-blue-50/60 to-white border border-indigo-200/80 shadow-xs hover:border-indigo-300 hover:shadow-md transition-all flex items-center justify-between group"
+      >
+        <div className="flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-600/25 ring-2 ring-indigo-100 flex-shrink-0">
+            <GraduationCap className="w-5 h-5 stroke-[2.2]" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm sm:text-base font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                Teacher &amp; Staff Management
+              </h3>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-100 text-indigo-700">
+                FACULTY ACCESS
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Manage faculty logins, credentials, and active statuses
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 text-xs font-bold text-indigo-600 group-hover:translate-x-1 transition-transform">
+          <span>Manage</span>
+          <ChevronRight className="w-4 h-4" />
+        </div>
+      </Link>
+
+
+      {/* Multi-Axis Collection Reports Card (DEC-MSEC-06) */}
+      <Link
+        href="/reports"
+        className="tap-bounce p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-emerald-50/80 via-teal-50/60 to-white border border-emerald-200/80 shadow-xs hover:border-emerald-300 hover:shadow-md transition-all flex items-center justify-between group"
+      >
+        <div className="flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/25 ring-2 ring-emerald-100 flex-shrink-0">
+            <BarChart3 className="w-5 h-5 stroke-[2.2]" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm sm:text-base font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">
+                Collection Reports
+              </h3>
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800">
+                REVENUE INSIGHTS
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-medium mt-0.5">
+              Multi-axis daily, monthly &amp; custom collection breakdowns
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 text-xs font-bold text-emerald-700 group-hover:translate-x-1 transition-transform">
+          <span>View</span>
+          <ChevronRight className="w-4 h-4" />
+        </div>
+      </Link>
+
+          </div>
+
+          {/* WhatsApp Connection Management Header */}
+          <div className="pt-2 flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Smartphone className="w-4 h-4 text-emerald-600" />
+              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                WhatsApp Connection &amp; Pairing
+              </h3>
+            </div>
+            {isConnected ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                Linked &amp; Active
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                Action Required
+              </span>
+            )}
+          </div>
+
+          {/* Real-time Status Banner Card */}
       <div className="glass-card p-5 sm:p-6 rounded-3xl border border-slate-200/90 shadow-sm relative overflow-hidden backdrop-blur-md">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-4">
@@ -809,7 +1068,7 @@ export default function SettingsPage() {
                   ? "bg-emerald-600 text-white shadow-emerald-600/20 ring-4 ring-emerald-50"
                   : isQrReady
                   ? "bg-amber-500 text-white shadow-amber-500/20 ring-4 ring-amber-50"
-                  : isInitState
+                  : isInitState || isReconnecting
                   ? "bg-blue-600 text-white shadow-blue-500/20 ring-4 ring-blue-50"
                   : isOffline
                   ? "bg-rose-100 text-rose-600 ring-4 ring-rose-50"
@@ -822,7 +1081,7 @@ export default function SettingsPage() {
                 <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
               ) : isQrReady ? (
                 <QrCode className="w-6 h-6" />
-              ) : isInitState || isLoading ? (
+              ) : isInitState || isReconnecting || isLoading ? (
                 <RefreshCw className="w-6 h-6 animate-spin" />
               ) : (
                 <WifiOff className="w-6 h-6" />
@@ -870,6 +1129,8 @@ export default function SettingsPage() {
                     ? "Device Linked • Setting Up"
                     : isQrReady
                     ? "Awaiting QR Scan"
+                    : isReconnecting
+                    ? "Reconnecting Automatically..."
                     : isInitState
                     ? (statusData.hasSavedSession ? "Reconnecting Session..." : "Generating QR...")
                     : isLoading
@@ -1002,94 +1263,8 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
-
-          {/* Quick Test Message Tool */}
-          <div className="p-6 sm:p-7 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                  <MessageSquare className="w-4 h-4 stroke-[2.2]" />
-                </div>
-                <div>
-                  <h4 className="text-sm sm:text-base font-bold text-slate-900">
-                    Send a Live Test Message
-                  </h4>
-                  <p className="text-xs text-slate-500">
-                    Verify this center’s WhatsApp dispatch by sending a test
-                    ping to any mobile number.
-                  </p>
-                </div>
-              </div>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">
-                <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
-                Live Center Gateway
-              </span>
-            </div>
-
-            <form onSubmit={handleSendTestMessage} className="w-full">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full mt-2">
-                <div className="relative flex-1 w-full min-w-0">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none select-none">
-                    +91
-                  </span>
-                  <input
-                    type="tel"
-                    maxLength={10}
-                    value={testPhone}
-                    onChange={(e) =>
-                      setTestPhone(e.target.value.replace(/\D/g, ""))
-                    }
-                    placeholder="Enter 10-digit mobile number"
-                    className="w-full pl-11 pr-3.5 py-2.5 text-xs sm:text-sm rounded-2xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-hidden focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition-all font-mono font-bold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={testSending || testPhone.length < 10}
-                  className="tap-bounce h-10 sm:h-11 px-4 sm:px-6 w-full sm:w-auto flex-shrink-0 whitespace-nowrap rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.98] text-white text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 shadow-md shadow-blue-500/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
-                >
-                  {testSending ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Sending...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-3.5 h-3.5 stroke-[2.2]" />
-                      <span>Send Test Ping</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-
-            {testResult && (
-              <div
-                className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 animate-fade-in ${
-                  testResult.type === "success"
-                    ? "bg-emerald-50 text-emerald-900 border border-emerald-200"
-                    : testResult.type === "warning"
-                    ? "bg-amber-50 text-amber-900 border border-amber-200"
-                    : "bg-rose-50 text-rose-900 border border-rose-200"
-                }`}
-              >
-                {testResult.type === "success" ? (
-                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
-                ) : testResult.type === "warning" ? (
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-600" />
-                )}
-                <span className="font-semibold leading-relaxed">
-                  {testResult.message}
-                </span>
-              </div>
-            )}
-          </div>
         </div>
       )}
-
-
 
       {/* 2. AUTHENTICATED / FINALIZING STATE */}
       {!isConnected && isAuthenticated && (
@@ -1291,11 +1466,11 @@ export default function SettingsPage() {
               <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
                 <button
                   type="button"
-                  onClick={generateQRCode}
-                  disabled={isInitState}
+                  onClick={() => handleRegenerateQR("refresh")}
+                  disabled={isRegenerating}
                   className="tap-bounce inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs shadow-md shadow-emerald-500/25 transition-all disabled:opacity-60 cursor-pointer"
                 >
-                  {isInitState ? (
+                  {isRegenerating || (isInitState && !statusData.error) ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
                       <span>Reconnecting Session...</span>
@@ -1317,6 +1492,17 @@ export default function SettingsPage() {
                   <QrCode className="w-3.5 h-3.5" />
                   <span>Pair New Number Instead</span>
                 </button>
+
+                {isInitState && (
+                  <button
+                    type="button"
+                    onClick={handleCancelQR}
+                    className="tap-bounce inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-all cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Cancel Reconnect</span>
+                  </button>
+                )}
               </div>
 
               {statusData.error && (
@@ -1390,7 +1576,146 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* 4. MESSAGING TEMPLATES SECTION (Task 3: Multi-Tab Template System) */}
+
+          {/* Quick Test Message Tool */}
+          <div className="p-6 sm:p-7 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                  <MessageSquare className="w-4 h-4 stroke-[2.2]" />
+                </div>
+                <div>
+                  <h4 className="text-sm sm:text-base font-bold text-slate-900">
+                    Send a Live Test Message
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    Verify this center’s WhatsApp dispatch by sending a test
+                    ping to any mobile number.
+                  </p>
+                </div>
+              </div>
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">
+                <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
+                Live Center Gateway
+              </span>
+            </div>
+
+            <form onSubmit={handleSendTestMessage} className="w-full">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full mt-2">
+                <div className="relative flex-1 w-full min-w-0">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none select-none">
+                    +91
+                  </span>
+                  <input
+                    type="tel"
+                    maxLength={10}
+                    value={testPhone}
+                    onChange={(e) =>
+                      setTestPhone(e.target.value.replace(/\D/g, ""))
+                    }
+                    placeholder="Enter 10-digit mobile number"
+                    className="w-full pl-11 pr-3.5 py-2.5 text-xs sm:text-sm rounded-2xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-hidden focus:ring-4 focus:ring-blue-100 focus:border-blue-600 transition-all font-mono font-bold text-slate-900 placeholder:text-slate-400 placeholder:font-normal"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={testSending || testPhone.length < 10}
+                  className="tap-bounce h-10 sm:h-11 px-4 sm:px-6 w-full sm:w-auto flex-shrink-0 whitespace-nowrap rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.98] text-white text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 shadow-md shadow-blue-500/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
+                >
+                  {testSending ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Sending...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5 stroke-[2.2]" />
+                      <span>Send Test Ping</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+
+            {testResult && (
+              <div
+                className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 animate-fade-in ${
+                  testResult.type === "success"
+                    ? "bg-emerald-50 text-emerald-900 border border-emerald-200"
+                    : testResult.type === "warning"
+                    ? "bg-amber-50 text-amber-900 border border-amber-200"
+                    : "bg-rose-50 text-rose-900 border border-rose-200"
+                }`}
+              >
+                {testResult.type === "success" ? (
+                  <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+                ) : testResult.type === "warning" ? (
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-600" />
+                )}
+                <span className="font-semibold leading-relaxed">
+                  {testResult.message}
+                </span>
+              </div>
+            )}
+          </div>
+
+
+          {/* Automations Showcase Section */}
+      <div className="space-y-3.5 pt-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-amber-500" />
+          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+            Active Automation Workflows
+          </h3>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          {/* Card 1 */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-blue-200 hover:shadow-xs transition-all space-y-2">
+            <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-sm">
+              🎉
+            </div>
+            <h4 className="text-xs font-bold text-slate-900">
+              Admission Welcome
+            </h4>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Fires instantly when adding a new student. Sends the unique VIP
+              Parent Portal magic link.
+            </p>
+          </div>
+
+          {/* Card 2 */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-emerald-200 hover:shadow-xs transition-all space-y-2">
+            <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-sm">
+              💰
+            </div>
+            <h4 className="text-xs font-bold text-slate-900">Fee Reminders</h4>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Recurring automated reminders for pending tuition fees with
+              amount, due date, and pay links.
+            </p>
+          </div>
+
+          {/* Card 3 */}
+          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-purple-200 hover:shadow-xs transition-all space-y-2">
+            <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold text-sm">
+              📊
+            </div>
+            <h4 className="text-xs font-bold text-slate-900">
+              Test Mark Reports
+            </h4>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Dispatches scores, rank analysis, and encouraging remarks to
+              parents after tests are entered.
+            </p>
+          </div>
+        </div>
+      </div>
+
+
+          {/* 4. MESSAGING TEMPLATES SECTION (Task 3: Multi-Tab Template System) */}
       <div className="glass-card p-6 sm:p-7 rounded-3xl border border-slate-200/90 shadow-sm space-y-6 bg-white">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
@@ -1632,19 +1957,19 @@ export default function SettingsPage() {
                 if (activeTemplateTab === "admission") {
                   return rawTemplate
                     .replace(/\{\{studentName\}\}/g, "Aarav Sharma")
-                    .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/p/sample-id");
+                    .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/portal#token=pt_sample_preview");
                 } else if (activeTemplateTab === "feeReminder") {
                   return rawTemplate
                     .replace(/\{\{studentName\}\}/g, "Aarav Sharma")
                     .replace(/\{\{amountDue\}\}/g, "3,500")
                     .replace(/\{\{dueDate\}\}/g, "10 Nov 2026")
-                    .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/p/sample-id");
+                    .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/portal#token=pt_sample_preview");
                 } else {
                   return rawTemplate
                     .replace(/\{\{studentName\}\}/g, "Aarav Sharma")
                     .replace(/\{\{paidAmount\}\}/g, "3,500")
                     .replace(/\{\{receiptNumber\}\}/g, "RCP-2026-9481")
-                    .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/p/sample-id");
+                    .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/portal#token=pt_sample_preview");
                 }
               })()}
             </div>
@@ -1691,7 +2016,34 @@ export default function SettingsPage() {
         </form>
       </div>
 
-      {/* 5. PAYMENT SETUP SECTION (Task 1: Fail-Safe Double Confirmation) */}
+      {/* Privacy & Security Guarantee Note */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-start gap-3">
+        <ShieldCheck className="w-5 h-5 text-slate-400 flex-shrink-0 mt-0.5" />
+        <div className="space-y-0.5">
+          <p className="text-xs font-bold text-slate-800">
+            End-to-End Encrypted &amp; Multi-Tenant Isolated
+          </p>
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            WhatsApp session credentials are kept strictly in your local
+            microservice directory (<code>.wwebjs_auth/session-{centerId}</code>).
+            Each center operates on its own dedicated browser session.
+          </p>
+        </div>
+      </div>
+        </div>
+      )}
+
+      {/* TAB 2: MESSAGES */}
+      {activeSettingsTab === "messages" && (
+        <div className="flex flex-col gap-6">
+          <MessagingQueueList isWhatsAppConnected={statusData.ready} />
+        </div>
+      )}
+
+      {/* TAB 3: PAYMENTS */}
+      {activeSettingsTab === "payments" && (
+        <div className="flex flex-col gap-6">
+          {/* 5. PAYMENT SETUP SECTION (Task 1: Fail-Safe Double Confirmation) */}
       <div className="glass-card p-6 sm:p-7 rounded-3xl border border-slate-200/90 shadow-sm space-y-5 bg-white">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
@@ -1849,73 +2201,8 @@ export default function SettingsPage() {
           );
         })()}
       </div>
-
-      {/* Automations Showcase Section */}
-      <div className="space-y-3.5 pt-2">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-amber-500" />
-          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-            Active Automation Workflows
-          </h3>
         </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-          {/* Card 1 */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-blue-200 hover:shadow-xs transition-all space-y-2">
-            <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-sm">
-              🎉
-            </div>
-            <h4 className="text-xs font-bold text-slate-900">
-              Admission Welcome
-            </h4>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              Fires instantly when adding a new student. Sends the unique VIP
-              Parent Portal magic link.
-            </p>
-          </div>
-
-          {/* Card 2 */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-emerald-200 hover:shadow-xs transition-all space-y-2">
-            <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-sm">
-              💰
-            </div>
-            <h4 className="text-xs font-bold text-slate-900">Fee Reminders</h4>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              Recurring automated reminders for pending tuition fees with
-              amount, due date, and pay links.
-            </p>
-          </div>
-
-          {/* Card 3 */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-purple-200 hover:shadow-xs transition-all space-y-2">
-            <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold text-sm">
-              📊
-            </div>
-            <h4 className="text-xs font-bold text-slate-900">
-              Test Mark Reports
-            </h4>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              Dispatches scores, rank analysis, and encouraging remarks to
-              parents after tests are entered.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Privacy & Security Guarantee Note */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-start gap-3">
-        <ShieldCheck className="w-5 h-5 text-slate-400 flex-shrink-0 mt-0.5" />
-        <div className="space-y-0.5">
-          <p className="text-xs font-bold text-slate-800">
-            End-to-End Encrypted &amp; Multi-Tenant Isolated
-          </p>
-          <p className="text-[11px] text-slate-500 leading-relaxed">
-            WhatsApp session credentials are kept strictly in your local
-            microservice directory (<code>.wwebjs_auth/session-{centerId}</code>).
-            Each center operates on its own dedicated browser session.
-          </p>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

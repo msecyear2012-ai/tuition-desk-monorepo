@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { apiClient, getCurrentCenterId } from "@/lib/apiClient";
 import { TestRecord, StudentRecord, TestResult } from "@/types";
+import StudentPhoneMasked from "@/components/common/StudentPhoneMasked";
+import { getCachedCenter, getAuthenticatedCenter } from "@/lib/centerProfile";
 
 interface EnterMarksModalProps {
   isOpen: boolean;
@@ -69,6 +71,15 @@ export default function EnterMarksModal({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<string>(
+    () => getCachedCenter()?.role || "teacher"
+  );
+
+  useEffect(() => {
+    getAuthenticatedCenter().then((c) => {
+      if (c?.role) setUserRole(c.role);
+    });
+  }, []);
 
   // Fetch students for the test's batch on mount or when test changes
   useEffect(() => {
@@ -88,7 +99,12 @@ export default function EnterMarksModal({
         });
 
         const batchStudents = res.data || [];
-        setStudents(batchStudents);
+        // Scope students to test's assigned teacher if test belongs to a specific faculty
+        const relevantStudents = test.assignedTeacherId
+          ? batchStudents.filter((s) => s.assignedTeacherId === test.assignedTeacherId)
+          : batchStudents;
+
+        setStudents(relevantStudents);
 
         // Map existing results or initialize
         const existingResultsMap = new Map<string, TestResult>();
@@ -102,7 +118,7 @@ export default function EnterMarksModal({
           });
         }
 
-        const mappedEntries: StudentEntry[] = batchStudents.map((s) => {
+        const mappedEntries: StudentEntry[] = relevantStudents.map((s) => {
           const existing = existingResultsMap.get(s._id);
           return {
             studentId: s._id,
@@ -337,9 +353,13 @@ export default function EnterMarksModal({
                         <h4 className="text-xs font-bold text-slate-900 truncate leading-tight">
                           {student.name}
                         </h4>
-                        <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          +91 {student.parentWhatsApp}
-                        </p>
+                        <StudentPhoneMasked
+                          phone={student.parentWhatsApp}
+                          userRole={userRole}
+                          showQuickActions={false}
+                          textClassName="text-[10px] text-slate-400 font-mono"
+                          className="mt-0.5 block"
+                        />
                       </div>
                     </div>
 
