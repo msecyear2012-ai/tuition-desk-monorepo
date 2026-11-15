@@ -6,6 +6,10 @@ import Student from "../../../../models/Student.ts";
 import { getAuthenticatedUser } from "../../../../lib/auth.ts";
 import { getCorsHeaders, handleCorsPreflight } from "../../../../lib/cors.ts";
 import { sanitizePopulatedStudentDoc } from "../../../../lib/privacyUtils.ts";
+import {
+  resolvePortalToken,
+  validateParentSession,
+} from "../../../../lib/parentAccessService.ts";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCorsPreflight(request, "POST, OPTIONS");
@@ -42,22 +46,75 @@ export async function POST(request: NextRequest) {
       String(utrNumber || "").trim() ||
       `ADV_INIT_${Date.now().toString().slice(-6)}`;
 
-    // 3. Authenticate user from verified JWT
-    const user = await getAuthenticatedUser(request);
-    if (!user) {
+    // 3. Resolve Authentication: Parent Portal or Staff (Owner / Teacher)
+    let authCenterId: string | null = null;
+    let parentAccessRecord: any = null;
+    let isParent = false;
+
+    // A. Check Parent Portal Session Token (Cookie or Authorization: Bearer header) or raw token
+    const sessionCookie = request.cookies.get("parent_portal_session")?.value;
+    const authHeader = request.headers
+      .get("authorization")
+      ?.replace(/^Bearer\s+/i, "");
+    const sessionToken = sessionCookie || authHeader;
+
+    const rawToken =
+      (request.nextUrl ? request.nextUrl.searchParams.get("token") : null) ||
+      request.headers.get("x-portal-token") ||
+      (typeof body.token === "string" ? body.token.trim() : null);
+
+    if (sessionToken) {
+      if (sessionToken.startsWith("pt_")) {
+        const tokenResult = await resolvePortalToken(sessionToken.trim());
+        if (tokenResult.valid && tokenResult.parentAccess) {
+          parentAccessRecord = tokenResult.parentAccess;
+          authCenterId = tokenResult.parentAccess.centerId;
+          isParent = true;
+        }
+      } else {
+        const sessionResult = await validateParentSession(sessionToken);
+        if (sessionResult.valid && sessionResult.parentAccess) {
+          parentAccessRecord = sessionResult.parentAccess;
+          authCenterId = sessionResult.parentAccess.centerId;
+          isParent = true;
+        }
+      }
+    }
+
+    if (!parentAccessRecord && rawToken) {
+      const tokenResult = await resolvePortalToken(String(rawToken).trim());
+      if (tokenResult.valid && tokenResult.parentAccess) {
+        parentAccessRecord = tokenResult.parentAccess;
+        authCenterId = tokenResult.parentAccess.centerId;
+        isParent = true;
+      }
+    }
+
+    // B. Check Staff Authentication (Owner or Teacher) if not resolved as parent
+    let staffUser: any = null;
+    if (!parentAccessRecord) {
+      staffUser = await getAuthenticatedUser(request);
+      if (staffUser) {
+        if (staffUser.role === "owner" || staffUser.role === "teacher") {
+          authCenterId = staffUser.centerId;
+        } else {
+          return NextResponse.json(
+            { success: false, error: "Access denied: Unauthorized role" },
+            { status: 403, headers: corsHeaders }
+          );
+        }
+      }
+    }
+
+    // Fail closed: Reject unauthenticated callers immediately before database lookups
+    if (!authCenterId) {
       return NextResponse.json(
         { success: false, error: "Authentication required" },
         { status: 401, headers: corsHeaders }
       );
     }
-    if (user.role !== "owner" && user.role !== "teacher") {
-      return NextResponse.json(
-        { success: false, error: "Access denied: Unauthorized role" },
-        { status: 403, headers: corsHeaders }
-      );
-    }
 
-    const targetCenterId = user.centerId;
+    const targetCenterId = authCenterId;
     const studentDoc = await Student.findById(studentId);
     if (!studentDoc) {
       return NextResponse.json(
@@ -65,16 +122,50 @@ export async function POST(request: NextRequest) {
         { status: 404, headers: corsHeaders }
       );
     }
-    if (studentDoc.centerId !== targetCenterId) {
+    if (String(studentDoc.centerId).trim() !== String(targetCenterId).trim()) {
       return NextResponse.json(
         { success: false, error: "Unauthorized access to student outside authenticated center" },
         { status: 403, headers: corsHeaders }
       );
     }
 
+    // 4. Verify Authorization for this Specific Student
+    if (isParent && parentAccessRecord) {
+      const linkedStudentIds = (parentAccessRecord.linkedStudentIds || []).map(
+        (id: any) => String(id)
+      );
+      if (!linkedStudentIds.includes(String(studentId))) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Access denied: Parent is not authorized for this student",
+          },
+          { status: 403, headers: corsHeaders }
+        );
+      }
+    } else if (staffUser && staffUser.role === "teacher") {
+      const teacherId = staffUser.teacherId || staffUser.userId;
+      if (
+        !studentDoc.assignedTeacherId ||
+        String(studentDoc.assignedTeacherId) !== String(teacherId)
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Access denied: Teacher not assigned to this student",
+          },
+          { status: 403, headers: corsHeaders }
+        );
+      }
+    }
+
     const now = new Date();
-    const collectorId = new mongoose.Types.ObjectId(user.userId);
-    const collectorRole = user.role;
+    const collectorId = isParent && parentAccessRecord
+      ? (parentAccessRecord._id instanceof mongoose.Types.ObjectId
+          ? parentAccessRecord._id
+          : new mongoose.Types.ObjectId(String(parentAccessRecord._id)))
+      : new mongoose.Types.ObjectId(staffUser.userId);
+    const collectorRole = isParent ? "system" : staffUser.role;
     const responsibleTeacherId = studentDoc.assignedTeacherId || null;
     const responsibleBatch = studentDoc.batch || "";
 
@@ -119,7 +210,7 @@ export async function POST(request: NextRequest) {
     const sanitizedFee = sanitizePopulatedStudentDoc(
       populatedFee?.toObject ? populatedFee.toObject() : populatedFee,
       "studentId",
-      user.role
+      isParent ? "parent" : staffUser.role
     );
 
     return NextResponse.json(

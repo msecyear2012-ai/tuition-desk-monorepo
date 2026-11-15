@@ -526,6 +526,13 @@ export default function FeeActionCard({
       const backendUrl =
         process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
+      const token =
+        typeof window !== "undefined"
+          ? sessionStorage.getItem("parent_portal_session_token") ||
+            localStorage.getItem("parent_portal_session_token") ||
+            undefined
+          : undefined;
+
       const res = await fetch(`${backendUrl}/fees/advance`, {
         method: "POST",
         credentials: "include",
@@ -537,6 +544,7 @@ export default function FeeActionCard({
           studentId,
           centerId,
           amount: numericAdvance,
+          token,
         }),
       });
 

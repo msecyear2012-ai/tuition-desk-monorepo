@@ -634,4 +634,113 @@ test("MSEC Parent Portal Link Activation & Provisioning Regression Suite", async
       assert.match(json.error, /Authentication required/i);
     }
   );
+
+  // ==========================================================================
+  // SCENARIO 6: Parent Portal Advance Fee Payment Authorization
+  // ==========================================================================
+  const { POST: advanceFeeRoute } = await import(
+    "../tution-desk-be/src/app/api/fees/advance/route.ts"
+  );
+
+  StudentModel.findById = function (id) {
+    return Promise.resolve(mockStudents.get(String(id)) || null);
+  };
+
+  let mockCreatedFee = null;
+  FeeModel.create = async function (doc) {
+    mockCreatedFee = {
+      ...doc,
+      _id: new mongoose.Types.ObjectId(),
+    };
+    return mockCreatedFee;
+  };
+
+  FeeModel.findById = function (id) {
+    return {
+      populate: async (field) => {
+        return {
+          ...mockCreatedFee,
+          studentId: mockStudents.get(String(mockCreatedFee?.studentId)),
+        };
+      },
+    };
+  };
+
+  await t.test(
+    "Scenario 6A: Parent creates advance fee payment with valid parent session token",
+    async () => {
+      const req = createMockRequest({
+        method: "POST",
+        body: {
+          studentId: String(student1Id),
+          amount: 2500,
+        },
+        headers: {
+          authorization: `Bearer ${bulkImportSessionToken}`,
+        },
+      });
+
+      const res = await advanceFeeRoute(req);
+      const json = await res.json();
+
+      assert.strictEqual(res.status, 201, `Expected 201, got ${res.status}: ${JSON.stringify(json)}`);
+      assert.strictEqual(json.success, true);
+      assert.strictEqual(json.data.amountDue, 2500);
+      assert.strictEqual(json.data.status, "Verification Pending");
+      assert.strictEqual(json.data.isAdvance, true);
+      assert.strictEqual(json.data.feeType, "advance");
+      assert.strictEqual(mockCreatedFee.recordedByRole, "system");
+    }
+  );
+
+  await t.test(
+    "Scenario 6B: Parent cannot create advance fee for an unlinked student",
+    async () => {
+      const unlinkedStudentId = new mongoose.Types.ObjectId("6af100000000000000000099");
+      mockStudents.set(String(unlinkedStudentId), {
+        _id: unlinkedStudentId,
+        centerId: centerId,
+        name: "Unlinked Student",
+        batch: "Class 10",
+      });
+
+      const req = createMockRequest({
+        method: "POST",
+        body: {
+          studentId: String(unlinkedStudentId),
+          amount: 1500,
+        },
+        headers: {
+          authorization: `Bearer ${bulkImportSessionToken}`,
+        },
+      });
+
+      const res = await advanceFeeRoute(req);
+      const json = await res.json();
+
+      assert.strictEqual(res.status, 403);
+      assert.strictEqual(json.success, false);
+      assert.match(json.error, /not authorized for this student/i);
+    }
+  );
+
+  await t.test(
+    "Scenario 6C: Unauthenticated advance fee request is rejected with 401",
+    async () => {
+      const req = createMockRequest({
+        method: "POST",
+        body: {
+          studentId: String(student1Id),
+          amount: 2000,
+        },
+      });
+
+      const res = await advanceFeeRoute(req);
+      const json = await res.json();
+
+      assert.strictEqual(res.status, 401);
+      assert.strictEqual(json.success, false);
+      assert.match(json.error, /Authentication required/i);
+    }
+  );
 });
