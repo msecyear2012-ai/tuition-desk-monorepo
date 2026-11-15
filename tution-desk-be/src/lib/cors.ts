@@ -149,7 +149,7 @@ export function handleCorsPreflight(
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Methods": allowedMethods,
         "Access-Control-Allow-Headers":
-          "Content-Type, Authorization, x-center-id, Cookie, Set-Cookie",
+          "Content-Type, Authorization, x-center-id, Idempotency-Key, idempotency-key, x-idempotency-key, x-portal-token, Cookie, Set-Cookie",
         "Access-Control-Allow-Credentials": "true",
         "Access-Control-Max-Age": "86400",
         Vary: "Origin",

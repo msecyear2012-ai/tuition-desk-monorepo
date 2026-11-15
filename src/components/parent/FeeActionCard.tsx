@@ -17,6 +17,13 @@ import {
   Sparkles,
   CreditCard,
   IndianRupee,
+  Camera,
+  UploadCloud,
+  FileImage,
+  Trash2,
+  AlertCircle,
+  FileText,
+  Hash,
 } from "lucide-react";
 
 interface FeeActionCardProps {
@@ -28,11 +35,13 @@ interface FeeActionCardProps {
   daysLate: number;
   upiId: string;
   centerName?: string;
-  status?: "Pending" | "Paid" | "Verification Pending";
+  status?: "Pending" | "Paid" | "Verification Pending" | "Partial Paid";
   utrNumber?: string;
+  rejectionReason?: string | null;
   onPaymentSuccess?: () => void;
   onUtrSubmitted?: (utr: string) => void;
   onAdvancePaymentSuccess?: () => void;
+  onProofSubmitted?: (proofData: any) => void;
   isPaid?: boolean;
 }
 
@@ -49,15 +58,17 @@ export default function FeeActionCard({
   centerName = "Tuition Center",
   status = "Pending",
   utrNumber: initialUtr = "",
+  rejectionReason = null,
   onPaymentSuccess,
   onUtrSubmitted,
   onAdvancePaymentSuccess,
+  onProofSubmitted,
   isPaid = false,
 }: FeeActionCardProps) {
   // Regular Payment Modal States
   const [showUpiModal, setShowUpiModal] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<
-    "Pending" | "Paid" | "Verification Pending"
+    "Pending" | "Paid" | "Verification Pending" | "Partial Paid"
   >(isPaid ? "Paid" : status);
   const [utrInput, setUtrInput] = useState("");
   const [savedUtr, setSavedUtr] = useState(initialUtr);
@@ -109,15 +120,12 @@ export default function FeeActionCard({
     setGatewayPinging(true);
 
     try {
-      const isAlive = await pingServer();
-      if (isAlive) {
-        setRegularPaymentSuccess(false);
-        setShowUpiModal(true);
-      } else {
-        setGatewayError("Server temporarily busy, please try after some time.");
-      }
+      await pingServer().catch(() => false);
+      setRegularPaymentSuccess(false);
+      setShowUpiModal(true);
     } catch {
-      setGatewayError("Server temporarily busy, please try after some time.");
+      setRegularPaymentSuccess(false);
+      setShowUpiModal(true);
     } finally {
       setGatewayPinging(false);
     }
@@ -137,6 +145,109 @@ export default function FeeActionCard({
   const [advanceUtrInput, setAdvanceUtrInput] = useState("");
   const [submittingAdvanceUtr, setSubmittingAdvanceUtr] = useState(false);
   const [advanceError, setAdvanceError] = useState<string | null>(null);
+
+  // Payment Proof Screenshot Modal & Upload States
+  const [showProofModal, setShowProofModal] = useState(false);
+  const [selectedProofFile, setSelectedProofFile] = useState<File | null>(null);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
+  const [proofUtrInput, setProofUtrInput] = useState("");
+  const [proofNotesInput, setProofNotesInput] = useState("");
+  const [isUploadingProof, setIsUploadingProof] = useState(false);
+  const [proofError, setProofError] = useState<string | null>(null);
+  const [proofSuccess, setProofSuccess] = useState(false);
+
+  // Mobile UPI Intent Capture States & Truthful UTR Fetch Lifecycle
+  const [launchedUpi, setLaunchedUpi] = useState(false);
+  const [detectedUtrFromApp, setDetectedUtrFromApp] = useState<string | null>(null);
+  const [utrFetchStatus, setUtrFetchStatus] = useState<"idle" | "fetched" | "not_fetched">("idle");
+  const [upiAppError, setUpiAppError] = useState<string | null>(null);
+  const [showInModalSubmission, setShowInModalSubmission] = useState(false);
+
+  // Helper: Validates genuine UTR extracted from UPI application without guessing or placeholders
+  const validateExtractedUtr = (raw: string | null | undefined): string | null => {
+    if (!raw || typeof raw !== "string") return null;
+    const trimmed = raw.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+    if (trimmed.length < 6 || trimmed.length > 30) return null;
+    if (trimmed.startsWith("FEE-") || trimmed.startsWith("FEE_")) return null;
+    const forbidden = [
+      "SUCCESS", "FAILURE", "SUBMITTED", "PENDING", "CANCELLED",
+      "TRUE", "FALSE", "UNDEFINED", "NULL", "NONE", "OK",
+      "NOT_FETCHED", "NOTFETCHED", "UTR_NOT_FETCHED", "UTRNOTFETCHED"
+    ];
+    if (forbidden.includes(trimmed)) return null;
+    return trimmed;
+  };
+
+  // Clean up object URL when proofPreviewUrl changes or unmounts
+  useEffect(() => {
+    return () => {
+      if (proofPreviewUrl) {
+        URL.revokeObjectURL(proofPreviewUrl);
+      }
+    };
+  }, [proofPreviewUrl]);
+
+  // Inspect standard NPCI UPI Intent response parameters on return
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const inspectUpiResponse = () => {
+      try {
+        const searchParams = new URLSearchParams(window.location.search);
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+
+        // Standard NPCI response parameters
+        const txnId = searchParams.get("txnId") || hashParams.get("txnId") || "";
+        const approvalRef =
+          searchParams.get("ApprovalRefNo") ||
+          searchParams.get("approvalRefNo") ||
+          searchParams.get("refId") ||
+          searchParams.get("rrn") ||
+          hashParams.get("ApprovalRefNo") ||
+          hashParams.get("approvalRefNo") ||
+          hashParams.get("refId") ||
+          hashParams.get("rrn") ||
+          "";
+        const status = (searchParams.get("Status") || hashParams.get("Status") || "").toUpperCase();
+        const responseCode = searchParams.get("responseCode") || hashParams.get("responseCode") || "";
+
+        if (status === "FAILURE" || responseCode === "ZM" || responseCode === "U16") {
+          setUpiAppError("UPI transaction was cancelled or unsuccessful in app. If amount was deducted, please upload your screenshot or enter your UTR number below.");
+        }
+
+        const validUtr = validateExtractedUtr(approvalRef) || validateExtractedUtr(txnId);
+        if (validUtr) {
+          setDetectedUtrFromApp(validUtr);
+          setUtrFetchStatus("fetched");
+          setProofUtrInput(validUtr);
+          setShowInModalSubmission(true);
+        } else if (launchedUpi) {
+          setDetectedUtrFromApp(null);
+          setUtrFetchStatus("not_fetched");
+          setProofUtrInput("");
+          setShowInModalSubmission(true);
+        }
+      } catch (e) {
+        console.warn("[FeeActionCard] Error inspecting UPI response:", e);
+      }
+    };
+
+    inspectUpiResponse();
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        inspectUpiResponse();
+      }
+    };
+
+    window.addEventListener("focus", inspectUpiResponse);
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      window.removeEventListener("focus", inspectUpiResponse);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [launchedUpi]);
 
   // Target UPI ID
   const targetUpiId = upiId || "9876543210@paytm";
@@ -182,6 +293,7 @@ export default function FeeActionCard({
   // =========================================================================
   const handleOpenUpiApp = (e: React.MouseEvent) => {
     e.preventDefault();
+    setLaunchedUpi(true);
     if (typeof window !== "undefined") {
       window.location.href = upiLink;
     }
@@ -578,6 +690,206 @@ export default function FeeActionCard({
     }
   };
 
+  // =========================================================================
+  // TASK 5: PAYMENT PROOF SCREENSHOT UPLOAD & CLIENT-SIDE VALIDATION
+  // =========================================================================
+  const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"];
+  const MAX_FILE_SIZE_BYTES = 3 * 1024 * 1024; // 3 MB
+
+  const handleSelectProofFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setProofError(null);
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+
+    // Client-side MIME type and extension check
+    const normalizedType = (file.type || "").toLowerCase();
+    const hasValidMime = ALLOWED_MIME_TYPES.includes(normalizedType);
+    const hasValidExt = /\.(jpe?g|png|webp)$/i.test(file.name || "");
+
+    if (!hasValidMime && !hasValidExt) {
+      setProofError(
+        "Only JPEG, PNG, and WebP images are supported. (PDF or other document formats are not accepted)"
+      );
+      return;
+    }
+
+    // Client-side file size check (3 MB max)
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+      setProofError(
+        `File exceeds the 3 MB limit (${sizeMb} MB). Please choose a smaller image or screenshot.`
+      );
+      return;
+    }
+
+    if (file.size === 0) {
+      setProofError("The selected file is empty. Please choose a valid image.");
+      return;
+    }
+
+    // Clean up previous preview object URL if any
+    if (proofPreviewUrl) {
+      URL.revokeObjectURL(proofPreviewUrl);
+    }
+
+    setSelectedProofFile(file);
+    try {
+      const preview = URL.createObjectURL(file);
+      setProofPreviewUrl(preview);
+    } catch {
+      setProofPreviewUrl(null);
+    }
+  };
+
+  const handleClearProofFile = () => {
+    if (proofPreviewUrl) {
+      URL.revokeObjectURL(proofPreviewUrl);
+    }
+    setSelectedProofFile(null);
+    setProofPreviewUrl(null);
+    setProofError(null);
+  };
+
+  const handleCloseProofModal = () => {
+    if (isUploadingProof) return;
+    setShowProofModal(false);
+    handleClearProofFile();
+    setProofUtrInput("");
+    setProofNotesInput("");
+    setProofError(null);
+    setProofSuccess(false);
+  };
+
+  const handleSubmitProof = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // If UTR was fetched from app, use that. When UTR is not fetched, manual UTR entry is removed.
+    const cleanUtr = (detectedUtrFromApp && utrFetchStatus === "fetched")
+      ? validateExtractedUtr(detectedUtrFromApp) || ""
+      : "";
+    const hasUtr = cleanUtr.length >= 6;
+    const hasFile = Boolean(selectedProofFile);
+
+    if (!hasUtr && !hasFile) {
+      setProofError("UTR was not fetched. A payment screenshot is required to submit for verification.");
+      return;
+    }
+
+    if (!feeId) {
+      setProofError(
+        "Fee record ID is missing. Please refresh the page and try again."
+      );
+      return;
+    }
+
+    setIsUploadingProof(true);
+    setProofError(null);
+
+    try {
+      const backendUrl =
+        process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
+
+      const token =
+        typeof window !== "undefined"
+          ? sessionStorage.getItem("parent_portal_session_token") ||
+            localStorage.getItem("parent_portal_session_token") ||
+            localStorage.getItem("auth_token")
+          : null;
+
+      const formData = new FormData();
+      if (selectedProofFile) {
+        formData.append("file", selectedProofFile);
+      }
+
+      if (cleanUtr) {
+        formData.append("utrNumber", cleanUtr);
+      }
+
+      const cleanNotes = proofNotesInput.trim();
+      if (cleanNotes) {
+        formData.append("notes", cleanNotes);
+      }
+
+      if (token) {
+        formData.append("token", token);
+      }
+
+      const authHeaders: Record<string, string> = {
+        Accept: "application/json",
+      };
+      if (token) {
+        authHeaders["Authorization"] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(`${backendUrl}/fees/${feeId}/payment-proof`, {
+        method: "POST",
+        credentials: "include",
+        headers: authHeaders,
+        body: formData,
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.success) {
+        if (res.status === 401) {
+          throw new Error(
+            "Your session has expired. Please re-open your portal link from WhatsApp."
+          );
+        }
+        if (res.status === 403) {
+          throw new Error(
+            data?.error ||
+              "Access denied: You are not authorized to submit payment proofs for this student."
+          );
+        }
+        if (res.status === 409) {
+          throw new Error(
+            data?.error ||
+              "A payment proof was recently submitted or an upload is already in progress. Please wait a moment."
+          );
+        }
+        if (res.status === 413) {
+          throw new Error(
+            "File exceeds the server limit of 3 MB. Please compress or select a smaller image."
+          );
+        }
+        throw new Error(
+          data?.error || "Failed to upload payment proof. Please try again."
+        );
+      }
+
+      // Success: Transition card to Verification Pending without marking fee as Paid
+      setProofSuccess(true);
+      setCurrentStatus("Verification Pending");
+      if (cleanUtr) {
+        setSavedUtr(cleanUtr);
+      }
+
+      if (onProofSubmitted) {
+        onProofSubmitted(data.data);
+      }
+      if (cleanUtr && onUtrSubmitted) {
+        onUtrSubmitted(cleanUtr);
+      }
+
+      // Auto-close modal after brief visual celebration (2.5 seconds)
+      setTimeout(() => {
+        handleCloseProofModal();
+        setShowUpiModal(false);
+      }, 2500);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Failed to upload payment proof. Please try again.";
+      setProofError(msg);
+    } finally {
+      setIsUploadingProof(false);
+    }
+  };
+
   const handleCopyVpa = () => {
     if (navigator.clipboard) {
       navigator.clipboard.writeText(targetUpiId);
@@ -664,29 +976,47 @@ export default function FeeActionCard({
             </div>
           </div>
 
-          {/* Secondary Button: Pay Additional Advance */}
-          <button
-            type="button"
-            onClick={() => {
-              setCreatedAdvanceFee(null);
-              setAdvancePaymentSuccess(false);
-              setShowAdvanceModal(true);
-            }}
-            className="tap-bounce w-full h-10 rounded-2xl border border-amber-300 bg-white hover:bg-amber-50 active:scale-[0.98] text-amber-900 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-          >
-            <Sparkles className="h-3.5 w-3.5 text-amber-600" />
-            <span>Pay Additional in Advance</span>
-          </button>
+          {/* Secondary Actions */}
+          <div className="space-y-2 pt-1">
+            <button
+              type="button"
+              onClick={() => setShowProofModal(true)}
+              className="tap-bounce w-full h-10 rounded-2xl border border-amber-300 bg-white hover:bg-amber-50 active:scale-[0.98] text-amber-900 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Camera className="h-3.5 w-3.5 text-amber-700" />
+              <span>Upload / Update Payment Screenshot</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setCreatedAdvanceFee(null);
+                setAdvancePaymentSuccess(false);
+                setShowAdvanceModal(true);
+              }}
+              className="tap-bounce w-full h-10 rounded-2xl border border-amber-200 bg-amber-50/50 hover:bg-amber-100/60 active:scale-[0.98] text-amber-900 font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+              <span>Pay Additional in Advance</span>
+            </button>
+          </div>
         </div>
       ) : (
         /* 3. PENDING / OVERDUE STATE */
         <div className="rounded-3xl border-2 border-rose-200/90 bg-gradient-to-br from-rose-50/70 via-white to-amber-50/50 p-5 shadow-sm space-y-3.5">
           {/* Header */}
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-rose-600 flex items-center gap-1.5">
-              <AlertTriangle className="h-4 w-4 text-rose-500 stroke-[2.3]" />
-              Fee Due
-            </span>
+            {currentStatus === "Partial Paid" ? (
+              <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 flex items-center gap-1.5">
+                <ShieldCheck className="h-4 w-4 text-amber-600 stroke-[2.3]" />
+                Partial Paid • Remaining Balance
+              </span>
+            ) : (
+              <span className="text-[11px] font-bold uppercase tracking-wider text-rose-600 flex items-center gap-1.5">
+                <AlertTriangle className="h-4 w-4 text-rose-500 stroke-[2.3]" />
+                Fee Due
+              </span>
+            )}
             {daysLate > 0 ? (
               <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-[11px] font-extrabold text-rose-700 border border-rose-200">
                 {daysLate} {daysLate === 1 ? "Day" : "Days"} Late
@@ -697,6 +1027,19 @@ export default function FeeActionCard({
               </span>
             )}
           </div>
+
+          {/* Previous Rejection Alert Banner */}
+          {rejectionReason && currentStatus === "Pending" && (
+            <div className="rounded-2xl bg-rose-50 border border-rose-200 p-3 space-y-1 animate-fade-in">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-rose-800">
+                <AlertTriangle className="h-4 w-4 text-rose-600 shrink-0" />
+                <span>Previous Submission Rejected</span>
+              </div>
+              <p className="text-[11px] text-rose-700 font-medium leading-relaxed">
+                Reason: &ldquo;{rejectionReason}&rdquo;. Please verify your receipt and submit a corrected screenshot below.
+              </p>
+            </div>
+          )}
 
           {/* Amount */}
           <div>
@@ -735,6 +1078,15 @@ export default function FeeActionCard({
                 {gatewayError}
               </p>
             )}
+
+            <button
+              type="button"
+              onClick={() => setShowProofModal(true)}
+              className="tap-bounce w-full h-11 rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/90 to-blue-50/90 hover:from-indigo-100 hover:to-blue-100 active:scale-[0.98] text-indigo-900 font-bold text-xs flex items-center justify-center gap-2 shadow-2xs transition-all cursor-pointer"
+            >
+              <Camera className="h-4 w-4 text-indigo-600 stroke-[2.2]" />
+              <span>Already Paid? Submit Payment Screenshot</span>
+            </button>
 
             <button
               type="button"
@@ -898,70 +1250,170 @@ export default function FeeActionCard({
                   </div>
                 </div>
 
-                {/* TASK 3: SMOOTH FALLBACK TRANSITION (Button appears after exactly 30s) */}
-                {regularDelayedButtonVisible && !showManualUtrInput && (
-                  <div className="pt-2 text-center border-t border-slate-100 transition-opacity duration-700 ease-in-out opacity-100 animate-fade-in">
+                {/* UNIFIED PAYMENT DETAILS CONFIRMATION & SUBMISSION */}
+                <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <CheckCircle2 className="h-4 w-4 text-indigo-600" />
+                      <span>Already Paid? Submit Details for Review</span>
+                    </span>
                     <button
                       type="button"
-                      onClick={() => setShowManualUtrInput(true)}
-                      className="tap-bounce text-xs text-slate-500 hover:text-slate-800 underline font-medium transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+                      onClick={() => setShowInModalSubmission(!showInModalSubmission)}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
                     >
-                      <Clock className="w-3.5 h-3.5 text-amber-500" />
-                      <span>Payment taking too long? Enter UTR manually</span>
+                      {showInModalSubmission ? "Hide Form" : (detectedUtrFromApp && utrFetchStatus === "fetched" ? "Submit Fetched UTR / Screenshot" : "Submit Payment Screenshot")}
                     </button>
                   </div>
-                )}
 
-                {/* Manual UTR Input Box (Revealed ONLY after clicking the delayed button) */}
-                {showManualUtrInput && (
-                  <div className="pt-3 border-t border-slate-100 space-y-2.5 transition-all duration-500 ease-in-out animate-fade-in">
-                    <div className="space-y-0.5">
-                      <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                        <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                        Enter 12-Digit UTR / Ref No.
-                      </h4>
-                      <p className="text-[11px] text-slate-500 leading-tight">
-                        Enter the 12-digit transaction ID from your bank receipt to verify.
+                  {upiAppError && (
+                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px] leading-tight flex items-start gap-1.5 animate-fade-in">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                      <span>{upiAppError}</span>
+                    </div>
+                  )}
+
+                  {/* State 1: Actual UTR fetched */}
+                  {detectedUtrFromApp && utrFetchStatus === "fetched" && (
+                    <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-1.5 animate-fade-in">
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-[11px] uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          UTR / Transaction ID
+                        </span>
+                        <span className="text-[10px] bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-full font-bold">
+                          Fetched
+                        </span>
+                      </div>
+                      <div className="font-mono font-black text-sm text-emerald-950 bg-white/80 px-2.5 py-1.5 rounded-xl border border-emerald-200 select-all">
+                        {detectedUtrFromApp}
+                      </div>
+                      <p className="text-[10px] text-emerald-700 font-medium">
+                        Transaction reference fetched from UPI app. You may submit now for Owner verification, or attach an optional screenshot below.
                       </p>
                     </div>
+                  )}
 
-                    <form onSubmit={handleSubmitUtr} className="space-y-2">
-                      <input
-                        type="text"
-                        maxLength={22}
-                        value={utrInput}
-                        onChange={(e) => {
-                          setUtrInput(e.target.value.trim().toUpperCase());
-                          if (utrError) setUtrError(null);
-                        }}
-                        placeholder="e.g. 428910293847"
-                        className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-hidden focus:ring-4 focus:ring-blue-100 focus:border-blue-600 font-mono font-bold text-slate-900 placeholder:text-slate-400 placeholder:font-normal transition-all"
-                      />
+                  {/* State 2: UTR Not Fetched */}
+                  {(!detectedUtrFromApp || utrFetchStatus === "not_fetched") && (
+                    <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-1.5 animate-fade-in">
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-[11px] uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                          Transaction Reference
+                        </span>
+                        <span className="text-[10px] bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-full font-bold">
+                          UTR Not Fetched
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-amber-800 font-medium leading-relaxed">
+                        Your UPI app did not return a transaction reference. A payment screenshot is required to submit for verification.
+                      </p>
+                    </div>
+                  )}
 
-                      {utrError && (
-                        <p className="text-[11px] text-rose-600 font-semibold">{utrError}</p>
+                  {(showInModalSubmission || regularDelayedButtonVisible) ? (
+                    <form onSubmit={handleSubmitProof} className="space-y-3 animate-fade-in p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+                      {/* State 3: Screenshot Uploaded Status (if selected) */}
+                      {selectedProofFile && (
+                        <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs space-y-1 animate-fade-in">
+                          <div className="flex items-center justify-between">
+                            <span className="font-extrabold text-[11px] uppercase tracking-wider text-indigo-800 flex items-center gap-1.5">
+                              <FileImage className="w-3.5 h-3.5 text-indigo-600" />
+                              Payment Screenshot Uploaded
+                            </span>
+                            <span className="text-[10px] bg-indigo-200/80 text-indigo-900 px-2 py-0.5 rounded-full font-bold">
+                              Ready
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Screenshot Picker */}
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+                          <span>Payment Screenshot</span>
+                          <span className={`text-[10px] font-bold ${detectedUtrFromApp && utrFetchStatus === "fetched" ? "text-slate-400 font-normal" : "text-amber-700"}`}>
+                            {detectedUtrFromApp && utrFetchStatus === "fetched" ? "Optional (UTR Fetched)" : "Required (UTR Not Fetched)"}
+                          </span>
+                        </label>
+
+                        {!selectedProofFile ? (
+                          <label className="flex items-center justify-center gap-2 py-2 px-3 border border-dashed border-indigo-200 rounded-xl bg-indigo-50/40 hover:bg-indigo-50/70 text-indigo-700 text-xs font-semibold cursor-pointer transition-colors">
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              capture="environment"
+                              onChange={handleSelectProofFile}
+                              className="hidden"
+                              disabled={isUploadingProof}
+                            />
+                            <Camera className="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Attach Screenshot (JPG, PNG, WebP)</span>
+                          </label>
+                        ) : (
+                          <div className="flex items-center justify-between p-2 rounded-xl bg-white border border-indigo-200 text-xs">
+                            <span className="font-semibold text-slate-700 truncate max-w-[180px]">
+                              {selectedProofFile.name} ({(selectedProofFile.size / 1024).toFixed(0)} KB)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={handleClearProofFile}
+                              className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
+                              title="Remove Screenshot"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Warning if no UTR and no screenshot provided */}
+                      {(!detectedUtrFromApp || utrFetchStatus !== "fetched") && !selectedProofFile && (
+                        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-2 font-medium">
+                          A payment screenshot is required before submitting.
+                        </p>
+                      )}
+
+                      {proofError && (
+                        <p className="text-[11px] text-rose-600 font-semibold">{proofError}</p>
                       )}
 
                       <button
                         type="submit"
-                        disabled={submittingUtr || !utrInput.trim()}
-                        className="tap-bounce w-full h-10 rounded-xl bg-slate-900 hover:bg-black active:scale-[0.98] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+                        disabled={isUploadingProof || ((!detectedUtrFromApp || utrFetchStatus !== "fetched") && !selectedProofFile)}
+                        className="tap-bounce w-full h-10 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
                       >
-                        {submittingUtr ? (
+                        {isUploadingProof ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            <span>Submitting Details...</span>
+                            <span>Submitting Payment Details...</span>
                           </>
                         ) : (
                           <>
-                            <CheckCircle2 className="h-3.5 w-3.5 stroke-[2.2]" />
-                            <span>Submit UTR for Verification</span>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            <span>
+                              {detectedUtrFromApp && utrFetchStatus === "fetched"
+                                ? (selectedProofFile ? "Submit UTR & Screenshot for Review" : "Submit Fetched UTR for Review")
+                                : "Submit Payment Screenshot for Review"}
+                            </span>
                           </>
                         )}
                       </button>
                     </form>
-                  </div>
-                )}
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowInModalSubmission(true)}
+                        className="tap-bounce w-full py-2.5 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100/80 active:scale-[0.98] text-indigo-900 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-200/60"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-indigo-600 stroke-[2.2]" />
+                        <span>Paid via UPI / QR? Submit Details</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -1244,6 +1696,285 @@ export default function FeeActionCard({
                   </div>
                 )}
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* PAYMENT PROOF SUBMISSION MODAL (IMAGEKIT UPLOAD WITH LIVE PREVIEW)       */}
+      {/* ========================================================================= */}
+      {showProofModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="w-full max-w-sm sm:max-w-md rounded-3xl bg-white p-5 sm:p-6 shadow-2xl space-y-4 border border-slate-200 my-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="h-9 w-9 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-200/80 shadow-2xs">
+                  <Camera className="h-5 w-5 stroke-[2.2]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900 tracking-tight">
+                    Submit Payment Proof
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    {centerName} • Verification Upload
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseProofModal}
+                disabled={isUploadingProof}
+                className="tap-bounce h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* SUCCESS VIEW (Animated celebration + clear "Verification Pending" clarification) */}
+            {proofSuccess ? (
+              <div className="py-8 px-2 flex flex-col items-center justify-center text-center space-y-4 animate-fade-in">
+                <div className="relative flex items-center justify-center">
+                  <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-xl shadow-emerald-500/25 ring-8 ring-emerald-50 animate-in zoom-in-50 duration-500">
+                    <CheckCircle2 className="w-12 h-12 stroke-[2.6] text-emerald-600" />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 pt-1">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200">
+                    <Clock className="w-3.5 h-3.5 text-amber-600" />
+                    Verification Pending
+                  </span>
+                  <h3 className="text-xl font-black text-slate-900 tracking-tight">
+                    Proof Submitted Successfully!
+                  </h3>
+                  <p className="text-xs text-slate-600 font-medium max-w-xs mx-auto leading-relaxed">
+                    Payment proof submitted. Center staff will verify your payment against bank records.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl bg-amber-50/70 border border-amber-200/80 p-3 text-left w-full space-y-1">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                    <ShieldCheck className="w-4 h-4 text-amber-700" />
+                    <span>Important Invariant</span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 font-medium leading-relaxed">
+                    Your fee status is updated to <strong>Verification Pending</strong>. Your official e-Receipt will be issued once the center confirms receipt.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-center gap-2 text-xs font-bold text-slate-600 bg-slate-50 border border-slate-200 px-4 py-2 rounded-xl">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-500" />
+                  <span>Closing window in a moment...</span>
+                </div>
+              </div>
+            ) : (
+              /* UPLOAD FORM */
+              <form onSubmit={handleSubmitProof} className="space-y-4">
+                {/* Fee Context Summary */}
+                <div className="rounded-2xl bg-slate-50 p-3 border border-slate-200/80 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Amount to Verify
+                    </span>
+                    <div className="text-xl font-extrabold text-slate-900 font-mono">
+                      ₹{amount.toLocaleString("en-IN")}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Due Date
+                    </span>
+                    <span className="text-xs font-bold text-slate-700 font-mono">
+                      {dueDate}
+                    </span>
+                  </div>
+                </div>
+
+                {/* File Upload Zone / Live Preview */}
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+                    <span>Payment Screenshot or Photo (Optional if UTR provided)</span>
+                    <span className="text-[10px] font-medium text-slate-400">
+                      JPG, PNG, WebP (Max 3 MB)
+                    </span>
+                  </label>
+
+                  {!selectedProofFile ? (
+                    /* Dropzone / File Picker */
+                    <label className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-indigo-200 rounded-2xl bg-indigo-50/30 hover:bg-indigo-50/60 active:bg-indigo-100/50 transition-colors cursor-pointer group">
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        capture="environment"
+                        onChange={handleSelectProofFile}
+                        className="hidden"
+                        disabled={isUploadingProof}
+                      />
+                      <div className="h-12 w-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-2.5 group-hover:scale-105 transition-transform shadow-2xs">
+                        <UploadCloud className="h-6 w-6 stroke-[2.2]" />
+                      </div>
+                      <span className="text-xs font-bold text-slate-800 text-center">
+                        Tap to choose screenshot or photo
+                      </span>
+                      <span className="text-[10px] text-slate-500 text-center mt-1">
+                        From gallery, files, or camera on mobile
+                      </span>
+                    </label>
+                  ) : (
+                    /* Image Preview Card */
+                    <div className="rounded-2xl border border-indigo-200 bg-slate-50 p-3 space-y-3 animate-fade-in">
+                      <div className="relative rounded-xl overflow-hidden bg-slate-900 flex items-center justify-center max-h-56">
+                        {proofPreviewUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={proofPreviewUrl}
+                            alt="Payment Proof Preview"
+                            className="max-h-56 w-auto object-contain rounded-lg"
+                          />
+                        ) : (
+                          <div className="py-12 text-slate-400 flex flex-col items-center gap-1">
+                            <FileImage className="h-8 w-8" />
+                            <span className="text-xs">Image Loaded</span>
+                          </div>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={handleClearProofFile}
+                          disabled={isUploadingProof}
+                          className="absolute top-2 right-2 h-7 w-7 rounded-full bg-black/70 hover:bg-black text-white flex items-center justify-center transition-colors cursor-pointer shadow-md disabled:opacity-50"
+                          title="Remove Image"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="min-w-0 pr-2">
+                          <p className="font-bold text-slate-800 truncate text-[11px]">
+                            {selectedProofFile.name}
+                          </p>
+                          <p className="text-[10px] text-slate-500 font-medium">
+                            {(selectedProofFile.size / 1024).toFixed(0)} KB •{" "}
+                            {selectedProofFile.type.replace("image/", "").toUpperCase()}
+                          </p>
+                        </div>
+                        <label className="tap-bounce py-1 px-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-[11px] font-bold text-slate-700 cursor-pointer transition-colors shrink-0">
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            capture="environment"
+                            onChange={handleSelectProofFile}
+                            className="hidden"
+                            disabled={isUploadingProof}
+                          />
+                          Change
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* State 1: Fetched UTR banner if available */}
+                {detectedUtrFromApp && utrFetchStatus === "fetched" && (
+                  <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-1 animate-fade-in">
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-[11px] uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        UTR / Transaction ID
+                      </span>
+                      <span className="text-[10px] bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-full font-bold">
+                        Fetched
+                      </span>
+                    </div>
+                    <div className="font-mono font-black text-sm text-emerald-950 bg-white/80 px-2.5 py-1.5 rounded-xl border border-emerald-200 select-all">
+                      {detectedUtrFromApp}
+                    </div>
+                    <p className="text-[10px] text-emerald-700 font-medium">
+                      Transaction reference fetched from UPI app. You may submit now for Owner verification, or attach an optional screenshot above.
+                    </p>
+                  </div>
+                )}
+
+                {/* State 2: UTR Not Fetched Banner if not fetched */}
+                {(!detectedUtrFromApp || utrFetchStatus === "not_fetched") && (
+                  <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-1.5 animate-fade-in">
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-[11px] uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                        Transaction Reference
+                      </span>
+                      <span className="text-[10px] bg-amber-200/80 text-amber-900 px-2 py-0.5 rounded-full font-bold">
+                        UTR Not Fetched
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-800 font-medium leading-relaxed">
+                      Your UPI app did not return a transaction reference. A payment screenshot is required to submit for verification.
+                    </p>
+                  </div>
+                )}
+
+                {/* Optional Notes Field */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+                    <span>Note to Center (Optional)</span>
+                    <span className="text-[10px] font-normal text-slate-400">
+                      e.g. Paid via Dad&apos;s GPay
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={100}
+                    value={proofNotesInput}
+                    onChange={(e) => setProofNotesInput(e.target.value)}
+                    placeholder="e.g. Paid from father&apos;s account"
+                    disabled={isUploadingProof}
+                    className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50/70 focus:bg-white focus:outline-hidden focus:ring-4 focus:ring-indigo-100 focus:border-indigo-600 text-slate-900 placeholder:text-slate-400 text-xs transition-all"
+                  />
+                </div>
+
+                {/* Warning if no UTR and no screenshot is provided */}
+                {(!detectedUtrFromApp || utrFetchStatus !== "fetched") && !selectedProofFile && (
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-2.5 font-medium text-center">
+                    A payment screenshot is required before submitting.
+                  </p>
+                )}
+
+                {/* Error Banner */}
+                {proofError && (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2 text-rose-700 animate-fade-in">
+                    <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span className="text-xs font-semibold leading-snug">
+                      {proofError}
+                    </span>
+                  </div>
+                )}
+
+                {/* Submit Action Button */}
+                <button
+                  type="submit"
+                  disabled={isUploadingProof || ((!detectedUtrFromApp || utrFetchStatus !== "fetched") && !selectedProofFile)}
+                  className="tap-bounce w-full h-12 rounded-2xl bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-700 hover:from-indigo-700 hover:to-blue-700 active:scale-[0.98] text-white font-bold text-xs sm:text-sm shadow-md shadow-indigo-500/25 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isUploadingProof ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin text-white" />
+                      <span>Uploading Payment Details...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4 stroke-[2.2]" />
+                      <span>Submit Payment Details for Review</span>
+                    </>
+                  )}
+                </button>
+
+                <p className="text-center text-[10px] text-slate-400 font-medium leading-relaxed">
+                  Submitting payment details sets status to Verification Pending. Center head verifies payment before clearing fee.
+                </p>
+              </form>
             )}
           </div>
         </div>

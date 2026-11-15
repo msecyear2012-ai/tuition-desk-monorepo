@@ -329,9 +329,17 @@ export async function GET(request: NextRequest) {
     if (feeType) filter.feeType = feeType;
     if (status) {
       if (status.includes(",")) {
-        filter.status = { $in: status.split(",").map((s) => s.trim()) };
+        const statusList = status.split(",").map((s) => s.trim());
+        filter.status = { $in: statusList };
+        // Pending Dues: exclude fees without an active outstanding balance (> 0)
+        if (!statusList.includes("Paid") && !statusList.includes("Verification Pending")) {
+          filter.amountDue = { $gt: 0 };
+        }
       } else {
         filter.status = status;
+        if (status === "Pending" || status === "Partial Paid") {
+          filter.amountDue = { $gt: 0 };
+        }
       }
     }
 

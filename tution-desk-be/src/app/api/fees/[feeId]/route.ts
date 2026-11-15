@@ -8,6 +8,7 @@ import Fee, {
   calculateFeeCustody,
   getFeePaymentEntries,
 } from "../../../../models/Fee.ts";
+import PaymentProof from "../../../../models/PaymentProof.ts";
 import { getAuthenticatedUser } from "../../../../lib/auth.ts";
 import {
   validateParentSession,
@@ -286,6 +287,71 @@ export async function PUT(
       }
       if (!existingFee.recordedAt) {
         existingFee.recordedAt = now;
+      }
+
+      // Sync PaymentProof status: mark pending proof as verified
+      try {
+        await PaymentProof.updateMany(
+          { feeId: existingFee._id, status: "pending_review" },
+          {
+            $set: {
+              status: "verified",
+              reviewedBy: new mongoose.Types.ObjectId(user.userId),
+              reviewedAt: now,
+            },
+          }
+        );
+      } catch (proofSyncErr) {
+        console.warn("[FEES UPDATE] Proof verification sync warning:", proofSyncErr);
+      }
+      existingFee.rejectionReason = null;
+      existingFee.proofUploadLockUntil = null;
+    } else if (
+      (body.status === "Pending" && (body.rejectionReason !== undefined || existingFee.status === "Verification Pending")) ||
+      body.proofAction === "reject"
+    ) {
+      if (user.role !== "owner") {
+        return NextResponse.json(
+          { success: false, error: "Access denied: Only center owners can reject payment proofs" },
+          { status: 403, headers: corsHeaders }
+        );
+      }
+
+      const rawReason = String(body.rejectionReason || body.notes || "").trim();
+      if (!rawReason) {
+        return NextResponse.json(
+          { success: false, error: "Rejection reason is required when rejecting a payment proof." },
+          { status: 400, headers: corsHeaders }
+        );
+      }
+
+      existingFee.status = "Pending";
+      existingFee.rejectionReason = rawReason;
+      existingFee.utrNumber = "";
+      existingFee.proofUploadLockUntil = null;
+
+      try {
+        const reviewerId = (user?.userId && mongoose.Types.ObjectId.isValid(user.userId))
+          ? new mongoose.Types.ObjectId(user.userId)
+          : undefined;
+
+        const updateSet: Record<string, unknown> = {
+          status: "rejected",
+          rejectionReason: rawReason,
+          reviewedAt: now,
+        };
+        if (reviewerId) {
+          updateSet.reviewedBy = reviewerId;
+        }
+
+        await PaymentProof.updateMany(
+          { feeId: existingFee._id, status: "pending_review" },
+          {
+            $set: updateSet,
+          }
+        );
+      } catch (proofSyncErr) {
+        console.warn("[FEES UPDATE] Proof rejection sync warning:", proofSyncErr);
       }
     }
 
@@ -760,4 +826,7 @@ export async function DELETE(
     );
   }
 }
+
+export const PATCH = PUT;
+
 

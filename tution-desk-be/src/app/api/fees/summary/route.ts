@@ -140,6 +140,7 @@ export async function GET(request: NextRequest) {
           $match: {
             centerId: trimmedCenterId,
             status: { $in: ["Pending", "Partial Paid"] },
+            amountDue: { $gt: 0 },
             ...feeMatchCondition,
           },
         },
@@ -149,6 +150,7 @@ export async function GET(request: NextRequest) {
       Fee.countDocuments({
         centerId: trimmedCenterId,
         status: { $in: ["Pending", "Partial Paid"] },
+        amountDue: { $gt: 0 },
         ...feeMatchCondition,
       }),
 

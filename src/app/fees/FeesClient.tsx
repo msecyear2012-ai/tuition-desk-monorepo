@@ -6,7 +6,7 @@ import FeesSummaryHeroCard from "@/components/fees/FeesSummaryHeroCard";
 import GlobalReminderButton from "@/components/fees/GlobalReminderButton";
 import OverdueStudentItem from "@/components/fees/OverdueStudentItem";
 import dynamic from "next/dynamic";
-import { apiClient, getCurrentCenterId, getApiCache } from "@/lib/apiClient";
+import { apiClient, getCurrentCenterId, getApiCache, invalidateApiCache } from "@/lib/apiClient";
 import { OverdueFeeStudent, TeacherRecord } from "@/types";
 import { getAuthenticatedCenter, getCachedCenter, CenterInfo } from "@/lib/centerProfile";
 import StudentPhoneMasked from "@/components/common/StudentPhoneMasked";
@@ -70,6 +70,14 @@ import {
   Bell,
   Info,
   FileText,
+  Camera,
+  ZoomIn,
+  ZoomOut,
+  Eye,
+  X,
+  Trash2,
+  Hash,
+  Copy,
 } from "lucide-react";
 
 interface ApiStudentRef {
@@ -90,6 +98,8 @@ interface ApiFee {
   dueDate: string;
   status: "Pending" | "Paid" | "Verification Pending" | "Partial Paid";
   utrNumber?: string;
+  isAdvance?: boolean;
+  feeType?: string;
   paymentMode?: string;
   paidDate?: string;
   paidAt?: string;
@@ -100,6 +110,9 @@ interface ApiFee {
   receivedByRole?: "owner" | "teacher";
   assignedTeacherName?: string;
   batchAtPayment?: string;
+  hasPaymentProof?: boolean;
+  latestPaymentProofId?: string;
+  rejectionReason?: string;
 }
 
 interface RecentCollectionFeedItem {
@@ -281,6 +294,9 @@ function mapFeeToStudent(fee: ApiFee, idx: number): OverdueFeeStudent {
     receivedByRole: fee.receivedByRole,
     assignedTeacherName: fee.assignedTeacherName,
     batchAtPayment: fee.batchAtPayment,
+    hasPaymentProof: Boolean(fee.hasPaymentProof),
+    latestPaymentProofId: fee.latestPaymentProofId ? String(fee.latestPaymentProofId) : undefined,
+    rejectionReason: fee.rejectionReason,
   };
 }
 
@@ -351,6 +367,24 @@ export default function FeesClient({
     "Parent requested urgent invoice link via phone"
   );
   const [isOverriding, setIsOverriding] = useState(false);
+
+  // Payment Proof Review & Screenshot Viewer States (Phase 3)
+  const [proofModalOpen, setProofModalOpen] = useState(false);
+  const [activeProofStudent, setActiveProofStudent] = useState<OverdueFeeStudent | null>(null);
+  const [proofLoading, setProofLoading] = useState(false);
+  const [proofList, setProofList] = useState<any[]>([]);
+  const [proofError, setProofError] = useState<string | null>(null);
+  const [isZoomed, setIsZoomed] = useState(false);
+
+  // Rejection Reason Modal States
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectTargetStudent, setRejectTargetStudent] = useState<OverdueFeeStudent | null>(null);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState("");
+  const [rejectionError, setRejectionError] = useState<string | null>(null);
+
+  // Approval Confirmation Modal States
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [approveTargetStudent, setApproveTargetStudent] = useState<OverdueFeeStudent | null>(null);
 
   // Header Context
   useSetHeader({
@@ -496,16 +530,39 @@ export default function FeesClient({
         }),
       ]);
 
-      if (pendingRes.status === "fulfilled" && pendingRes.value.success && Array.isArray(pendingRes.value.data)) {
-        setPendingStudents(pendingRes.value.data.map(mapFeeToStudent));
-      } else if (isRefresh || !cachedPending) {
-        setPendingStudents([]);
-      }
-
+      let validReviewFees: ApiFee[] = [];
       if (reviewRes.status === "fulfilled" && reviewRes.value.success && Array.isArray(reviewRes.value.data)) {
-        setReviewStudents(reviewRes.value.data.map(mapFeeToStudent));
+        validReviewFees = reviewRes.value.data;
+        setReviewStudents(validReviewFees.map(mapFeeToStudent));
       } else if (isRefresh || !cachedReview) {
         setReviewStudents([]);
+      }
+
+      if (pendingRes.status === "fulfilled" && pendingRes.value.success && Array.isArray(pendingRes.value.data)) {
+        const reviewFeeIdSet = new Set(validReviewFees.map((f) => String(f._id)));
+        const cleanPending = pendingRes.value.data.filter((fee) => {
+          // Rule F: Fully paid fees must never appear in Pending Dues
+          if (fee.status === "Paid") return false;
+          // Rule B: Verification pending fees must never appear in Pending Dues while under review
+          if (fee.status === "Verification Pending" || reviewFeeIdSet.has(String(fee._id))) {
+            return false;
+          }
+          // Rule A & D: Must have an active remaining balance (> 0)
+          const remainingDue = Number(fee.amountDue) || 0;
+          if (remainingDue <= 0) return false;
+          // Rule E: Fully covered advance payment must not appear in Pending Dues
+          const isAdvanceRecord = Boolean(
+            fee.isAdvance ||
+            fee.feeType === "advance" ||
+            (fee.title && /advance/i.test(fee.title)) ||
+            (fee.month && /advance/i.test(fee.month))
+          );
+          if (isAdvanceRecord && remainingDue <= 0) return false;
+          return true;
+        });
+        setPendingStudents(cleanPending.map(mapFeeToStudent));
+      } else if (isRefresh || !cachedPending) {
+        setPendingStudents([]);
       }
 
       if (summaryRes.status === "fulfilled" && summaryRes.value.success && summaryRes.value.data) {
@@ -541,6 +598,11 @@ export default function FeesClient({
   useEffect(() => {
     const handleCollectionRecorded = (event: Event) => {
       const customDetail = (event as CustomEvent<{ feeId?: string; amount?: number }>)?.detail;
+      const targetFeeId = customDetail?.feeId;
+      if (targetFeeId) {
+        setPendingStudents((prev) => prev.filter((s) => (s.feeId || s.id) !== targetFeeId));
+      }
+      invalidateApiCache();
       fetchFeesData(true);
       fetchPaidHistory(true);
       setToastMessage(
@@ -551,9 +613,33 @@ export default function FeesClient({
       setTimeout(() => setToastMessage(null), 4000);
     };
 
+    const handleFeeAlreadyPaid = (event: Event) => {
+      const customDetail = (event as CustomEvent<{ feeId?: string; studentId?: string; message?: string }>)?.detail;
+      const targetFeeId = customDetail?.feeId;
+      const targetStudentId = customDetail?.studentId;
+
+      setPendingStudents((prev) =>
+        prev.filter((s) => {
+          if (targetFeeId && (s.feeId || s.id) === targetFeeId) return false;
+          if (targetStudentId && s.studentId === targetStudentId) return false;
+          return true;
+        })
+      );
+
+      invalidateApiCache();
+      fetchFeesData(true);
+      fetchPaidHistory(true);
+      setToastMessage(
+        customDetail?.message || "Fee is already Paid in full. Pending dues list refreshed."
+      );
+      setTimeout(() => setToastMessage(null), 4000);
+    };
+
     window.addEventListener("msec:collection-recorded", handleCollectionRecorded);
+    window.addEventListener("msec:fee-already-paid", handleFeeAlreadyPaid);
     return () => {
       window.removeEventListener("msec:collection-recorded", handleCollectionRecorded);
+      window.removeEventListener("msec:fee-already-paid", handleFeeAlreadyPaid);
     };
   }, [fetchFeesData, fetchPaidHistory]);
 
@@ -618,9 +704,32 @@ export default function FeesClient({
   };
 
   const handlePaymentSuccess = (
-    _feeData: unknown,
+    feeData: unknown,
     receiptSlip: ReceiptSlipData
   ) => {
+    const rawFee = feeData as { _id?: string; amountDue?: number; status?: string } | null;
+    const paidFeeId = rawFee?._id || selectedFeeForPayment?._id;
+    if (paidFeeId) {
+      if (rawFee?.status === "Paid" || !rawFee?.amountDue || rawFee.amountDue <= 0) {
+        // Full settlement: Immediately remove from pending dues
+        setPendingStudents((prev) => prev.filter((s) => (s.feeId || s.id) !== paidFeeId));
+      } else {
+        // Partial settlement: Update pending amount in place
+        setPendingStudents((prev) =>
+          prev.map((s) =>
+            (s.feeId || s.id) === paidFeeId
+              ? {
+                  ...s,
+                  pendingAmount: Number(rawFee.amountDue) || 0,
+                  paidAmount: (Number(s.paidAmount) || 0) + (receiptSlip.amount || 0),
+                  status: "Partial Paid",
+                }
+              : s
+          )
+        );
+      }
+    }
+    invalidateApiCache();
     fetchFeesData(true);
     fetchPaidHistory(true);
     if (receiptSlip) {
@@ -652,53 +761,140 @@ export default function FeesClient({
     setActiveReceiptData(receiptData);
   };
 
-  const handleApprovePayment = async (student: OverdueFeeStudent) => {
+  // =========================================================================
+  // PAYMENT PROOF REVIEW WORKFLOW (PHASE 3)
+  // =========================================================================
+  const handleViewProof = async (student: OverdueFeeStudent) => {
     const feeId = student.feeId || student.id;
-    setApprovingId(feeId);
+    setActiveProofStudent(student);
+    setProofModalOpen(true);
+    setProofLoading(true);
+    setProofError(null);
+    setProofList([]);
+    setIsZoomed(false);
+
     try {
-      const res = await apiClient<{ message?: string }>(`/fees/${feeId}`, {
-        method: "PATCH",
-        body: { status: "Paid" },
+      const res = await apiClient<any[]>(`/fees/${feeId}/payment-proof`, {
+        method: "GET",
       });
-      if (res.success) {
-        setReviewStudents((prev) => prev.filter((s) => (s.feeId || s.id) !== feeId));
-        setToastMessage(`Payment of ₹${student.pendingAmount} verified & marked as Paid!`);
-        setTimeout(() => setToastMessage(null), 3000);
-        fetchFeesData();
+
+      if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+        setProofList(res.data);
+      } else if (res.success && Array.isArray(res.data) && res.data.length === 0) {
+        if (student.utrNumber) {
+          setProofList([
+            {
+              submittedUtr: student.utrNumber,
+              fileUrl: "",
+              status: "pending_review",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        } else {
+          setProofError("No payment details or screenshot uploaded for this fee record.");
+        }
       } else {
-        alert(res.error || "Failed to approve payment");
+        setProofError(res.error || "Failed to load payment proof screenshot.");
       }
     } catch {
-      alert("Error approving payment. Please try again.");
+      setProofError("Unable to reach the server. Please check your network connection.");
     } finally {
-      setApprovingId(null);
+      setProofLoading(false);
     }
   };
 
-  const handleRejectPayment = async (student: OverdueFeeStudent) => {
-    const feeId = student.feeId || student.id;
-    if (!confirm(`Reject UTR submission for ${student.name} and return fee to Pending?`)) {
-      return;
-    }
-    setRejectingId(feeId);
+  const handleOpenApproveModal = (student: OverdueFeeStudent) => {
+    setApproveTargetStudent(student);
+    setShowApproveModal(true);
+  };
+
+  const handleConfirmApprove = async () => {
+    if (!approveTargetStudent) return;
+    const feeId = approveTargetStudent.feeId || approveTargetStudent.id;
+    if (approvingId === feeId) return; // Prevent duplicate approval submissions
+    setApprovingId(feeId);
     try {
-      const res = await apiClient<{ message?: string }>(`/fees/${feeId}`, {
-        method: "PATCH",
-        body: { status: "Pending", utrNumber: null },
+      const res = await apiClient<{ message?: string; error?: string }>(`/fees/${feeId}/payment-proof`, {
+        method: "PUT",
+        body: { action: "approve" },
       });
       if (res.success) {
         setReviewStudents((prev) => prev.filter((s) => (s.feeId || s.id) !== feeId));
-        setToastMessage(`Payment rejected and returned to Pending dues.`);
-        setTimeout(() => setToastMessage(null), 3000);
-        fetchFeesData();
+        setPendingStudents((prev) => prev.filter((s) => (s.feeId || s.id) !== feeId));
+        setShowApproveModal(false);
+        setProofModalOpen(false);
+        setToastMessage(`Payment of ₹${approveTargetStudent.pendingAmount} verified & marked as Paid!`);
+        setTimeout(() => setToastMessage(null), 3500);
+        invalidateApiCache();
+        fetchFeesData(true);
+        fetchPaidHistory(true);
       } else {
-        alert(res.error || "Failed to reject payment");
+        alert(res.error || "Failed to approve payment proof");
       }
-    } catch {
-      alert("Error rejecting payment. Please try again.");
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Error approving payment. Please try again.");
+    } finally {
+      setApprovingId(null);
+      setApproveTargetStudent(null);
+    }
+  };
+
+  const handleOpenRejectModal = (student: OverdueFeeStudent) => {
+    setRejectTargetStudent(student);
+    setRejectionReasonInput("");
+    setRejectionError(null);
+    setShowRejectModal(true);
+  };
+
+  const handleConfirmReject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejectTargetStudent) return;
+    const feeId = rejectTargetStudent.feeId || rejectTargetStudent.id;
+    if (rejectingId === feeId) return; // Prevent duplicate rejection submissions
+
+    const cleanReason = rejectionReasonInput.trim();
+    if (!cleanReason) {
+      setRejectionError("Please provide a rejection reason so the parent knows what to correct.");
+      return;
+    }
+
+    setRejectingId(feeId);
+    setRejectionError(null);
+
+    try {
+      const res = await apiClient<{ message?: string; error?: string }>(`/fees/${feeId}/payment-proof`, {
+        method: "PUT",
+        body: {
+          action: "reject",
+          rejectionReason: cleanReason,
+        },
+      });
+
+      if (res.success) {
+        setReviewStudents((prev) => prev.filter((s) => (s.feeId || s.id) !== feeId));
+        setShowRejectModal(false);
+        setProofModalOpen(false);
+        setToastMessage(`Payment proof rejected and fee returned to Pending dues.`);
+        setTimeout(() => setToastMessage(null), 3500);
+        invalidateApiCache();
+        fetchFeesData(true);
+      } else {
+        setRejectionError(res.error || "Failed to reject payment proof.");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to reject payment proof. Please try again.";
+      setRejectionError(msg);
     } finally {
       setRejectingId(null);
     }
+  };
+
+  const handleApprovePayment = async (student: OverdueFeeStudent) => {
+    handleOpenApproveModal(student);
+  };
+
+  const handleRejectPayment = async (student: OverdueFeeStudent) => {
+    handleOpenRejectModal(student);
   };
 
   const handleSendIndividual = async (
@@ -778,7 +974,7 @@ export default function FeesClient({
   };
 
   return (
-    <div className="p-3.5 min-[380px]:p-4 sm:p-5 md:p-6 space-y-4 max-w-4xl lg:max-w-5xl mx-auto pb-28 sm:pb-24">
+    <div className="p-3.5 min-[380px]:p-4 sm:p-5 md:p-6 space-y-4 max-w-4xl lg:max-w-5xl mx-auto pb-28 sm:pb-24 w-full max-w-full overflow-x-hidden">
       {/* Toast Banner */}
       {toastMessage && (
         <div
@@ -792,12 +988,12 @@ export default function FeesClient({
       )}
 
       {/* Top 3-Section Navigation Bar (Phase 7.1) */}
-      <div className="p-1 rounded-2xl bg-slate-100 border border-slate-200/90 grid grid-cols-3 gap-1 shadow-2xs">
+      <div className="p-1 rounded-2xl bg-slate-100 border border-slate-200/90 flex sm:grid sm:grid-cols-3 gap-1 shadow-2xs overflow-x-auto no-scrollbar touch-pan-x w-full max-w-full">
         {/* Section 1: Overview */}
         <button
           type="button"
           onClick={() => handleSwitchMainTab("overview")}
-          className={`tap-bounce py-2 sm:py-2.5 px-1 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 ${
+          className={`tap-bounce py-2 sm:py-2.5 px-2.5 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 flex-1 min-w-[90px] sm:min-w-0 flex-shrink-0 sm:flex-shrink whitespace-nowrap ${
             mainTab === "overview"
               ? "bg-white text-slate-900 shadow-sm"
               : "text-slate-500 hover:text-slate-900"
@@ -808,14 +1004,14 @@ export default function FeesClient({
               mainTab === "overview" ? "text-blue-600" : "text-slate-400"
             }`}
           />
-          <span className="truncate">Overview</span>
+          <span>Overview</span>
         </button>
 
         {/* Section 2: Payments */}
         <button
           type="button"
           onClick={() => handleSwitchMainTab("payments")}
-          className={`tap-bounce py-2 sm:py-2.5 px-1 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 ${
+          className={`tap-bounce py-2 sm:py-2.5 px-2.5 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 flex-1 min-w-[90px] sm:min-w-0 flex-shrink-0 sm:flex-shrink whitespace-nowrap ${
             mainTab === "payments"
               ? "bg-white text-slate-900 shadow-sm"
               : "text-slate-500 hover:text-slate-900"
@@ -826,7 +1022,7 @@ export default function FeesClient({
               mainTab === "payments" ? "text-emerald-600" : "text-slate-400"
             }`}
           />
-          <span className="truncate">Payments</span>
+          <span>Payments</span>
           {pendingStudents.length + reviewStudents.length > 0 && (
             <span
               className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold flex-shrink-0 ${
@@ -844,7 +1040,7 @@ export default function FeesClient({
         <button
           type="button"
           onClick={() => handleSwitchMainTab("handovers")}
-          className={`tap-bounce py-2 sm:py-2.5 px-1 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 ${
+          className={`tap-bounce py-2 sm:py-2.5 px-2.5 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 flex-1 min-w-[90px] sm:min-w-0 flex-shrink-0 sm:flex-shrink whitespace-nowrap ${
             mainTab === "handovers"
               ? "bg-white text-slate-900 shadow-sm"
               : "text-slate-500 hover:text-slate-900"
@@ -855,8 +1051,8 @@ export default function FeesClient({
               mainTab === "handovers" ? "text-amber-600" : "text-slate-400"
             }`}
           />
-          <span className="truncate sm:inline hidden">Cash Handover</span>
-          <span className="truncate sm:hidden inline">Handover</span>
+          <span className="sm:inline hidden">Cash Handover</span>
+          <span className="sm:hidden inline">Handover</span>
         </button>
       </div>
 
@@ -993,16 +1189,16 @@ export default function FeesClient({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   {/* Incoming Handover Verification */}
                   {(summaryOverview?.actionRequired?.pendingHandoversCount ?? 0) > 0 ? (
-                    <div className="rounded-2xl border border-amber-300 bg-amber-50/80 p-3.5 flex items-center justify-between shadow-2xs">
-                      <div className="flex items-center gap-3">
+                    <div className="rounded-2xl border border-amber-300 bg-amber-50/80 p-3.5 flex items-center justify-between gap-2 shadow-2xs">
+                      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                         <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center flex-shrink-0">
                           <Banknote className="w-4 h-4" />
                         </div>
-                        <div>
-                          <div className="text-xs font-black text-slate-900">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-black text-slate-900 truncate">
                             {summaryOverview?.actionRequired?.pendingHandoversCount} Cash Envelope(s) Awaiting Count
                           </div>
-                          <p className="text-[11px] text-slate-600 font-mono">
+                          <p className="text-[11px] text-slate-600 font-mono truncate">
                             ₹{(summaryOverview?.actionRequired?.pendingHandoversAmount ?? 0).toLocaleString("en-IN")} submitted
                           </p>
                         </div>
@@ -1010,7 +1206,7 @@ export default function FeesClient({
                       <button
                         type="button"
                         onClick={() => handleSwitchMainTab("handovers")}
-                        className="tap-bounce rounded-xl bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs"
+                        className="tap-bounce rounded-xl bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs flex-shrink-0"
                       >
                         Verify
                         <ArrowRight className="w-3.5 h-3.5" />
@@ -1020,16 +1216,16 @@ export default function FeesClient({
 
                   {/* Overdue Dues Action */}
                   {pendingStudents.length > 0 && (
-                    <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-3.5 flex items-center justify-between shadow-2xs">
-                      <div className="flex items-center gap-3">
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50/70 p-3.5 flex items-center justify-between gap-2 shadow-2xs">
+                      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                         <div className="w-9 h-9 rounded-xl bg-rose-600 text-white flex items-center justify-center flex-shrink-0">
                           <AlertCircle className="w-4 h-4" />
                         </div>
-                        <div>
-                          <div className="text-xs font-black text-slate-900">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-black text-slate-900 truncate">
                             {pendingStudents.length} Overdue Dues (₹{totalOverdue.toLocaleString("en-IN")})
                           </div>
-                          <p className="text-[11px] text-slate-600">
+                          <p className="text-[11px] text-slate-600 truncate">
                             Tap to review dues & dispatch reminders
                           </p>
                         </div>
@@ -1040,7 +1236,7 @@ export default function FeesClient({
                           handleSwitchMainTab("payments");
                           handleSwitchPaymentsSub("pending");
                         }}
-                        className="tap-bounce rounded-xl bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs"
+                        className="tap-bounce rounded-xl bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs flex-shrink-0"
                       >
                         View
                         <ArrowRight className="w-3.5 h-3.5" />
@@ -1050,16 +1246,16 @@ export default function FeesClient({
 
                   {/* Active Disputes Action */}
                   {(summaryOverview?.actionRequired?.disputesCount ?? 0) > 0 && (
-                    <div className="rounded-2xl border border-red-300 bg-red-50/70 p-3.5 flex items-center justify-between shadow-2xs">
-                      <div className="flex items-center gap-3">
+                    <div className="rounded-2xl border border-red-300 bg-red-50/70 p-3.5 flex items-center justify-between gap-2 shadow-2xs">
+                      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                         <div className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center flex-shrink-0">
                           <AlertTriangle className="w-4 h-4" />
                         </div>
-                        <div>
-                          <div className="text-xs font-black text-slate-900">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-black text-slate-900 truncate">
                             {summaryOverview?.actionRequired?.disputesCount} Discrepancy Dispute(s)
                           </div>
-                          <p className="text-[11px] text-slate-600">
+                          <p className="text-[11px] text-slate-600 truncate">
                             Handover shortages needing resolution
                           </p>
                         </div>
@@ -1067,7 +1263,7 @@ export default function FeesClient({
                       <button
                         type="button"
                         onClick={() => handleSwitchMainTab("handovers")}
-                        className="tap-bounce rounded-xl bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs"
+                        className="tap-bounce rounded-xl bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs flex-shrink-0"
                       >
                         Resolve
                         <ArrowRight className="w-3.5 h-3.5" />
@@ -1272,26 +1468,26 @@ export default function FeesClient({
 
                 {/* Teacher Recent Cash Collections Activity Feed */}
                 <div className="rounded-2xl sm:rounded-3xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-xs space-y-3">
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                    <div className="flex items-center gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-slate-100">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
                       <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
                         <Banknote className="w-4 h-4" />
                       </div>
-                      <div>
-                        <h4 className="text-sm font-extrabold text-slate-900">
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-sm font-extrabold text-slate-900 truncate">
                           Your Recent Cash Collections
                         </h4>
-                        <p className="text-[11px] text-slate-500">
+                        <p className="text-[11px] text-slate-500 line-clamp-1 sm:line-clamp-none">
                           Live recorded cash payments in your custody awaiting or processed for handover
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 self-start sm:self-auto flex-shrink-0">
                       <button
                         type="button"
                         onClick={() => setIsAddFeeModalOpen(true)}
-                        className="tap-bounce rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs"
+                        className="tap-bounce rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs whitespace-nowrap"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         <span>Record Cash</span>
@@ -1323,32 +1519,32 @@ export default function FeesClient({
                         return (
                           <div
                             key={item.paymentId || idx}
-                            className="py-3 flex items-center justify-between gap-3 text-xs hover:bg-slate-50/50 rounded-xl px-2 transition-colors"
+                            className="py-3 flex items-center justify-between gap-2.5 text-xs hover:bg-slate-50/50 rounded-xl px-2 transition-colors"
                           >
-                            <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
                               <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center font-bold font-mono text-[11px] flex-shrink-0">
                                 ₹
                               </div>
-                              <div className="min-w-0">
+                              <div className="min-w-0 flex-1">
                                 <div className="font-extrabold text-slate-900 truncate">
                                   {item.studentName}
                                 </div>
-                                <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5 flex-wrap">
                                   <span>{new Date(item.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
                                   <span>•</span>
-                                  <span className="font-mono text-slate-600">{item.receiptNumber || "Offline"}</span>
+                                  <span className="font-mono text-slate-600 truncate max-w-[120px]">{item.receiptNumber || "Offline"}</span>
                                   <span>•</span>
                                   <span className="text-slate-500 font-medium">You</span>
                                 </div>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-2.5 flex-shrink-0">
+                            <div className="flex flex-col items-end gap-1 flex-shrink-0 sm:flex-row sm:items-center sm:gap-2.5">
                               <span className="font-black font-mono text-slate-900 text-sm">
                                 ₹{item.amount.toLocaleString("en-IN")}
                               </span>
                               <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${custodyPillStyle}`}
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${custodyPillStyle}`}
                               >
                                 {item.custodyStatus}
                               </span>
@@ -1556,26 +1752,26 @@ export default function FeesClient({
           {/* RECENT CASH COLLECTIONS ACTIVITY FEED (Owner View) */}
           {isOwner && (
             <div className="rounded-3xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-xs space-y-3">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-slate-100">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
                     <Banknote className="w-4 h-4" />
                   </div>
-                  <div>
-                    <h3 className="text-sm font-extrabold text-slate-900">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-sm font-extrabold text-slate-900 truncate">
                       Recent Cash Collections Across Faculty
                     </h3>
-                    <p className="text-[11px] text-slate-500">
+                    <p className="text-[11px] text-slate-500 line-clamp-1 sm:line-clamp-none">
                       Live recorded cash transactions with immediate custody attribution
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 self-start sm:self-auto flex-shrink-0">
                   <button
                     type="button"
                     onClick={() => setIsAddFeeModalOpen(true)}
-                    className="tap-bounce rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs"
+                    className="tap-bounce rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs whitespace-nowrap"
                   >
                     <Plus className="w-3.5 h-3.5" />
                     <span>Record Cash</span>
@@ -1608,32 +1804,32 @@ export default function FeesClient({
                     return (
                       <div
                         key={item.paymentId || idx}
-                        className="py-3 flex items-center justify-between gap-3 text-xs hover:bg-slate-50/50 rounded-xl px-2 transition-colors"
+                        className="py-3 flex items-center justify-between gap-2.5 text-xs hover:bg-slate-50/50 rounded-xl px-2 transition-colors"
                       >
-                        <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center font-bold font-mono text-[11px] flex-shrink-0">
                             ₹
                           </div>
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="font-extrabold text-slate-900 truncate">
                               {item.studentName}
                             </div>
-                            <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                            <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5 flex-wrap">
                               <span>{new Date(item.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
                               <span>•</span>
-                              <span className="font-mono text-slate-600">{item.receiptNumber || "Offline"}</span>
+                              <span className="font-mono text-slate-600 truncate max-w-[120px]">{item.receiptNumber || "Offline"}</span>
                               <span>•</span>
-                              <span className="text-slate-500 font-medium">{item.collectorName}</span>
+                              <span className="text-slate-500 font-medium truncate max-w-[100px]">{item.collectorName}</span>
                             </div>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2.5 flex-shrink-0">
+                        <div className="flex flex-col items-end gap-1 flex-shrink-0 sm:flex-row sm:items-center sm:gap-2.5">
                           <span className="font-black font-mono text-slate-900 text-sm">
                             ₹{item.amount.toLocaleString("en-IN")}
                           </span>
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${custodyPillStyle}`}
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${custodyPillStyle}`}
                           >
                             {item.custodyStatus}
                           </span>
@@ -1660,12 +1856,12 @@ export default function FeesClient({
       {mainTab === "payments" && (
         <div className="space-y-4 animate-fade-in">
           {/* Internal Subsection Selector (2 tabs for Teacher, 3 tabs for Owner) */}
-          <div className={`p-1 rounded-2xl bg-slate-100 border border-slate-200/80 grid ${isTeacher ? "grid-cols-2" : "grid-cols-3"} gap-1`}>
+          <div className={`p-1 rounded-2xl bg-slate-100 border border-slate-200/80 flex sm:grid ${isTeacher ? "sm:grid-cols-2" : "sm:grid-cols-3"} gap-1 overflow-x-auto no-scrollbar touch-pan-x w-full max-w-full`}>
             {/* Sub-tab 1: Pending Dues */}
             <button
               type="button"
               onClick={() => handleSwitchPaymentsSub("pending")}
-              className={`tap-bounce py-2 px-1 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 ${
+              className={`tap-bounce py-2 px-2.5 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 flex-1 min-w-[90px] sm:min-w-0 flex-shrink-0 sm:flex-shrink whitespace-nowrap ${
                 effectivePaymentsSubTab === "pending"
                   ? "bg-white text-slate-900 shadow-sm"
                   : "text-slate-500 hover:text-slate-900"
@@ -1676,8 +1872,8 @@ export default function FeesClient({
                   effectivePaymentsSubTab === "pending" ? "text-rose-600" : "text-slate-400"
                 }`}
               />
-              <span className="truncate sm:inline hidden">Pending Dues</span>
-              <span className="truncate sm:hidden inline">Pending</span>
+              <span className="sm:inline hidden">Pending Dues</span>
+              <span className="sm:hidden inline">Pending</span>
               <span
                 className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold flex-shrink-0 ${
                   effectivePaymentsSubTab === "pending"
@@ -1694,7 +1890,7 @@ export default function FeesClient({
               <button
                 type="button"
                 onClick={() => handleSwitchPaymentsSub("review")}
-                className={`tap-bounce py-2 px-1 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 ${
+                className={`tap-bounce py-2 px-2.5 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 flex-1 min-w-[90px] sm:min-w-0 flex-shrink-0 sm:flex-shrink whitespace-nowrap ${
                   effectivePaymentsSubTab === "review"
                     ? "bg-white text-slate-900 shadow-sm"
                     : "text-slate-500 hover:text-slate-900"
@@ -1705,8 +1901,8 @@ export default function FeesClient({
                     effectivePaymentsSubTab === "review" ? "text-amber-600" : "text-slate-400"
                   }`}
                 />
-                <span className="truncate sm:inline hidden">Awaiting Review</span>
-                <span className="truncate sm:hidden inline">Review</span>
+                <span className="sm:inline hidden">Awaiting Review</span>
+                <span className="sm:hidden inline">Review</span>
                 <span
                   className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold flex-shrink-0 ${
                     reviewStudents.length > 0
@@ -1723,7 +1919,7 @@ export default function FeesClient({
             <button
               type="button"
               onClick={() => handleSwitchPaymentsSub("paid")}
-              className={`tap-bounce py-2 px-1 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 ${
+              className={`tap-bounce py-2 px-2.5 sm:px-2 rounded-xl text-[11px] min-[360px]:text-xs font-bold transition-all flex items-center justify-center gap-1 sm:gap-1.5 flex-1 min-w-[90px] sm:min-w-0 flex-shrink-0 sm:flex-shrink whitespace-nowrap ${
                 effectivePaymentsSubTab === "paid"
                   ? "bg-white text-slate-900 shadow-sm"
                   : "text-slate-500 hover:text-slate-900"
@@ -1734,8 +1930,8 @@ export default function FeesClient({
                   effectivePaymentsSubTab === "paid" ? "text-emerald-600" : "text-slate-400"
                 }`}
               />
-              <span className="truncate sm:inline hidden">Paid History</span>
-              <span className="truncate sm:hidden inline">Paid</span>
+              <span className="sm:inline hidden">Paid History</span>
+              <span className="sm:hidden inline">Paid</span>
               <span
                 className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold flex-shrink-0 ${
                   effectivePaymentsSubTab === "paid"
@@ -1935,26 +2131,26 @@ export default function FeesClient({
               {/* SUBSECTION 2: AWAITING REVIEW (Owner Only) */}
               {isOwner && effectivePaymentsSubTab === "review" && (
                 <div className="space-y-4 animate-fade-in">
-                  <div className="rounded-2xl sm:rounded-3xl border border-amber-300 bg-gradient-to-br from-amber-500/10 via-amber-50 to-orange-50/60 p-4 sm:p-5 shadow-xs">
-                    <div className="flex items-start sm:items-center justify-between flex-col sm:flex-row gap-3">
-                      <div className="flex items-center gap-3">
+                  <div className="rounded-2xl sm:rounded-3xl border border-amber-300 bg-gradient-to-br from-amber-500/10 via-amber-50 to-orange-50/60 p-3.5 sm:p-5 shadow-xs w-full max-w-full">
+                    <div className="flex items-start sm:items-center justify-between flex-col sm:flex-row gap-3 w-full">
+                      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                         <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-md shadow-amber-500/25 flex-shrink-0">
                           <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.5]" />
                         </div>
-                        <div>
-                          <h2 className="text-sm sm:text-base md:text-lg font-black text-slate-900 tracking-tight">
+                        <div className="min-w-0 flex-1">
+                          <h2 className="text-sm sm:text-base md:text-lg font-black text-slate-900 tracking-tight truncate">
                             Incoming Payments to Verify
                           </h2>
-                          <p className="text-[11px] sm:text-xs text-slate-600 font-medium mt-0.5">
+                          <p className="text-[11px] sm:text-xs text-slate-600 font-medium mt-0.5 line-clamp-2 sm:line-clamp-none">
                             Review parent UTR submissions and advance payments before marking paid
                           </p>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
-                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                          {reviewStudents.length} {reviewStudents.length === 1 ? "Payment" : "Payments"} Awaiting Approval
+                      <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap sm:flex-nowrap flex-shrink-0">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full text-[11px] sm:text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0" />
+                          <span>{reviewStudents.length} {reviewStudents.length === 1 ? "Payment" : "Payments"} Awaiting Approval</span>
                         </span>
                         <button
                           onClick={() => fetchFeesData(true)}
@@ -1978,10 +2174,11 @@ export default function FeesClient({
                             student={student}
                             tabType="review"
                             userRole={userProfile?.role}
-                            onVerifyPaid={isOwner ? handleApprovePayment : undefined}
+                            onVerifyPaid={isOwner ? handleOpenApproveModal : undefined}
                             isVerifyingPaid={approvingId === feeId}
-                            onRejectFee={isOwner ? handleRejectPayment : undefined}
+                            onRejectFee={isOwner ? handleOpenRejectModal : undefined}
                             isRejectingFee={rejectingId === feeId}
+                            onViewProof={isOwner ? handleViewProof : undefined}
                             onViewDetails={handleViewDetails}
                             onViewReceipt={handleViewReceipt}
                           />
@@ -2007,26 +2204,26 @@ export default function FeesClient({
               {/* SUBSECTION 3: PAID HISTORY */}
               {effectivePaymentsSubTab === "paid" && (
                 <div className="space-y-4 animate-fade-in">
-                  <div className="rounded-2xl sm:rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-500/10 via-emerald-50 to-teal-50/60 p-4 sm:p-5 shadow-xs">
-                    <div className="flex items-start sm:items-center justify-between flex-col sm:flex-row gap-3">
-                      <div className="flex items-center gap-3">
+                  <div className="rounded-2xl sm:rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-500/10 via-emerald-50 to-teal-50/60 p-3.5 sm:p-5 shadow-xs w-full max-w-full">
+                    <div className="flex items-start sm:items-center justify-between flex-col sm:flex-row gap-3 w-full">
+                      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
                         <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/25 flex-shrink-0">
                           <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.5]" />
                         </div>
-                        <div>
-                          <h2 className="text-sm sm:text-base md:text-lg font-black text-slate-900 tracking-tight">
+                        <div className="min-w-0 flex-1">
+                          <h2 className="text-sm sm:text-base md:text-lg font-black text-slate-900 tracking-tight truncate">
                             Paid Fee History
                           </h2>
-                          <p className="text-[11px] sm:text-xs text-slate-600 font-medium mt-0.5">
+                          <p className="text-[11px] sm:text-xs text-slate-600 font-medium mt-0.5 truncate">
                             Total Collection: <span className="font-bold text-emerald-800 font-mono">₹{collectedAmount.toLocaleString("en-IN")}</span>
                           </p>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-200">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          {hasLoadedPaid ? `${paidStudents.length} Records Cleared` : "Loading..."}
+                      <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap sm:flex-nowrap flex-shrink-0">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1 rounded-full text-[11px] sm:text-xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-200">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                          <span>{hasLoadedPaid ? `${paidStudents.length} Records Cleared` : "Loading..."}</span>
                         </span>
                         <button
                           onClick={() => {
@@ -2106,7 +2303,9 @@ export default function FeesClient({
           onClose={() => setIsAddFeeModalOpen(false)}
           onSuccess={() => {
             setIsAddFeeModalOpen(false);
+            invalidateApiCache();
             fetchFeesData(true);
+            fetchPaidHistory(true);
           }}
         />
       )}
@@ -2242,6 +2441,416 @@ export default function FeesClient({
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* PHASE 3: SCREENSHOT VIEWER MODAL (AUTHENTICATED & EXPIRING SIGNED URL)    */}
+      {/* ========================================================================= */}
+      {proofModalOpen && activeProofStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-3 sm:p-5 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="w-full max-w-2xl rounded-3xl bg-white p-4 sm:p-6 shadow-2xl space-y-4 border border-slate-200 my-auto animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                <div className="h-10 w-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-200/80 shadow-2xs shrink-0">
+                  <Camera className="h-5 w-5 stroke-[2.2]" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-base font-black text-slate-900 tracking-tight truncate">
+                    Payment Proof Review
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium truncate">
+                    {activeProofStudent.name} • {activeProofStudent.batchName}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProofModalOpen(false)}
+                className="tap-bounce h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors cursor-pointer shrink-0"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            {proofLoading ? (
+              <div className="py-16 text-center space-y-3">
+                <Loader2 className="h-8 w-8 animate-spin text-indigo-600 mx-auto" />
+                <p className="text-xs font-bold text-slate-600">
+                  Loading signed payment screenshot from secure storage...
+                </p>
+                <span className="text-[11px] text-slate-400">
+                  Authenticating with ImageKit private delivery service
+                </span>
+              </div>
+            ) : proofError ? (
+              <div className="py-10 text-center space-y-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 mx-auto flex items-center justify-center border border-rose-200">
+                  <AlertCircle className="w-6 h-6 stroke-[2.2]" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-bold text-slate-800">Screenshot Unavailable</h4>
+                  <p className="text-xs text-rose-600 font-medium max-w-sm mx-auto">{proofError}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleViewProof(activeProofStudent)}
+                  className="tap-bounce px-4 py-2 rounded-xl bg-slate-900 hover:bg-black text-white text-xs font-bold transition-all shadow-sm"
+                >
+                  Retry Loading
+                </button>
+              </div>
+            ) : proofList.length > 0 ? (
+              (() => {
+                const latestProof = proofList[0];
+                const hasScreenshot = Boolean(latestProof.fileUrl && String(latestProof.fileUrl).trim());
+                const utrValue = String(latestProof.submittedUtr || activeProofStudent.utrNumber || "").trim();
+                const hasUtr = Boolean(utrValue);
+
+                return (
+                  <div className="space-y-3.5">
+                    {/* Metadata Context Bar */}
+                    <div className="rounded-2xl bg-slate-50 p-3.5 border border-slate-200/90 space-y-2 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Amount to Clear
+                          </span>
+                          <span className="text-lg font-black text-slate-900 font-mono">
+                            ₹{activeProofStudent.pendingAmount.toLocaleString("en-IN")}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Submitted Reference
+                          </span>
+                          <span className="font-mono font-bold text-indigo-900 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-200 select-all">
+                            {utrValue || "No UTR Provided"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600">
+                        <div>
+                          <span className="text-slate-400">Uploaded:</span>{" "}
+                          <span className="font-bold text-slate-700 font-mono">
+                            {latestProof.createdAt
+                              ? new Date(latestProof.createdAt).toLocaleString("en-IN", {
+                                  dateStyle: "medium",
+                                  timeStyle: "short",
+                                })
+                              : "Recent"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-slate-400">Proof Mode:</span>{" "}
+                          <span className="font-bold text-slate-800">
+                            {hasScreenshot && hasUtr
+                              ? "UTR + Screenshot"
+                              : hasScreenshot
+                              ? "Screenshot Only"
+                              : "UTR Reference Only"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {hasScreenshot && latestProof.fileSizeBytes > 0 && (
+                        <div className="text-[11px] text-slate-500">
+                          <span className="text-slate-400">File:</span>{" "}
+                          <span className="font-medium text-slate-700">
+                            {latestProof.originalFileName || "screenshot.jpg"} (
+                            {(latestProof.fileSizeBytes / 1024).toFixed(0)} KB •{" "}
+                            {latestProof.mimeType?.replace("image/", "").toUpperCase()})
+                          </span>
+                        </div>
+                      )}
+
+                      {latestProof.notes && (
+                        <div className="pt-1 text-[11px] text-slate-600 border-t border-slate-200/60">
+                          <span className="text-slate-400 font-medium">Parent Note:</span>{" "}
+                          <span className="font-semibold text-slate-800 italic">&ldquo;{latestProof.notes}&rdquo;</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Case A & Combined: Prominent UTR Reference Card */}
+                    {hasUtr ? (
+                      <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/80 via-white to-blue-50/50 p-4 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-800 flex items-center gap-1.5">
+                            <Hash className="w-4 h-4 text-indigo-600" />
+                            12-Digit UTR / Transaction Ref
+                          </span>
+                          <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-900 border border-indigo-200">
+                            {hasScreenshot ? "Attached with Screenshot" : "UTR Only (No Screenshot)"}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-white border border-indigo-200 shadow-xs">
+                          <span className="font-mono font-black text-lg sm:text-xl text-slate-900 tracking-wider select-all">
+                            {utrValue}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(utrValue);
+                              setToastMessage("UTR reference copied to clipboard!");
+                              setTimeout(() => setToastMessage(null), 2500);
+                            }}
+                            className="tap-bounce p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors cursor-pointer"
+                            title="Copy UTR Reference"
+                          >
+                            <Copy className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-slate-600 leading-tight">
+                          Cross-check this 12-digit transaction ID with your bank statement / UPI merchant settlements.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3.5 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                            <Hash className="w-4 h-4 text-slate-400" />
+                            UTR / Transaction Ref
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                            UTR Not Fetched
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
+                          No transaction reference was returned by the UPI app. Please verify the payment screenshot below against your bank statement.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Case B & Combined: Image Viewport with Zoom Controls */}
+                    {hasScreenshot ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] text-slate-500 px-1">
+                          <span>Click image or button to zoom</span>
+                          <button
+                            type="button"
+                            onClick={() => setIsZoomed(!isZoomed)}
+                            className="tap-bounce inline-flex items-center gap-1 font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                          >
+                            {isZoomed ? (
+                              <>
+                                <ZoomOut className="w-3.5 h-3.5" />
+                                <span>Fit to Window</span>
+                              </>
+                            ) : (
+                              <>
+                                <ZoomIn className="w-3.5 h-3.5" />
+                                <span>Zoom In (100%)</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="bg-slate-950 rounded-2xl overflow-auto p-2 sm:p-4 flex items-center justify-center max-h-[52vh] border border-slate-800 shadow-inner">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={latestProof.fileUrl}
+                            alt={`Payment screenshot for ${activeProofStudent.name}`}
+                            onClick={() => setIsZoomed(!isZoomed)}
+                            className={`rounded-lg shadow-2xl transition-all duration-200 select-none ${
+                              isZoomed
+                                ? "min-w-full cursor-zoom-out object-none"
+                                : "max-h-[46vh] w-auto object-contain cursor-zoom-in"
+                            }`}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      !hasUtr && (
+                        <div className="py-8 text-center text-slate-500 space-y-1">
+                          <AlertCircle className="w-8 h-8 text-amber-500 mx-auto" />
+                          <p className="text-xs font-bold text-slate-700">No Screenshot Attached</p>
+                          <p className="text-[11px] text-slate-400">Payment details submitted with note only.</p>
+                        </div>
+                      )
+                    )}
+
+                    {/* Action Buttons in Modal Footer: Primary CTA first on mobile column, side-by-side on desktop */}
+                    <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-2 border-t border-slate-100">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenRejectModal(activeProofStudent)}
+                        disabled={approvingId === (activeProofStudent.feeId || activeProofStudent.id)}
+                        className="tap-bounce h-11 px-4 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        <Trash2 className="h-4 w-4 text-rose-600" />
+                        <span>Reject Submission</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenApproveModal(activeProofStudent)}
+                        disabled={approvingId === (activeProofStudent.feeId || activeProofStudent.id)}
+                        className="tap-bounce h-11 px-5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md shadow-emerald-600/30 cursor-pointer disabled:opacity-50"
+                      >
+                        {approvingId === (activeProofStudent.feeId || activeProofStudent.id) ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin text-white" />
+                            <span>Marking Paid...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-4 w-4 stroke-[2.5]" />
+                            <span>Approve &amp; Mark Paid (₹{activeProofStudent.pendingAmount.toLocaleString("en-IN")})</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
+              <div className="py-12 text-center text-slate-500 space-y-2">
+                <FileText className="w-10 h-10 text-slate-300 mx-auto" />
+                <p className="text-xs font-bold text-slate-700">No Screenshot on Record</p>
+                <p className="text-[11px] text-slate-400">This fee was submitted with manual UTR reference only.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* APPROVE CONFIRMATION MODAL                                                */}
+      {/* ========================================================================= */}
+      {showApproveModal && approveTargetStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl space-y-4 border border-slate-200 my-auto animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center border border-emerald-200 shrink-0">
+                <CheckCircle2 className="h-6 w-6 stroke-[2.4]" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 tracking-tight">Confirm Payment Approval</h3>
+                <p className="text-[11px] text-slate-500 font-medium">Issue Official e-Receipt</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 p-3.5 border border-slate-200 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between font-bold text-slate-700">
+                <span>Student:</span>
+                <span className="text-slate-900">{approveTargetStudent.name}</span>
+              </div>
+              <div className="flex items-center justify-between font-bold text-slate-700">
+                <span>Amount:</span>
+                <span className="text-base font-black text-emerald-700 font-mono">
+                  ₹{approveTargetStudent.pendingAmount.toLocaleString("en-IN")}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
+              Approving will update the student fee ledger to <strong>Paid</strong>, generate an official receipt number, and automatically dispatch a confirmation slip to the parent&apos;s WhatsApp.
+            </p>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowApproveModal(false)}
+                disabled={approvingId === (approveTargetStudent.feeId || approveTargetStudent.id)}
+                className="tap-bounce flex-1 h-10 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmApprove}
+                disabled={approvingId === (approveTargetStudent.feeId || approveTargetStudent.id)}
+                className="tap-bounce flex-1 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/25 transition-all cursor-pointer disabled:opacity-60"
+              >
+                {approvingId === (approveTargetStudent.feeId || approveTargetStudent.id) ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Approving...</span>
+                  </>
+                ) : (
+                  <span>Confirm Approval</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* REJECT WITH MANDATORY REASON MODAL                                        */}
+      {/* ========================================================================= */}
+      {showRejectModal && rejectTargetStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-fade-in overflow-y-auto">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl space-y-4 border border-slate-200 my-auto animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center border border-rose-200 shrink-0">
+                <Trash2 className="h-5 w-5 stroke-[2.2]" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-900 tracking-tight">Reject Payment Proof</h3>
+                <p className="text-[11px] text-slate-500 font-medium">{rejectTargetStudent.name} • Return to Pending</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleConfirmReject} className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-700 block">
+                  Rejection Reason * <span className="text-slate-400 font-normal">(Sent to Parent Portal)</span>
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={rejectionReasonInput}
+                  onChange={(e) => {
+                    setRejectionReasonInput(e.target.value);
+                    if (rejectionError) setRejectionError(null);
+                  }}
+                  placeholder="e.g. UTR reference not found in bank statement, amount mismatch, or screenshot is blurry..."
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 text-xs text-slate-900 focus:bg-white focus:outline-hidden focus:ring-4 focus:ring-rose-100 focus:border-rose-600 transition-all font-medium"
+                />
+              </div>
+
+              {rejectionError && (
+                <p className="text-[11px] text-rose-600 font-semibold">{rejectionError}</p>
+              )}
+
+              <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
+                Rejecting returns the fee status to Pending without altering ledger balances. The parent will be notified to submit a corrected receipt.
+              </p>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowRejectModal(false)}
+                  disabled={rejectingId === (rejectTargetStudent.feeId || rejectTargetStudent.id)}
+                  className="tap-bounce flex-1 h-10 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    rejectingId === (rejectTargetStudent.feeId || rejectTargetStudent.id) ||
+                    !rejectionReasonInput.trim()
+                  }
+                  className="tap-bounce flex-1 h-10 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/25 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {rejectingId === (rejectTargetStudent.feeId || rejectTargetStudent.id) ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Rejecting...</span>
+                    </>
+                  ) : (
+                    <span>Reject Proof</span>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

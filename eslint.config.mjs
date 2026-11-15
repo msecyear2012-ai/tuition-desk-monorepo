@@ -17,6 +17,8 @@ const eslintConfig = defineConfig([
     "scratch/**",
     "test/**",
     "reports/**",
+    "YouPI-PG/**",
+    "youpi-pg/**",
   ]),
 ]);
 

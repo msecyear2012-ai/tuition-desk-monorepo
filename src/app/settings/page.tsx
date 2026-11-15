@@ -868,29 +868,29 @@ export default function SettingsPage() {
   const isLoading = statusData.status === "loading";
 
   return (
-    <div className="w-full max-w-4xl mx-auto flex flex-col gap-6 px-4 sm:px-6 py-6 pb-36 animate-fade-in">
+    <div className="w-full max-w-4xl mx-auto flex flex-col gap-5 sm:gap-6 px-3.5 sm:px-6 py-4 sm:py-6 pb-36 animate-fade-in overflow-x-hidden">
       {/* Top Header / Breadcrumb */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3.5">
+      <div className="flex items-center justify-between gap-3 sm:gap-4 flex-wrap">
+        <div className="flex items-center gap-3 sm:gap-3.5 min-w-0 flex-1">
           <Link
             href="/"
-            className="tap-bounce w-10 h-10 rounded-2xl bg-white border border-slate-200/90 flex items-center justify-center text-slate-600 hover:text-slate-900 shadow-xs hover:border-slate-300 transition-all"
+            className="tap-bounce w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-white border border-slate-200/90 flex items-center justify-center text-slate-600 hover:text-slate-900 shadow-xs hover:border-slate-300 transition-all flex-shrink-0"
             title="Return to Dashboard"
           >
             <ArrowLeft className="w-4 h-4" />
           </Link>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
                 Settings &amp; Integrations
               </h1>
-              <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-100">
+              <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-100 flex-shrink-0">
                 MULTI-TENANT
               </span>
             </div>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">
+            <p className="text-[11px] sm:text-xs text-slate-500 font-medium mt-0.5 truncate">
               Dedicated WhatsApp Engine for Center:{" "}
-              <strong className="text-slate-700 font-mono">
+              <strong className="text-slate-700 font-mono break-all">
                 {centerId || "Loading..."}
               </strong>
             </p>
@@ -901,7 +901,7 @@ export default function SettingsPage() {
         <button
           onClick={handleManualRefresh}
           disabled={isRefreshing}
-          className="tap-bounce flex items-center gap-2 px-3.5 py-2 rounded-2xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:text-slate-900 hover:border-slate-300 shadow-xs transition-all disabled:opacity-50"
+          className="tap-bounce flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-2xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:text-slate-900 hover:border-slate-300 shadow-xs transition-all disabled:opacity-50 flex-shrink-0"
           title="Manual refresh status"
         >
           <RefreshCw
@@ -909,19 +909,19 @@ export default function SettingsPage() {
               isRefreshing ? "animate-spin text-blue-600" : ""
             }`}
           />
-          <span>{isRefreshing ? "Checking..." : "Refresh Status"}</span>
+          <span className="text-xs">{isRefreshing ? "Checking..." : "Refresh Status"}</span>
         </button>
       </div>
 
       {/* Top-Level Settings Tabs: 3 Equal-Width Segments */}
       <nav
         aria-label="Settings navigation"
-        className="grid grid-cols-3 p-1.5 rounded-2xl bg-slate-100/90 border border-slate-200/80 gap-1 sm:gap-2 shadow-2xs"
+        className="grid grid-cols-3 p-1 sm:p-1.5 rounded-2xl bg-slate-100/90 border border-slate-200/80 gap-1 sm:gap-2 shadow-2xs w-full max-w-full"
       >
         <button
           type="button"
           onClick={() => handleSettingsTabChange("general")}
-          className={`tap-bounce w-full py-2.5 px-2 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+          className={`tap-bounce w-full py-2 sm:py-2.5 px-1.5 sm:px-4 rounded-xl text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1 sm:gap-2 transition-all cursor-pointer ${
             activeSettingsTab === "general"
               ? "bg-white text-slate-900 shadow-xs border border-slate-200/80"
               : "text-slate-600 hover:text-slate-900 hover:bg-white/50 border border-transparent"
@@ -929,14 +929,14 @@ export default function SettingsPage() {
           aria-selected={activeSettingsTab === "general"}
           role="tab"
         >
-          <Building2 className="w-4 h-4 flex-shrink-0" />
+          <Building2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
           <span className="truncate">General</span>
         </button>
 
         <button
           type="button"
           onClick={() => handleSettingsTabChange("messages")}
-          className={`tap-bounce w-full py-2.5 px-2 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+          className={`tap-bounce w-full py-2 sm:py-2.5 px-1.5 sm:px-4 rounded-xl text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1 sm:gap-2 transition-all cursor-pointer ${
             activeSettingsTab === "messages"
               ? "bg-white text-blue-700 shadow-xs border border-slate-200/80"
               : "text-slate-600 hover:text-slate-900 hover:bg-white/50 border border-transparent"
@@ -944,19 +944,19 @@ export default function SettingsPage() {
           aria-selected={activeSettingsTab === "messages"}
           role="tab"
         >
-          <MessageSquare className="w-4 h-4 flex-shrink-0" />
+          <MessageSquare className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
           <span className="truncate">Messages</span>
           {isConnected ? (
-            <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 flex-shrink-0" />
           ) : (
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0" />
+            <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-amber-500 animate-pulse flex-shrink-0" />
           )}
         </button>
 
         <button
           type="button"
           onClick={() => handleSettingsTabChange("payments")}
-          className={`tap-bounce w-full py-2.5 px-2 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer ${
+          className={`tap-bounce w-full py-2 sm:py-2.5 px-1.5 sm:px-4 rounded-xl text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1 sm:gap-2 transition-all cursor-pointer ${
             activeSettingsTab === "payments"
               ? "bg-white text-emerald-700 shadow-xs border border-slate-200/80"
               : "text-slate-600 hover:text-slate-900 hover:bg-white/50 border border-transparent"
@@ -964,92 +964,90 @@ export default function SettingsPage() {
           aria-selected={activeSettingsTab === "payments"}
           role="tab"
         >
-          <CreditCard className="w-4 h-4 flex-shrink-0" />
+          <CreditCard className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
           <span className="truncate">Payments</span>
         </button>
       </nav>
 
       {/* TAB 1: GENERAL */}
       {activeSettingsTab === "general" && (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-5 sm:gap-6">
           {/* Administration & Staff Management */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Staff & Faculty Management Card */}
-      <Link
-        href="/teachers"
-        className="tap-bounce p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-indigo-50/80 via-blue-50/60 to-white border border-indigo-200/80 shadow-xs hover:border-indigo-300 hover:shadow-md transition-all flex items-center justify-between group"
-      >
-        <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-600/25 ring-2 ring-indigo-100 flex-shrink-0">
-            <GraduationCap className="w-5 h-5 stroke-[2.2]" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
-                Teacher &amp; Staff Management
-              </h3>
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-100 text-indigo-700">
-                FACULTY ACCESS
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Manage faculty logins, credentials, and active statuses
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 text-xs font-bold text-indigo-600 group-hover:translate-x-1 transition-transform">
-          <span>Manage</span>
-          <ChevronRight className="w-4 h-4" />
-        </div>
-      </Link>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-4">
+            {/* Staff & Faculty Management Card */}
+            <Link
+              href="/teachers"
+              className="tap-bounce p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl bg-gradient-to-r from-indigo-50/80 via-blue-50/60 to-white border border-indigo-200/80 shadow-xs hover:border-indigo-300 hover:shadow-md transition-all flex items-center justify-between gap-2.5 sm:gap-3 group"
+            >
+              <div className="flex items-center gap-3 sm:gap-3.5 min-w-0 flex-1">
+                <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-600/25 ring-2 ring-indigo-100 flex-shrink-0">
+                  <GraduationCap className="w-5 h-5 stroke-[2.2]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                    <h3 className="text-xs sm:text-base font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                      Teacher &amp; Staff Management
+                    </h3>
+                    <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold bg-indigo-100 text-indigo-700 flex-shrink-0">
+                      FACULTY ACCESS
+                    </span>
+                  </div>
+                  <p className="text-[11px] sm:text-xs text-slate-500 font-medium mt-0.5 line-clamp-2">
+                    Manage faculty logins, credentials, and active statuses
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-0.5 sm:gap-1 text-xs font-bold text-indigo-600 group-hover:translate-x-1 transition-transform flex-shrink-0">
+                <span className="hidden sm:inline">Manage</span>
+                <ChevronRight className="w-4 h-4" />
+              </div>
+            </Link>
 
-
-      {/* Multi-Axis Collection Reports Card (DEC-MSEC-06) */}
-      <Link
-        href="/reports"
-        className="tap-bounce p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-emerald-50/80 via-teal-50/60 to-white border border-emerald-200/80 shadow-xs hover:border-emerald-300 hover:shadow-md transition-all flex items-center justify-between group"
-      >
-        <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/25 ring-2 ring-emerald-100 flex-shrink-0">
-            <BarChart3 className="w-5 h-5 stroke-[2.2]" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm sm:text-base font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">
-                Collection Reports
-              </h3>
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800">
-                REVENUE INSIGHTS
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 font-medium mt-0.5">
-              Multi-axis daily, monthly &amp; custom collection breakdowns
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 text-xs font-bold text-emerald-700 group-hover:translate-x-1 transition-transform">
-          <span>View</span>
-          <ChevronRight className="w-4 h-4" />
-        </div>
-      </Link>
-
+            {/* Multi-Axis Collection Reports Card (DEC-MSEC-06) */}
+            <Link
+              href="/reports"
+              className="tap-bounce p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl bg-gradient-to-r from-emerald-50/80 via-teal-50/60 to-white border border-emerald-200/80 shadow-xs hover:border-emerald-300 hover:shadow-md transition-all flex items-center justify-between gap-2.5 sm:gap-3 group"
+            >
+              <div className="flex items-center gap-3 sm:gap-3.5 min-w-0 flex-1">
+                <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/25 ring-2 ring-emerald-100 flex-shrink-0">
+                  <BarChart3 className="w-5 h-5 stroke-[2.2]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                    <h3 className="text-xs sm:text-base font-bold text-slate-900 group-hover:text-emerald-700 transition-colors">
+                      Collection Reports
+                    </h3>
+                    <span className="inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-extrabold bg-emerald-100 text-emerald-800 flex-shrink-0">
+                      REVENUE INSIGHTS
+                    </span>
+                  </div>
+                  <p className="text-[11px] sm:text-xs text-slate-500 font-medium mt-0.5 line-clamp-2">
+                    Multi-axis daily, monthly &amp; custom collection breakdowns
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-0.5 sm:gap-1 text-xs font-bold text-emerald-700 group-hover:translate-x-1 transition-transform flex-shrink-0">
+                <span className="hidden sm:inline">View</span>
+                <ChevronRight className="w-4 h-4" />
+              </div>
+            </Link>
           </div>
 
           {/* WhatsApp Connection Management Header */}
           <div className="pt-2 flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <Smartphone className="w-4 h-4 text-emerald-600" />
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+            <div className="flex items-center gap-2 min-w-0">
+              <Smartphone className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              <h3 className="text-xs sm:text-sm font-bold text-slate-900 uppercase tracking-wider truncate">
                 WhatsApp Connection &amp; Pairing
               </h3>
             </div>
             {isConnected ? (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex-shrink-0">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 Linked &amp; Active
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0">
                 <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                 Action Required
               </span>
@@ -1057,229 +1055,230 @@ export default function SettingsPage() {
           </div>
 
           {/* Real-time Status Banner Card */}
-      <div className="glass-card p-5 sm:p-6 rounded-3xl border border-slate-200/90 shadow-sm relative overflow-hidden backdrop-blur-md">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-4">
-            <div
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-xs transition-all ${
-                isConnected
-                  ? "bg-emerald-500 text-white shadow-emerald-500/20 ring-4 ring-emerald-50"
-                  : isAuthenticated
-                  ? "bg-emerald-600 text-white shadow-emerald-600/20 ring-4 ring-emerald-50"
-                  : isQrReady
-                  ? "bg-amber-500 text-white shadow-amber-500/20 ring-4 ring-amber-50"
-                  : isInitState || isReconnecting
-                  ? "bg-blue-600 text-white shadow-blue-500/20 ring-4 ring-blue-50"
-                  : isOffline
-                  ? "bg-rose-100 text-rose-600 ring-4 ring-rose-50"
-                  : "bg-slate-200 text-slate-600 ring-4 ring-slate-100"
-              }`}
-            >
-              {isConnected ? (
-                <Wifi className="w-6 h-6 animate-pulse" />
-              ) : isAuthenticated ? (
-                <RefreshCw className="w-6 h-6 animate-spin text-emerald-600" />
-              ) : isQrReady ? (
-                <QrCode className="w-6 h-6" />
-              ) : isInitState || isReconnecting || isLoading ? (
-                <RefreshCw className="w-6 h-6 animate-spin" />
-              ) : (
-                <WifiOff className="w-6 h-6" />
-              )}
-            </div>
-
-            <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h2 className="text-base sm:text-lg font-bold text-slate-900">
-                  WhatsApp Automation Engine
-                </h2>
-                <span
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-extrabold tracking-wide uppercase ${
+          <div className="glass-card p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-sm relative overflow-hidden backdrop-blur-md">
+            <div className="flex items-center justify-between gap-3 sm:gap-4 flex-wrap">
+              <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                <div
+                  className={`w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center shadow-xs transition-all flex-shrink-0 ${
                     isConnected
-                      ? "bg-emerald-100 text-emerald-800"
+                      ? "bg-emerald-500 text-white shadow-emerald-500/20 ring-4 ring-emerald-50"
                       : isAuthenticated
-                      ? "bg-emerald-100 text-emerald-800 animate-pulse"
+                      ? "bg-emerald-600 text-white shadow-emerald-600/20 ring-4 ring-emerald-50"
                       : isQrReady
-                      ? "bg-amber-100 text-amber-800 animate-pulse"
-                      : isInitState
-                      ? "bg-blue-100 text-blue-800 animate-pulse"
+                      ? "bg-amber-500 text-white shadow-amber-500/20 ring-4 ring-amber-50"
+                      : isInitState || isReconnecting
+                      ? "bg-blue-600 text-white shadow-blue-500/20 ring-4 ring-blue-50"
                       : isOffline
-                      ? "bg-rose-100 text-rose-800"
-                      : "bg-slate-100 text-slate-700"
+                      ? "bg-rose-100 text-rose-600 ring-4 ring-rose-50"
+                      : "bg-slate-200 text-slate-600 ring-4 ring-slate-100"
                   }`}
                 >
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      isConnected
-                        ? "bg-emerald-500 animate-pulse"
+                  {isConnected ? (
+                    <Wifi className="w-5 h-5 sm:w-6 sm:h-6 animate-pulse" />
+                  ) : isAuthenticated ? (
+                    <RefreshCw className="w-5 h-5 sm:w-6 sm:h-6 animate-spin text-emerald-600" />
+                  ) : isQrReady ? (
+                    <QrCode className="w-5 h-5 sm:w-6 sm:h-6" />
+                  ) : isInitState || isReconnecting || isLoading ? (
+                    <RefreshCw className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
+                  ) : (
+                    <WifiOff className="w-5 h-5 sm:w-6 sm:h-6" />
+                  )}
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-sm sm:text-lg font-bold text-slate-900 truncate">
+                      WhatsApp Automation Engine
+                    </h2>
+                    <span
+                      className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-[11px] font-extrabold tracking-wide uppercase flex-shrink-0 ${
+                        isConnected
+                          ? "bg-emerald-100 text-emerald-800"
+                          : isAuthenticated
+                          ? "bg-emerald-100 text-emerald-800 animate-pulse"
+                          : isQrReady
+                          ? "bg-amber-100 text-amber-800 animate-pulse"
+                          : isInitState
+                          ? "bg-blue-100 text-blue-800 animate-pulse"
+                          : isOffline
+                          ? "bg-rose-100 text-rose-800"
+                          : "bg-slate-100 text-slate-700"
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${
+                          isConnected
+                            ? "bg-emerald-500 animate-pulse"
+                            : isAuthenticated
+                            ? "bg-emerald-500 animate-pulse"
+                            : isQrReady
+                            ? "bg-amber-500"
+                            : isInitState
+                            ? "bg-blue-500 animate-pulse"
+                            : isOffline
+                            ? "bg-rose-500"
+                            : "bg-slate-400"
+                        }`}
+                      />
+                      {isConnected
+                        ? "Active & Connected"
                         : isAuthenticated
-                        ? "bg-emerald-500 animate-pulse"
+                        ? "Device Linked • Setting Up"
                         : isQrReady
-                        ? "bg-amber-500"
+                        ? "Awaiting QR Scan"
+                        : isReconnecting
+                        ? "Reconnecting..."
                         : isInitState
-                        ? "bg-blue-500 animate-pulse"
+                        ? (statusData.hasSavedSession ? "Reconnecting Session..." : "Generating QR...")
+                        : isLoading
+                        ? "Checking Status..."
                         : isOffline
-                        ? "bg-rose-500"
-                        : "bg-slate-400"
-                    }`}
-                  />
-                  {isConnected
-                    ? "Active & Connected"
-                    : isAuthenticated
-                    ? "Device Linked • Setting Up"
-                    : isQrReady
-                    ? "Awaiting QR Scan"
-                    : isReconnecting
-                    ? "Reconnecting Automatically..."
-                    : isInitState
-                    ? (statusData.hasSavedSession ? "Reconnecting Session..." : "Generating QR...")
-                    : isLoading
-                    ? "Checking Status..."
-                    : isOffline
-                    ? "Microservice Offline"
-                    : statusData.hasSavedSession
-                    ? "Session Saved"
-                    : "Disconnected"}
-                </span>
+                        ? "Microservice Offline"
+                        : statusData.hasSavedSession
+                        ? "Session Saved"
+                        : "Disconnected"}
+                    </span>
+                  </div>
+                  <p className="text-[11px] sm:text-xs text-slate-500 mt-1 flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                    <span className="flex items-center gap-1 truncate">
+                      <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                      {lastPolled
+                        ? `Polled at ${lastPolled.toLocaleTimeString("en-IN")}`
+                        : "Connecting to microservice..."}
+                    </span>
+                    <span className="text-slate-300 hidden xs:inline">•</span>
+                    <span className="flex items-center gap-1 font-mono text-[10px] sm:text-[11px] truncate">
+                      <Server className="w-3 h-3 text-slate-400 flex-shrink-0" />
+                      session-{centerId || "default"}
+                    </span>
+                  </p>
+                </div>
               </div>
-              <p className="text-xs text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
-                <span className="flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  {lastPolled
-                    ? `Polled at ${lastPolled.toLocaleTimeString("en-IN")}`
-                    : "Connecting to microservice..."}
-                </span>
-                <span className="text-slate-300">•</span>
-                <span className="flex items-center gap-1 font-mono text-[11px]">
-                  <Server className="w-3 h-3 text-slate-400" />
-                  session-{centerId || "default"}
-                </span>
-              </p>
             </div>
           </div>
-        </div>
-      </div>
 
+          {/* Dynamic Content based on State */}
 
-      {/* Dynamic Content based on State */}
+          {/* 1. CONNECTED STATE */}
+          {isConnected && (
+            <div className="flex flex-col gap-5 sm:gap-6">
+              <div className="p-4 sm:p-7 rounded-2xl sm:rounded-3xl bg-gradient-to-br from-emerald-500/15 via-emerald-500/5 to-white/90 border-2 border-emerald-500/30 shadow-md shadow-emerald-500/5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 translate-x-4 -translate-y-4 w-36 h-36 bg-emerald-400/15 rounded-full blur-2xl -z-10" />
 
-      {/* 1. CONNECTED STATE */}
-      {isConnected && (
-        <div className="flex flex-col gap-6">
-          <div className="p-6 sm:p-7 rounded-3xl bg-gradient-to-br from-emerald-500/15 via-emerald-500/5 to-white/90 border-2 border-emerald-500/30 shadow-md shadow-emerald-500/5 relative overflow-hidden">
-            <div className="absolute top-0 right-0 translate-x-4 -translate-y-4 w-36 h-36 bg-emerald-400/15 rounded-full blur-2xl -z-10" />
+                <div className="flex items-start sm:items-center gap-3.5 sm:gap-4">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/25 flex-shrink-0">
+                    <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.2]" />
+                  </div>
+                  <div className="space-y-1 sm:space-y-1.5 flex-1 min-w-0">
+                    <h3 className="text-base sm:text-xl font-black text-emerald-950 tracking-tight">
+                      WhatsApp Engine is Active and Connected
+                    </h3>
+                    <p className="text-xs sm:text-sm text-emerald-800/90 leading-relaxed font-medium">
+                      Your tuition center’s WhatsApp business account is paired and
+                      active. Student admission welcomes, fee reminders, and test
+                      results will be dispatched exclusively from this number.
+                    </p>
+                  </div>
+                </div>
 
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/25 flex-shrink-0">
-                <CheckCircle2 className="w-6 h-6 stroke-[2.2]" />
-              </div>
-              <div className="space-y-1.5 flex-1">
-                <h3 className="text-lg sm:text-xl font-black text-emerald-950 tracking-tight">
-                  WhatsApp Engine is Active and Connected
-                </h3>
-                <p className="text-xs sm:text-sm text-emerald-800/90 leading-relaxed font-medium">
-                  Your tuition center’s WhatsApp business account is paired and
-                  active. Student admission welcomes, fee reminders, and test
-                  results will be dispatched exclusively from this number.
-                </p>
+                {/* Microservice Specs Row */}
+                <div className="mt-5 sm:mt-6 grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 pt-4 sm:pt-5 border-t border-emerald-200/60">
+                  <div className="bg-white/90 backdrop-blur-xs p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-emerald-100 shadow-2xs min-w-0">
+                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Session Mode
+                    </span>
+                    <span className="text-[11px] sm:text-xs font-bold text-slate-800 flex items-center gap-1 mt-1 truncate" title={statusData.engine?.includes("baileys") ? "Baileys (MongoDB Atlas)" : statusData.hasSavedSession ? "MongoDB RemoteAuth" : "LocalAuth Isolated"}>
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                      <span className="truncate">
+                        {statusData.engine?.includes("baileys")
+                          ? "Baileys"
+                          : statusData.hasSavedSession
+                          ? "RemoteAuth"
+                          : "LocalAuth"}
+                      </span>
+                    </span>
+                  </div>
+                  <div className="bg-white/90 backdrop-blur-xs p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-emerald-100 shadow-2xs min-w-0">
+                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Center Client
+                    </span>
+                    <span className="text-[11px] sm:text-xs font-bold text-slate-800 mt-1 font-mono truncate block">
+                      {centerId}
+                    </span>
+                  </div>
+                  <div className="bg-white/90 backdrop-blur-xs p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-emerald-100 shadow-2xs min-w-0">
+                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Gateway
+                    </span>
+                    <span className="text-[11px] sm:text-xs font-bold text-slate-800 mt-1 font-mono block truncate">
+                      {statusData.engine?.includes("baileys")
+                        ? "WebSocket"
+                        : isLocalEnv
+                        ? "Port :3005"
+                        : "Chromium"}
+                    </span>
+                  </div>
+                  <div className="bg-white/90 backdrop-blur-xs p-2.5 sm:p-3 rounded-xl sm:rounded-2xl border border-emerald-100 shadow-2xs min-w-0">
+                    <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Status Health
+                    </span>
+                    <span className="text-[11px] sm:text-xs font-extrabold text-emerald-700 mt-1 flex items-center gap-1 truncate">
+                      <Activity className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                      <span className="truncate">Live &amp; Ready</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Disconnect & Relink Button */}
+                <div className="mt-4 sm:mt-5 pt-3.5 sm:pt-4 border-t border-emerald-200/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-1.5 text-xs text-emerald-900 font-medium truncate">
+                    <Building2 className="w-3.5 h-3.5 text-emerald-700 flex-shrink-0" />
+                    <span className="truncate">
+                      Scoped to Center:{" "}
+                      <code className="font-mono font-bold bg-white/70 px-1.5 py-0.5 rounded-md border border-emerald-200">
+                        {centerId}
+                      </code>
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleDisconnectAndRelink}
+                    disabled={isDisconnecting}
+                    className="tap-bounce flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 w-full sm:w-auto rounded-xl border border-rose-300 hover:border-rose-400 bg-white hover:bg-rose-50 text-rose-600 font-bold text-xs transition-all shadow-2xs disabled:opacity-50 cursor-pointer"
+                    title="Disconnect this WhatsApp number and scan a new QR code"
+                  >
+                    {isDisconnecting ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-rose-600" />
+                    ) : (
+                      <LogOut className="w-3.5 h-3.5 text-rose-600" />
+                    )}
+                    <span>
+                      {isDisconnecting
+                        ? "Disconnecting..."
+                        : "Disconnect & Relink WhatsApp"}
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
-
-            {/* Microservice Specs Row */}
-            <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3 pt-5 border-t border-emerald-200/60">
-              <div className="bg-white/90 backdrop-blur-xs p-3 rounded-2xl border border-emerald-100 shadow-2xs">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                  Session Mode
-                </span>
-                <span className="text-xs font-bold text-slate-800 flex items-center gap-1 mt-1 truncate">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
-                  {statusData.engine?.includes("baileys")
-                    ? "Baileys (MongoDB Atlas)"
-                    : statusData.hasSavedSession
-                    ? "MongoDB RemoteAuth"
-                    : "LocalAuth Isolated"}
-                </span>
-              </div>
-              <div className="bg-white/90 backdrop-blur-xs p-3 rounded-2xl border border-emerald-100 shadow-2xs">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                  Center Client
-                </span>
-                <span className="text-xs font-bold text-slate-800 mt-1 font-mono truncate block">
-                  {centerId}
-                </span>
-              </div>
-              <div className="bg-white/90 backdrop-blur-xs p-3 rounded-2xl border border-emerald-100 shadow-2xs">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                  Gateway
-                </span>
-                <span className="text-xs font-bold text-slate-800 mt-1 font-mono block truncate">
-                  {statusData.engine?.includes("baileys")
-                    ? "WebSocket Native (~30MB)"
-                    : isLocalEnv
-                    ? "Port :3005"
-                    : "Puppeteer (Chromium)"}
-                </span>
-              </div>
-              <div className="bg-white/90 backdrop-blur-xs p-3 rounded-2xl border border-emerald-100 shadow-2xs">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                  Status Health
-                </span>
-                <span className="text-xs font-extrabold text-emerald-700 mt-1 flex items-center gap-1">
-                  <Activity className="w-3.5 h-3.5 text-emerald-600" />
-                  Live &amp; Ready
-                </span>
-              </div>
-            </div>
-
-            {/* Disconnect & Relink Button */}
-            <div className="mt-5 pt-4 border-t border-emerald-200/60 flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-1.5 text-xs text-emerald-900 font-medium">
-                <Building2 className="w-3.5 h-3.5 text-emerald-700 flex-shrink-0" />
-                <span>
-                  Scoped to Center:{" "}
-                  <code className="font-mono font-bold bg-white/70 px-2 py-0.5 rounded-md border border-emerald-200">
-                    {centerId}
-                  </code>
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleDisconnectAndRelink}
-                disabled={isDisconnecting}
-                className="tap-bounce flex items-center gap-2 px-4 py-2 w-auto flex-shrink-0 rounded-xl border border-rose-300 hover:border-rose-400 bg-white hover:bg-rose-50 text-rose-600 font-bold text-xs transition-all shadow-2xs disabled:opacity-50 cursor-pointer"
-                title="Disconnect this WhatsApp number and scan a new QR code"
-              >
-                {isDisconnecting ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-rose-600" />
-                ) : (
-                  <LogOut className="w-3.5 h-3.5 text-rose-600" />
-                )}
-                <span>
-                  {isDisconnecting
-                    ? "Disconnecting..."
-                    : "Disconnect & Relink WhatsApp"}
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          )}
 
       {/* 2. AUTHENTICATED / FINALIZING STATE */}
       {!isConnected && isAuthenticated && (
-        <div className="glass-card p-7 sm:p-8 rounded-3xl border-2 border-emerald-300 shadow-md bg-gradient-to-br from-emerald-50/60 via-white to-white space-y-4 text-center animate-fade-in">
-          <div className="w-14 h-14 rounded-2xl bg-emerald-500 text-white flex items-center justify-center mx-auto shadow-md shadow-emerald-500/30">
-            <CheckCircle2 className="w-8 h-8" />
+        <div className="glass-card p-5 sm:p-8 rounded-2xl sm:rounded-3xl border-2 border-emerald-300 shadow-md bg-gradient-to-br from-emerald-50/60 via-white to-white space-y-3 sm:space-y-4 text-center animate-fade-in">
+          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-emerald-500 text-white flex items-center justify-center mx-auto shadow-md shadow-emerald-500/30">
+            <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8" />
           </div>
-          <div className="max-w-md mx-auto space-y-2">
-            <h3 className="text-xl font-black text-slate-900 tracking-tight">
+          <div className="max-w-md mx-auto space-y-1.5 sm:space-y-2">
+            <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
               Device Linked Successfully!
             </h3>
             <p className="text-xs sm:text-sm text-slate-600 font-medium leading-relaxed">
               Your phone has completed authentication. WhatsApp Web is synchronizing your business session and setting up encryption keys...
             </p>
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold mt-2">
+            <div className="inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] sm:text-xs font-bold mt-2">
               <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-600" />
               <span>Finalizing WhatsApp Ready State...</span>
             </div>
@@ -1289,9 +1288,9 @@ export default function SettingsPage() {
 
       {/* 3. INITIAL LOADING STATE ON PAGE MOUNT / REFRESH */}
       {isLoading && !isConnected && !isAuthenticated && (
-        <div className="glass-card p-10 rounded-3xl border border-slate-200/90 shadow-sm flex flex-col items-center justify-center gap-3 text-center animate-fade-in">
-          <RefreshCw className="w-8 h-8 animate-spin text-blue-600" />
-          <h3 className="text-base font-bold text-slate-800">
+        <div className="glass-card p-6 sm:p-10 rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-sm flex flex-col items-center justify-center gap-3 text-center animate-fade-in">
+          <RefreshCw className="w-7 h-7 sm:w-8 sm:h-8 animate-spin text-blue-600" />
+          <h3 className="text-sm sm:text-base font-bold text-slate-800">
             Checking WhatsApp Engine Status...
           </h3>
           <p className="text-xs text-slate-400">
@@ -1302,13 +1301,13 @@ export default function SettingsPage() {
 
       {/* 4. QR READY STATE - USER SCANS QR CODE IN UI */}
       {!isConnected && !isAuthenticated && !isLoading && isQrReady && statusData.qr && (
-        <div className="glass-card p-7 rounded-3xl border border-amber-200/80 shadow-md bg-gradient-to-b from-amber-50/40 via-white to-white space-y-6">
+        <div className="glass-card p-4 sm:p-7 rounded-2xl sm:rounded-3xl border border-amber-200/80 shadow-md bg-gradient-to-b from-amber-50/40 via-white to-white space-y-5 sm:space-y-6">
           <div className="text-center max-w-md mx-auto space-y-1.5">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-bold">
               <QrCode className="w-3.5 h-3.5" />
-              Pair Center: {centerId}
+              <span>Pair Center: {centerId}</span>
             </div>
-            <h3 className="text-xl font-black text-slate-900 tracking-tight">
+            <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
               Scan QR Code to Connect WhatsApp
             </h3>
             <p className="text-xs text-slate-500">
@@ -1317,26 +1316,29 @@ export default function SettingsPage() {
             </p>
           </div>
 
-          {/* QR Code Presentation */}
-          <div className="flex flex-col items-center justify-center">
-            <div className="p-6 bg-white rounded-3xl shadow-lg shadow-slate-200/60 border-2 border-slate-200/80 relative">
-              <QRCodeSVG
-                value={statusData.qr}
-                size={240}
-                level="M"
-                includeMargin={true}
-              />
+          {/* QR Code Presentation — Responsive Adaptive Box */}
+          <div className="flex flex-col items-center justify-center w-full">
+            <div className="p-3 sm:p-6 bg-white rounded-2xl sm:rounded-3xl shadow-lg shadow-slate-200/60 border-2 border-slate-200/80 relative max-w-full flex flex-col items-center">
+              <div className="w-[180px] h-[180px] xs:w-[210px] xs:h-[210px] sm:w-[240px] sm:h-[240px] flex items-center justify-center">
+                <QRCodeSVG
+                  value={statusData.qr}
+                  size={240}
+                  level="M"
+                  includeMargin={true}
+                  className="w-full h-full max-w-full max-h-full"
+                />
+              </div>
               <QrFreshnessBadge qrGeneratedAt={statusData.qrGeneratedAt} />
             </div>
           </div>
 
           {/* Step-by-Step Instructions */}
-          <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200/80 space-y-3 max-w-md mx-auto">
+          <div className="bg-slate-50 rounded-2xl p-4 sm:p-5 border border-slate-200/80 space-y-2.5 sm:space-y-3 max-w-md mx-auto w-full">
             <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
               <Smartphone className="w-4 h-4 text-blue-600" />
-              How to Link:
+              <span>How to Link:</span>
             </h4>
-            <ol className="text-xs text-slate-600 space-y-2 list-decimal list-inside pl-1 leading-relaxed">
+            <ol className="text-xs text-slate-600 space-y-1.5 sm:space-y-2 list-decimal list-inside pl-1 leading-relaxed">
               <li>
                 Open <strong className="text-slate-800">WhatsApp</strong> on
                 your phone.
@@ -1357,12 +1359,12 @@ export default function SettingsPage() {
           </div>
 
           {/* Action Buttons: Regenerate QR Code & Cancel */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2.5 sm:gap-3 pt-1 sm:pt-2 w-full max-w-md mx-auto">
             <button
               type="button"
               onClick={() => handleRegenerateQR("refresh")}
               disabled={isRegenerating || isInitializing}
-              className="tap-bounce inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 active:scale-[0.98] text-white text-xs font-bold transition-all shadow-md shadow-amber-500/20 disabled:opacity-50 cursor-pointer"
+              className="tap-bounce w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl bg-amber-600 hover:bg-amber-700 active:scale-[0.98] text-white text-xs font-bold transition-all shadow-md shadow-amber-500/20 disabled:opacity-50 cursor-pointer"
             >
               <RefreshCw
                 className={`w-3.5 h-3.5 ${
@@ -1380,7 +1382,7 @@ export default function SettingsPage() {
               type="button"
               onClick={handleCancelQR}
               disabled={isRegenerating}
-              className="tap-bounce inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-800 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+              className="tap-bounce w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-800 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
               <span>Cancel</span>
@@ -1391,15 +1393,15 @@ export default function SettingsPage() {
 
       {/* 5. DISCONNECTED / MICROSERVICE OFFLINE STATE */}
       {!isConnected && !isAuthenticated && !isLoading && !isQrReady && (
-        <div className="glass-card p-8 rounded-3xl border border-slate-200 shadow-sm space-y-5 text-center">
+        <div className="glass-card p-5 sm:p-8 rounded-2xl sm:rounded-3xl border border-slate-200 shadow-sm space-y-4 sm:space-y-5 text-center">
           {isOffline ? (
             /* Show offline UI. If in local development, provide the terminal command. If in production, provide a production-aware message and status error. */
             <>
-              <div className="w-14 h-14 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center mx-auto shadow-inner border border-rose-100">
-                <WifiOff className="w-7 h-7 stroke-[1.8]" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center mx-auto shadow-inner border border-rose-100">
+                <WifiOff className="w-6 h-6 sm:w-7 sm:h-7 stroke-[1.8]" />
               </div>
               <div className="max-w-md mx-auto space-y-1.5">
-                <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
                   WhatsApp Engine is Offline
                 </h3>
                 {isLocalEnv ? (
@@ -1416,7 +1418,7 @@ export default function SettingsPage() {
               </div>
 
               {isLocalEnv ? (
-                <div className="p-4 bg-slate-900 text-slate-200 rounded-2xl font-mono text-xs max-w-sm mx-auto text-left shadow-inner">
+                <div className="p-3.5 sm:p-4 bg-slate-900 text-slate-200 rounded-xl sm:rounded-2xl font-mono text-xs max-w-sm mx-auto text-left shadow-inner overflow-x-auto">
                   <p className="text-slate-400 text-[10px] mb-1 font-semibold uppercase tracking-wider">
                     # Terminal command:
                   </p>
@@ -1430,12 +1432,12 @@ export default function SettingsPage() {
                 </div>
               ) : null}
 
-              <div className="pt-2">
+              <div className="pt-1 sm:pt-2">
                 <button
                   type="button"
                   onClick={handleManualRefresh}
                   disabled={isRefreshing}
-                  className="tap-bounce inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all shadow-2xs disabled:opacity-50"
+                  className="tap-bounce inline-flex items-center justify-center gap-2 px-5 py-2.5 w-full sm:w-auto rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all shadow-2xs disabled:opacity-50"
                 >
                   <RefreshCw
                     className={`w-3.5 h-3.5 ${
@@ -1449,11 +1451,11 @@ export default function SettingsPage() {
           ) : statusData.hasSavedSession ? (
             /* A saved LocalAuth session exists on disk for this center */
             <>
-              <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto shadow-inner border border-emerald-100">
-                <ShieldCheck className="w-7 h-7 stroke-[1.8]" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto shadow-inner border border-emerald-100">
+                <ShieldCheck className="w-6 h-6 sm:w-7 sm:h-7 stroke-[1.8]" />
               </div>
               <div className="max-w-md mx-auto space-y-1.5">
-                <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
                   Saved WhatsApp Session Found
                 </h3>
                 <p className="text-xs text-slate-500 leading-relaxed font-medium">
@@ -1463,12 +1465,12 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+              <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2.5 sm:gap-3 max-w-md mx-auto w-full">
                 <button
                   type="button"
                   onClick={() => handleRegenerateQR("refresh")}
                   disabled={isRegenerating}
-                  className="tap-bounce inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs shadow-md shadow-emerald-500/25 transition-all disabled:opacity-60 cursor-pointer"
+                  className="tap-bounce w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white font-bold text-xs shadow-md shadow-emerald-500/25 transition-all disabled:opacity-60 cursor-pointer"
                 >
                   {isRegenerating || (isInitState && !statusData.error) ? (
                     <>
@@ -1487,7 +1489,7 @@ export default function SettingsPage() {
                   type="button"
                   onClick={handlePairNewNumber}
                   disabled={isInitState || isRegenerating}
-                  className="tap-bounce inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold transition-all cursor-pointer"
+                  className="tap-bounce w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold transition-all cursor-pointer"
                 >
                   <QrCode className="w-3.5 h-3.5" />
                   <span>Pair New Number Instead</span>
@@ -1497,7 +1499,7 @@ export default function SettingsPage() {
                   <button
                     type="button"
                     onClick={handleCancelQR}
-                    className="tap-bounce inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-all cursor-pointer"
+                    className="tap-bounce w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 transition-all cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" />
                     <span>Cancel Reconnect</span>
@@ -1506,7 +1508,7 @@ export default function SettingsPage() {
               </div>
 
               {statusData.error && (
-                <div className="p-3.5 rounded-2xl bg-rose-50 text-rose-800 text-xs font-medium max-w-md mx-auto border border-rose-200 flex items-center gap-2 text-left">
+                <div className="p-3 sm:p-3.5 rounded-2xl bg-rose-50 text-rose-800 text-xs font-medium max-w-md mx-auto border border-rose-200 flex items-center gap-2 text-left">
                   <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-600" />
                   <span className="leading-relaxed">{statusData.error}</span>
                 </div>
@@ -1515,11 +1517,11 @@ export default function SettingsPage() {
           ) : (
             /* Fresh unlinked center without a saved session */
             <>
-              <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto shadow-inner border border-blue-100">
-                <QrCode className="w-7 h-7 stroke-[1.8]" />
+              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto shadow-inner border border-blue-100">
+                <QrCode className="w-6 h-6 sm:w-7 sm:h-7 stroke-[1.8]" />
               </div>
               <div className="max-w-md mx-auto space-y-1.5">
-                <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">
                   Link Center WhatsApp Account
                 </h3>
                 <p className="text-xs text-slate-500 leading-relaxed font-medium">
@@ -1528,12 +1530,12 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              <div className="pt-2">
+              <div className="pt-2 w-full max-w-md mx-auto">
                 <button
                   type="button"
                   onClick={generateQRCode}
                   disabled={isInitState}
-                  className="tap-bounce inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.98] text-white font-bold text-sm shadow-md shadow-blue-500/25 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+                  className="tap-bounce w-full inline-flex items-center justify-center gap-2.5 px-5 sm:px-6 py-3 sm:py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.98] text-white font-bold text-xs sm:text-sm shadow-md shadow-blue-500/25 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
                 >
                   {isInitState ? (
                     <>
@@ -1550,7 +1552,7 @@ export default function SettingsPage() {
               </div>
 
               {statusData.error && (
-                <div className="p-3.5 rounded-2xl bg-rose-50 text-rose-800 text-xs font-medium max-w-md mx-auto border border-rose-200 flex items-center gap-2 text-left">
+                <div className="p-3 sm:p-3.5 rounded-2xl bg-rose-50 text-rose-800 text-xs font-medium max-w-md mx-auto border border-rose-200 flex items-center gap-2 text-left">
                   <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-600" />
                   <span className="leading-relaxed">{statusData.error}</span>
                 </div>
@@ -1578,23 +1580,23 @@ export default function SettingsPage() {
 
 
           {/* Quick Test Message Tool */}
-          <div className="p-6 sm:p-7 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+          <div className="p-4 sm:p-7 rounded-2xl sm:rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-3.5 sm:space-y-4">
+            <div className="flex items-start sm:items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
                   <MessageSquare className="w-4 h-4 stroke-[2.2]" />
                 </div>
-                <div>
-                  <h4 className="text-sm sm:text-base font-bold text-slate-900">
+                <div className="min-w-0 flex-1">
+                  <h4 className="text-sm sm:text-base font-bold text-slate-900 truncate">
                     Send a Live Test Message
                   </h4>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-[11px] sm:text-xs text-slate-500 line-clamp-1 sm:line-clamp-none">
                     Verify this center’s WhatsApp dispatch by sending a test
                     ping to any mobile number.
                   </p>
                 </div>
               </div>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 flex-shrink-0">
                 <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
                 Live Center Gateway
               </span>
@@ -1639,7 +1641,7 @@ export default function SettingsPage() {
 
             {testResult && (
               <div
-                className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 animate-fade-in ${
+                className={`p-3 sm:p-3.5 rounded-2xl text-xs flex items-center gap-2.5 animate-fade-in ${
                   testResult.type === "success"
                     ? "bg-emerald-50 text-emerald-900 border border-emerald-200"
                     : testResult.type === "warning"
@@ -1663,544 +1665,544 @@ export default function SettingsPage() {
 
 
           {/* Automations Showcase Section */}
-      <div className="space-y-3.5 pt-2">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-amber-500" />
-          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-            Active Automation Workflows
-          </h3>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-          {/* Card 1 */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-blue-200 hover:shadow-xs transition-all space-y-2">
-            <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-sm">
-              🎉
-            </div>
-            <h4 className="text-xs font-bold text-slate-900">
-              Admission Welcome
-            </h4>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              Fires instantly when adding a new student. Sends the unique VIP
-              Parent Portal magic link.
-            </p>
-          </div>
-
-          {/* Card 2 */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-emerald-200 hover:shadow-xs transition-all space-y-2">
-            <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-sm">
-              💰
-            </div>
-            <h4 className="text-xs font-bold text-slate-900">Fee Reminders</h4>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              Recurring automated reminders for pending tuition fees with
-              amount, due date, and pay links.
-            </p>
-          </div>
-
-          {/* Card 3 */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-purple-200 hover:shadow-xs transition-all space-y-2">
-            <div className="w-9 h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold text-sm">
-              📊
-            </div>
-            <h4 className="text-xs font-bold text-slate-900">
-              Test Mark Reports
-            </h4>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              Dispatches scores, rank analysis, and encouraging remarks to
-              parents after tests are entered.
-            </p>
-          </div>
-        </div>
-      </div>
-
-
-          {/* 4. MESSAGING TEMPLATES SECTION (Task 3: Multi-Tab Template System) */}
-      <div className="glass-card p-6 sm:p-7 rounded-3xl border border-slate-200/90 shadow-sm space-y-6 bg-white">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-xs">
-              <FileText className="w-5 h-5 stroke-[2.2]" />
-            </div>
-            <div>
-              <h3 className="text-base sm:text-lg font-bold text-slate-900">
-                Messaging Templates
+          <div className="space-y-3 pt-1 sm:pt-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-500 flex-shrink-0" />
+              <h3 className="text-xs sm:text-sm font-bold text-slate-900 uppercase tracking-wider">
+                Active Automation Workflows
               </h3>
-              <p className="text-xs text-slate-500">
-                Customize automated WhatsApp notification messages sent to parents.
-              </p>
             </div>
-          </div>
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
-            {activeTemplateTab === "admission" && "🎓 Admission Welcome"}
-            {activeTemplateTab === "feeReminder" && "🔔 Fee Reminder"}
-            {activeTemplateTab === "paymentReceipt" && "🧾 Payment Receipt"}
-          </span>
-        </div>
 
-        {/* Tab Navigation Controls */}
-        <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-slate-100/90 border border-slate-200/80 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTemplateTab("admission");
-              if (templateSaveStatus) setTemplateSaveStatus(null);
-            }}
-            className={`tap-bounce flex-1 min-w-[120px] py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
-              activeTemplateTab === "admission"
-                ? "bg-white text-blue-700 shadow-xs border border-slate-200/80"
-                : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-            }`}
-          >
-            <GraduationCap className="w-4 h-4" />
-            <span>Admission</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTemplateTab("feeReminder");
-              if (templateSaveStatus) setTemplateSaveStatus(null);
-            }}
-            className={`tap-bounce flex-1 min-w-[120px] py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
-              activeTemplateTab === "feeReminder"
-                ? "bg-white text-blue-700 shadow-xs border border-slate-200/80"
-                : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-            }`}
-          >
-            <Bell className="w-4 h-4" />
-            <span>Fee Reminder</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTemplateTab("paymentReceipt");
-              if (templateSaveStatus) setTemplateSaveStatus(null);
-            }}
-            className={`tap-bounce flex-1 min-w-[120px] py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
-              activeTemplateTab === "paymentReceipt"
-                ? "bg-white text-blue-700 shadow-xs border border-slate-200/80"
-                : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
-            }`}
-          >
-            <Receipt className="w-4 h-4" />
-            <span>Payment Receipt</span>
-          </button>
-        </div>
-
-        <form onSubmit={handleSaveTemplate} className="space-y-5">
-          {/* Active Tab Configuration */}
-          <div>
-            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-              <div>
-                <label
-                  htmlFor="template-editor"
-                  className="text-xs font-bold text-slate-800 uppercase tracking-wider block"
-                >
-                  {activeTemplateTab === "admission" && "Student Admission Welcome Template"}
-                  {activeTemplateTab === "feeReminder" && "Fee Due Reminder Template"}
-                  {activeTemplateTab === "paymentReceipt" && "Payment Receipt Confirmation Template"}
-                </label>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  {activeTemplateTab === "admission" && "Dispatched automatically to parents when a new student is enrolled."}
-                  {activeTemplateTab === "feeReminder" && "Dispatched for pending fees with due date, amount, and payment portal link."}
-                  {activeTemplateTab === "paymentReceipt" && "Dispatched immediately upon recording or confirming a fee payment."}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-3.5">
+              {/* Card 1 */}
+              <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-blue-200 hover:shadow-xs transition-all space-y-1.5 sm:space-y-2">
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-sm">
+                  🎉
+                </div>
+                <h4 className="text-xs font-bold text-slate-900">
+                  Admission Welcome
+                </h4>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Fires instantly when adding a new student. Sends the unique VIP
+                  Parent Portal magic link.
                 </p>
               </div>
 
-              {/* Placeholder Pills (Click to Insert) */}
-              <div className="flex items-center gap-1.5 text-[11px] text-slate-500 flex-wrap">
-                <span className="font-medium text-slate-400">Click to insert:</span>
-                {activeTemplateTab === "admission" && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => handleInsertPlaceholder("{{studentName}}")}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
-                      title="Insert student name"
-                    >
-                      {"{{studentName}}"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInsertPlaceholder("{{magicLink}}")}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
-                      title="Insert VIP Parent Portal magic link"
-                    >
-                      {"{{magicLink}}"}
-                    </button>
-                  </>
-                )}
+              {/* Card 2 */}
+              <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-emerald-200 hover:shadow-xs transition-all space-y-1.5 sm:space-y-2">
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-sm">
+                  💰
+                </div>
+                <h4 className="text-xs font-bold text-slate-900">Fee Reminders</h4>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Recurring automated reminders for pending tuition fees with
+                  amount, due date, and pay links.
+                </p>
+              </div>
 
-                {activeTemplateTab === "feeReminder" && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => handleInsertPlaceholder("{{studentName}}")}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
-                      title="Insert student name"
-                    >
-                      {"{{studentName}}"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInsertPlaceholder("{{amountDue}}")}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
-                      title="Insert pending amount due"
-                    >
-                      {"{{amountDue}}"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInsertPlaceholder("{{dueDate}}")}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
-                      title="Insert fee due date"
-                    >
-                      {"{{dueDate}}"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInsertPlaceholder("{{magicLink}}")}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
-                      title="Insert VIP Parent Portal link"
-                    >
-                      {"{{magicLink}}"}
-                    </button>
-                  </>
-                )}
-
-                {activeTemplateTab === "paymentReceipt" && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => handleInsertPlaceholder("{{studentName}}")}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
-                      title="Insert student name"
-                    >
-                      {"{{studentName}}"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInsertPlaceholder("{{paidAmount}}")}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
-                      title="Insert paid amount"
-                    >
-                      {"{{paidAmount}}"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInsertPlaceholder("{{receiptNumber}}")}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
-                      title="Insert official receipt number"
-                    >
-                      {"{{receiptNumber}}"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInsertPlaceholder("{{magicLink}}")}
-                      className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
-                      title="Insert VIP Parent Portal link"
-                    >
-                      {"{{magicLink}}"}
-                    </button>
-                  </>
-                )}
+              {/* Card 3 */}
+              <div className="p-3.5 sm:p-5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs hover:border-purple-200 hover:shadow-xs transition-all space-y-1.5 sm:space-y-2">
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold text-sm">
+                  📊
+                </div>
+                <h4 className="text-xs font-bold text-slate-900">
+                  Test Mark Reports
+                </h4>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Dispatches scores, rank analysis, and encouraging remarks to
+                  parents after tests are entered.
+                </p>
               </div>
             </div>
-
-            <textarea
-              id="template-editor"
-              rows={7}
-              value={messagingTemplates[activeTemplateTab] || ""}
-              onChange={(e) => {
-                const val = e.target.value;
-                setMessagingTemplates((prev) => ({
-                  ...prev,
-                  [activeTemplateTab]: val,
-                }));
-                if (activeTemplateTab === "admission") {
-                  setWelcomeMessageTemplate(val);
-                }
-                if (templateSaveStatus) setTemplateSaveStatus(null);
-              }}
-              placeholder={`Enter custom ${activeTemplateTab} message template...`}
-              className="w-full p-4 text-xs sm:text-sm rounded-2xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-hidden focus:ring-4 focus:ring-blue-100 focus:border-blue-600 font-mono transition-all text-slate-900 leading-relaxed resize-y shadow-2xs"
-            />
-
-            <p className="text-[11px] text-slate-500 mt-2 flex items-center gap-1.5 leading-relaxed">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-              <span>
-                Tags inside <code>{"{{...}}"}</code> are replaced dynamically during WhatsApp dispatch.
-              </span>
-            </p>
           </div>
 
-          {/* Live Preview Box with Real Representative Data */}
-          <div className="p-4 rounded-2xl bg-slate-50/90 border border-slate-200/80 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                Live WhatsApp Preview (Parent View)
-              </span>
-              <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
-                Live Dynamic Render
+
+          {/* 4. MESSAGING TEMPLATES SECTION (Task 3: Multi-Tab Template System) */}
+          <div className="glass-card p-4 sm:p-7 rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-sm space-y-5 sm:space-y-6 bg-white">
+            <div className="flex items-start sm:items-center justify-between flex-wrap gap-2.5 sm:gap-3">
+              <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-xs flex-shrink-0">
+                  <FileText className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.2]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm sm:text-lg font-bold text-slate-900 truncate">
+                    Messaging Templates
+                  </h3>
+                  <p className="text-[11px] sm:text-xs text-slate-500 line-clamp-1 sm:line-clamp-none">
+                    Customize automated WhatsApp notification messages sent to parents.
+                  </p>
+                </div>
+              </div>
+              <span className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100 flex-shrink-0">
+                {activeTemplateTab === "admission" && "🎓 Admission"}
+                {activeTemplateTab === "feeReminder" && "🔔 Fee Due"}
+                {activeTemplateTab === "paymentReceipt" && "🧾 Receipt"}
               </span>
             </div>
 
-            <div className="p-4 rounded-2xl bg-white border border-slate-200/90 text-xs text-slate-800 whitespace-pre-wrap font-sans shadow-2xs leading-relaxed max-w-2xl">
-              {(() => {
-                const rawTemplate = messagingTemplates[activeTemplateTab] || "";
-                if (!rawTemplate.trim()) {
-                  return <span className="text-slate-400 italic">No template text provided.</span>;
-                }
+            {/* Tab Navigation Controls */}
+            <div className="flex items-center gap-1 sm:gap-1.5 p-1 sm:p-1.5 rounded-2xl bg-slate-100/90 border border-slate-200/80 overflow-x-auto no-scrollbar w-full">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTemplateTab("admission");
+                  if (templateSaveStatus) setTemplateSaveStatus(null);
+                }}
+                className={`tap-bounce flex-1 min-w-[90px] sm:min-w-[120px] py-2 sm:py-2.5 px-2.5 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                  activeTemplateTab === "admission"
+                    ? "bg-white text-blue-700 shadow-xs border border-slate-200/80"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                }`}
+              >
+                <GraduationCap className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                <span>Admission</span>
+              </button>
 
-                if (activeTemplateTab === "admission") {
-                  return rawTemplate
-                    .replace(/\{\{studentName\}\}/g, "Aarav Sharma")
-                    .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/portal#token=pt_sample_preview");
-                } else if (activeTemplateTab === "feeReminder") {
-                  return rawTemplate
-                    .replace(/\{\{studentName\}\}/g, "Aarav Sharma")
-                    .replace(/\{\{amountDue\}\}/g, "3,500")
-                    .replace(/\{\{dueDate\}\}/g, "10 Nov 2026")
-                    .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/portal#token=pt_sample_preview");
-                } else {
-                  return rawTemplate
-                    .replace(/\{\{studentName\}\}/g, "Aarav Sharma")
-                    .replace(/\{\{paidAmount\}\}/g, "3,500")
-                    .replace(/\{\{receiptNumber\}\}/g, "RCP-2026-9481")
-                    .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/portal#token=pt_sample_preview");
-                }
-              })()}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTemplateTab("feeReminder");
+                  if (templateSaveStatus) setTemplateSaveStatus(null);
+                }}
+                className={`tap-bounce flex-1 min-w-[90px] sm:min-w-[120px] py-2 sm:py-2.5 px-2.5 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                  activeTemplateTab === "feeReminder"
+                    ? "bg-white text-blue-700 shadow-xs border border-slate-200/80"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                }`}
+              >
+                <Bell className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                <span>Fee Reminder</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTemplateTab("paymentReceipt");
+                  if (templateSaveStatus) setTemplateSaveStatus(null);
+                }}
+                className={`tap-bounce flex-1 min-w-[90px] sm:min-w-[120px] py-2 sm:py-2.5 px-2.5 sm:px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-all cursor-pointer whitespace-nowrap ${
+                  activeTemplateTab === "paymentReceipt"
+                    ? "bg-white text-blue-700 shadow-xs border border-slate-200/80"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-white/50"
+                }`}
+              >
+                <Receipt className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
+                <span>Receipt</span>
+              </button>
             </div>
-          </div>
 
-          {templateSaveStatus && (
-            <div
-              className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 animate-fade-in ${
-                templateSaveStatus.type === "success"
-                  ? "bg-emerald-50 text-emerald-900 border border-emerald-200"
-                  : "bg-rose-50 text-rose-900 border border-rose-200"
-              }`}
-            >
-              {templateSaveStatus.type === "success" ? (
-                <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
-              ) : (
-                <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-600" />
+            <form onSubmit={handleSaveTemplate} className="space-y-4 sm:space-y-5">
+              {/* Active Tab Configuration */}
+              <div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-2 gap-2 w-full">
+                  <div className="min-w-0">
+                    <label
+                      htmlFor="template-editor"
+                      className="text-xs font-bold text-slate-800 uppercase tracking-wider block"
+                    >
+                      {activeTemplateTab === "admission" && "Student Admission Welcome Template"}
+                      {activeTemplateTab === "feeReminder" && "Fee Due Reminder Template"}
+                      {activeTemplateTab === "paymentReceipt" && "Payment Receipt Confirmation Template"}
+                    </label>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {activeTemplateTab === "admission" && "Dispatched automatically to parents when a new student is enrolled."}
+                      {activeTemplateTab === "feeReminder" && "Dispatched for pending fees with due date, amount, and payment portal link."}
+                      {activeTemplateTab === "paymentReceipt" && "Dispatched immediately upon recording or confirming a fee payment."}
+                    </p>
+                  </div>
+
+                  {/* Placeholder Pills (Click to Insert) */}
+                  <div className="flex items-center gap-1 sm:gap-1.5 text-[11px] text-slate-500 flex-wrap">
+                    <span className="font-medium text-slate-400 text-[10px] sm:text-[11px]">Insert:</span>
+                    {activeTemplateTab === "admission" && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleInsertPlaceholder("{{studentName}}")}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
+                          title="Insert student name"
+                        >
+                          {"{{studentName}}"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleInsertPlaceholder("{{magicLink}}")}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
+                          title="Insert VIP Parent Portal magic link"
+                        >
+                          {"{{magicLink}}"}
+                        </button>
+                      </>
+                    )}
+
+                    {activeTemplateTab === "feeReminder" && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleInsertPlaceholder("{{studentName}}")}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
+                          title="Insert student name"
+                        >
+                          {"{{studentName}}"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleInsertPlaceholder("{{amountDue}}")}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
+                          title="Insert pending amount due"
+                        >
+                          {"{{amountDue}}"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleInsertPlaceholder("{{dueDate}}")}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
+                          title="Insert fee due date"
+                        >
+                          {"{{dueDate}}"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleInsertPlaceholder("{{magicLink}}")}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
+                          title="Insert VIP Parent Portal link"
+                        >
+                          {"{{magicLink}}"}
+                        </button>
+                      </>
+                    )}
+
+                    {activeTemplateTab === "paymentReceipt" && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleInsertPlaceholder("{{studentName}}")}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
+                          title="Insert student name"
+                        >
+                          {"{{studentName}}"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleInsertPlaceholder("{{paidAmount}}")}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
+                          title="Insert paid amount"
+                        >
+                          {"{{paidAmount}}"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleInsertPlaceholder("{{receiptNumber}}")}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
+                          title="Insert official receipt number"
+                        >
+                          {"{{receiptNumber}}"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleInsertPlaceholder("{{magicLink}}")}
+                          className="px-2 py-0.5 rounded-md bg-slate-100 hover:bg-blue-50 text-blue-600 font-mono font-bold text-[10px] border border-slate-200/60 transition-colors cursor-pointer"
+                          title="Insert VIP Parent Portal link"
+                        >
+                          {"{{magicLink}}"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <textarea
+                  id="template-editor"
+                  rows={7}
+                  value={messagingTemplates[activeTemplateTab] || ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setMessagingTemplates((prev) => ({
+                      ...prev,
+                      [activeTemplateTab]: val,
+                    }));
+                    if (activeTemplateTab === "admission") {
+                      setWelcomeMessageTemplate(val);
+                    }
+                    if (templateSaveStatus) setTemplateSaveStatus(null);
+                  }}
+                  placeholder={`Enter custom ${activeTemplateTab} message template...`}
+                  className="w-full p-3.5 sm:p-4 text-xs sm:text-sm rounded-2xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-hidden focus:ring-4 focus:ring-blue-100 focus:border-blue-600 font-mono transition-all text-slate-900 leading-relaxed resize-y shadow-2xs"
+                />
+
+                <p className="text-[11px] text-slate-500 mt-2 flex items-center gap-1.5 leading-relaxed">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                  <span>
+                    Tags inside <code>{"{{...}}"}</code> are replaced dynamically during WhatsApp dispatch.
+                  </span>
+                </p>
+              </div>
+
+              {/* Live Preview Box with Real Representative Data */}
+              <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50/90 border border-slate-200/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Live WhatsApp Preview (Parent View)
+                  </span>
+                  <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                    Live Dynamic Render
+                  </span>
+                </div>
+
+                <div className="p-3.5 sm:p-4 rounded-2xl bg-white border border-slate-200/90 text-xs text-slate-800 whitespace-pre-wrap font-sans shadow-2xs leading-relaxed max-w-2xl break-words">
+                  {(() => {
+                    const rawTemplate = messagingTemplates[activeTemplateTab] || "";
+                    if (!rawTemplate.trim()) {
+                      return <span className="text-slate-400 italic">No template text provided.</span>;
+                    }
+
+                    if (activeTemplateTab === "admission") {
+                      return rawTemplate
+                        .replace(/\{\{studentName\}\}/g, "Aarav Sharma")
+                        .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/portal#token=pt_sample_preview");
+                    } else if (activeTemplateTab === "feeReminder") {
+                      return rawTemplate
+                        .replace(/\{\{studentName\}\}/g, "Aarav Sharma")
+                        .replace(/\{\{amountDue\}\}/g, "3,500")
+                        .replace(/\{\{dueDate\}\}/g, "10 Nov 2026")
+                        .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/portal#token=pt_sample_preview");
+                    } else {
+                      return rawTemplate
+                        .replace(/\{\{studentName\}\}/g, "Aarav Sharma")
+                        .replace(/\{\{paidAmount\}\}/g, "3,500")
+                        .replace(/\{\{receiptNumber\}\}/g, "RCP-2026-9481")
+                        .replace(/\{\{magicLink\}\}/g, "https://tuitiondesk.com/portal#token=pt_sample_preview");
+                    }
+                  })()}
+                </div>
+              </div>
+
+              {templateSaveStatus && (
+                <div
+                  className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 animate-fade-in ${
+                    templateSaveStatus.type === "success"
+                      ? "bg-emerald-50 text-emerald-900 border border-emerald-200"
+                      : "bg-rose-50 text-rose-900 border border-rose-200"
+                  }`}
+                >
+                  {templateSaveStatus.type === "success" ? (
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-600" />
+                  )}
+                  <span className="font-semibold leading-relaxed">
+                    {templateSaveStatus.message}
+                  </span>
+                </div>
               )}
-              <span className="font-semibold leading-relaxed">
-                {templateSaveStatus.message}
-              </span>
-            </div>
-          )}
 
-          <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-end w-full">
-            <button
-              type="submit"
-              disabled={templateSaving || !messagingTemplates[activeTemplateTab]?.trim()}
-              className="tap-bounce h-11 px-6 w-auto flex-shrink-0 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.98] text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-blue-500/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
-            >
-              {templateSaving ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Saving All Templates...</span>
-                </>
-              ) : (
-                <>
-                  <Save className="w-3.5 h-3.5 stroke-[2.2]" />
-                  <span>Save Templates</span>
-                </>
-              )}
-            </button>
+              <div className="mt-4 sm:mt-5 pt-3 border-t border-slate-100 flex items-center justify-end w-full">
+                <button
+                  type="submit"
+                  disabled={templateSaving || !messagingTemplates[activeTemplateTab]?.trim()}
+                  className="tap-bounce h-11 px-6 w-full sm:w-auto flex-shrink-0 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.98] text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-blue-500/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
+                >
+                  {templateSaving ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving All Templates...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-3.5 h-3.5 stroke-[2.2]" />
+                      <span>Save Templates</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
-        </form>
-      </div>
 
-      {/* Privacy & Security Guarantee Note */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-start gap-3">
-        <ShieldCheck className="w-5 h-5 text-slate-400 flex-shrink-0 mt-0.5" />
-        <div className="space-y-0.5">
-          <p className="text-xs font-bold text-slate-800">
-            End-to-End Encrypted &amp; Multi-Tenant Isolated
-          </p>
-          <p className="text-[11px] text-slate-500 leading-relaxed">
-            WhatsApp session credentials are kept strictly in your local
-            microservice directory (<code>.wwebjs_auth/session-{centerId}</code>).
-            Each center operates on its own dedicated browser session.
-          </p>
-        </div>
-      </div>
+          {/* Privacy & Security Guarantee Note */}
+          <div className="p-3.5 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-start gap-2.5 sm:gap-3">
+            <ShieldCheck className="w-5 h-5 text-slate-400 flex-shrink-0 mt-0.5" />
+            <div className="space-y-0.5 min-w-0">
+              <p className="text-xs font-bold text-slate-800">
+                End-to-End Encrypted &amp; Multi-Tenant Isolated
+              </p>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                WhatsApp session credentials are kept strictly in your local
+                microservice directory (<code>.wwebjs_auth/session-{centerId}</code>).
+                Each center operates on its own dedicated browser session.
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
       {/* TAB 2: MESSAGES */}
       {activeSettingsTab === "messages" && (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-5 sm:gap-6">
           <MessagingQueueList isWhatsAppConnected={statusData.ready} />
         </div>
       )}
 
       {/* TAB 3: PAYMENTS */}
       {activeSettingsTab === "payments" && (
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-5 sm:gap-6">
           {/* 5. PAYMENT SETUP SECTION (Task 1: Fail-Safe Double Confirmation) */}
-      <div className="glass-card p-6 sm:p-7 rounded-3xl border border-slate-200/90 shadow-sm space-y-5 bg-white">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-xs">
-              <CreditCard className="w-5 h-5 stroke-[2.2]" />
-            </div>
-            <div>
-              <h3 className="text-base sm:text-lg font-bold text-slate-900">
-                Payment Setup (UPI Gateway)
-              </h3>
-              <p className="text-xs text-slate-500">
-                Configure your tuition center’s receiving UPI ID / VPA with fail-safe double confirmation.
-              </p>
-            </div>
-          </div>
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100">
-            <IndianRupee className="w-3 h-3" />
-            Zero MDR Gateway
-          </span>
-        </div>
-
-        {(() => {
-          const isUpiMatch = Boolean(
-            upiId.trim() &&
-            confirmUpiId.trim() &&
-            upiId.trim() === confirmUpiId.trim()
-          );
-          const isUpiMismatch = Boolean(
-            confirmUpiId.trim() &&
-            upiId.trim() !== confirmUpiId.trim()
-          );
-
-          return (
-            <form onSubmit={handleSaveUpiId} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Field 1: Enter UPI ID */}
-                <div>
-                  <label
-                    htmlFor="center-upi-id"
-                    className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5"
-                  >
-                    Enter UPI ID
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="center-upi-id"
-                      type="text"
-                      value={upiId}
-                      onChange={(e) => {
-                        setUpiId(e.target.value.trim());
-                        if (upiSaveStatus) setUpiSaveStatus(null);
-                      }}
-                      placeholder="e.g. 9876543210@paytm"
-                      className="w-full px-4 py-3 text-sm rounded-2xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-hidden focus:ring-4 focus:ring-emerald-100 focus:border-emerald-600 font-mono font-bold text-slate-900 placeholder:text-slate-400 placeholder:font-normal transition-all"
-                    />
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    Primary receiving Virtual Payment Address (VPA)
+          <div className="glass-card p-4 sm:p-7 rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-sm space-y-4 sm:space-y-5 bg-white">
+            <div className="flex items-start sm:items-center justify-between flex-wrap gap-2.5 sm:gap-3">
+              <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-xs flex-shrink-0">
+                  <CreditCard className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.2]" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-sm sm:text-lg font-bold text-slate-900 truncate">
+                    Payment Setup (UPI Gateway)
+                  </h3>
+                  <p className="text-[11px] sm:text-xs text-slate-500 line-clamp-1 sm:line-clamp-none">
+                    Configure your tuition center’s receiving UPI ID / VPA with fail-safe double confirmation.
                   </p>
                 </div>
+              </div>
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 flex-shrink-0">
+                <IndianRupee className="w-3 h-3" />
+                Zero MDR Gateway
+              </span>
+            </div>
 
-                {/* Field 2: Confirm UPI ID */}
-                <div>
-                  <label
-                    htmlFor="center-confirm-upi-id"
-                    className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5"
-                  >
-                    Confirm UPI ID
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="center-confirm-upi-id"
-                      type="text"
-                      value={confirmUpiId}
-                      onChange={(e) => {
-                        setConfirmUpiId(e.target.value.trim());
-                        if (upiSaveStatus) setUpiSaveStatus(null);
-                      }}
-                      placeholder="Re-enter UPI ID exactly"
-                      className={`w-full px-4 py-3 text-sm rounded-2xl border font-mono font-bold text-slate-900 placeholder:text-slate-400 placeholder:font-normal transition-all focus:outline-hidden focus:ring-4 ${
-                        isUpiMismatch
-                          ? "border-rose-400 bg-rose-50/40 focus:ring-rose-100 focus:border-rose-500"
-                          : isUpiMatch
-                          ? "border-emerald-400 bg-emerald-50/30 focus:ring-emerald-100 focus:border-emerald-600"
-                          : "border-slate-200 bg-slate-50/50 focus:bg-white focus:ring-emerald-100 focus:border-emerald-600"
-                      }`}
-                    />
+            {(() => {
+              const isUpiMatch = Boolean(
+                upiId.trim() &&
+                confirmUpiId.trim() &&
+                upiId.trim() === confirmUpiId.trim()
+              );
+              const isUpiMismatch = Boolean(
+                confirmUpiId.trim() &&
+                upiId.trim() !== confirmUpiId.trim()
+              );
+
+              return (
+                <form onSubmit={handleSaveUpiId} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-4">
+                    {/* Field 1: Enter UPI ID */}
+                    <div>
+                      <label
+                        htmlFor="center-upi-id"
+                        className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5"
+                      >
+                        Enter UPI ID
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="center-upi-id"
+                          type="text"
+                          value={upiId}
+                          onChange={(e) => {
+                            setUpiId(e.target.value.trim());
+                            if (upiSaveStatus) setUpiSaveStatus(null);
+                          }}
+                          placeholder="e.g. 9876543210@paytm"
+                          className="w-full px-3.5 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm rounded-xl sm:rounded-2xl border border-slate-200 bg-slate-50/50 focus:bg-white focus:outline-hidden focus:ring-4 focus:ring-emerald-100 focus:border-emerald-600 font-mono font-bold text-slate-900 placeholder:text-slate-400 placeholder:font-normal transition-all"
+                        />
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Primary receiving Virtual Payment Address (VPA)
+                      </p>
+                    </div>
+
+                    {/* Field 2: Confirm UPI ID */}
+                    <div>
+                      <label
+                        htmlFor="center-confirm-upi-id"
+                        className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1.5"
+                      >
+                        Confirm UPI ID
+                      </label>
+                      <div className="relative">
+                        <input
+                          id="center-confirm-upi-id"
+                          type="text"
+                          value={confirmUpiId}
+                          onChange={(e) => {
+                            setConfirmUpiId(e.target.value.trim());
+                            if (upiSaveStatus) setUpiSaveStatus(null);
+                          }}
+                          placeholder="Re-enter UPI ID exactly"
+                          className={`w-full px-3.5 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm rounded-xl sm:rounded-2xl border font-mono font-bold text-slate-900 placeholder:text-slate-400 placeholder:font-normal transition-all focus:outline-hidden focus:ring-4 ${
+                            isUpiMismatch
+                              ? "border-rose-400 bg-rose-50/40 focus:ring-rose-100 focus:border-rose-500"
+                              : isUpiMatch
+                              ? "border-emerald-400 bg-emerald-50/30 focus:ring-emerald-100 focus:border-emerald-600"
+                              : "border-slate-200 bg-slate-50/50 focus:bg-white focus:ring-emerald-100 focus:border-emerald-600"
+                          }`}
+                        />
+                      </div>
+
+                      {/* Match Feedback */}
+                      {isUpiMismatch ? (
+                        <p className="text-[11px] text-rose-600 font-bold mt-1 flex items-center gap-1">
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-500 flex-shrink-0" />
+                          <span>UPI IDs do not match. Please verify carefully.</span>
+                        </p>
+                      ) : isUpiMatch ? (
+                        <p className="text-[11px] text-emerald-700 font-bold mt-1 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                          <span>UPI IDs match verified! Ready to save.</span>
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-slate-400 mt-1">
+                          Re-type the exact same UPI ID to prevent typo errors
+                        </p>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Match Feedback */}
-                  {isUpiMismatch ? (
-                    <p className="text-[11px] text-rose-600 font-bold mt-1 flex items-center gap-1">
-                      <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
-                      UPI IDs do not match. Please verify carefully to prevent wrong transfers.
-                    </p>
-                  ) : isUpiMatch ? (
-                    <p className="text-[11px] text-emerald-700 font-bold mt-1 flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      UPI IDs match verified! Ready to save.
-                    </p>
-                  ) : (
-                    <p className="text-[11px] text-slate-400 mt-1">
-                      Re-type the exact same UPI ID to prevent typo errors
-                    </p>
-                  )}
-                </div>
-              </div>
+                  <div className="text-[11px] text-slate-600 flex items-start gap-2 leading-relaxed bg-slate-50 p-3 sm:p-3.5 rounded-2xl border border-slate-200/80">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Fail-Safe Protection:</strong> Both input fields must match character-by-character before saving. This prevents irreversible tuition fee deposits being routed to mistyped bank accounts.
+                    </span>
+                  </div>
 
-              <div className="text-[11px] text-slate-600 flex items-start gap-2 leading-relaxed bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80">
-                <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-                <span>
-                  <strong>Fail-Safe Protection:</strong> Both input fields must match character-by-character before saving. This prevents irreversible tuition fee deposits being routed to mistyped bank accounts.
-                </span>
-              </div>
-
-              {upiSaveStatus && (
-                <div
-                  className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 animate-fade-in ${
-                    upiSaveStatus.type === "success"
-                      ? "bg-emerald-50 text-emerald-900 border border-emerald-200"
-                      : "bg-rose-50 text-rose-900 border border-rose-200"
-                  }`}
-                >
-                  {upiSaveStatus.type === "success" ? (
-                    <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-600" />
+                  {upiSaveStatus && (
+                    <div
+                      className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 animate-fade-in ${
+                        upiSaveStatus.type === "success"
+                          ? "bg-emerald-50 text-emerald-900 border border-emerald-200"
+                          : "bg-rose-50 text-rose-900 border border-rose-200"
+                      }`}
+                    >
+                      {upiSaveStatus.type === "success" ? (
+                        <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 flex-shrink-0 text-rose-600" />
+                      )}
+                      <span className="font-semibold leading-relaxed">
+                        {upiSaveStatus.message}
+                      </span>
+                    </div>
                   )}
-                  <span className="font-semibold leading-relaxed">
-                    {upiSaveStatus.message}
-                  </span>
-                </div>
-              )}
 
-              <div className="mt-5 pt-3 border-t border-slate-100 flex items-center justify-end w-full">
-                <button
-                  type="submit"
-                  disabled={upiSaving || !isUpiMatch}
-                  className="tap-bounce h-11 px-6 w-auto flex-shrink-0 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-emerald-600/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
-                >
-                  {upiSaving ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Saving Payment Setup...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-3.5 h-3.5 stroke-[2.2]" />
-                      <span>Save Payment Setup</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          );
-        })()}
-      </div>
+                  <div className="mt-4 sm:mt-5 pt-3 border-t border-slate-100 flex items-center justify-end w-full">
+                    <button
+                      type="submit"
+                      disabled={upiSaving || !isUpiMatch}
+                      className="tap-bounce h-11 px-6 w-full sm:w-auto flex-shrink-0 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-emerald-600/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
+                    >
+                      {upiSaving ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Saving Payment Setup...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-3.5 h-3.5 stroke-[2.2]" />
+                          <span>Save Payment Setup</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              );
+            })()}
+          </div>
         </div>
       )}
     </div>

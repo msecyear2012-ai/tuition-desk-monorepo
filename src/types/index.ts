@@ -94,6 +94,9 @@ export interface OverdueFeeStudent {
   originalAmountDue?: number;
   paymentHistory?: PaymentEntryItem[];
   custodyBreakdown?: CustodyBreakdownItem;
+  hasPaymentProof?: boolean;
+  latestPaymentProofId?: string;
+  rejectionReason?: string;
 }
 
 export interface PaymentAllocationItem {

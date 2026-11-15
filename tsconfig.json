@@ -41,6 +41,9 @@
   ],
   "exclude": [
     "node_modules",
-    "tution-desk-be"
+    "tution-desk-be",
+    "youpi-pg",
+    "YouPI-PG",
+    "whatsapp-server"
   ]
 }

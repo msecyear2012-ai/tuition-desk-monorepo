@@ -15,3 +15,4 @@ export * from "./AdmissionWelcomeJob";
 export * from "./CashHandover";
 export * from "./StudentBatchRequest";
 export * from "./StaffNotification";
+export * from "./PaymentProof";

@@ -133,6 +133,10 @@ export interface IFee {
   recordedBy?: Types.ObjectId;
   recordedByRole?: "owner" | "teacher";
   recordedAt?: Date;
+  hasPaymentProof?: boolean;
+  latestPaymentProofId?: Types.ObjectId | null;
+  proofUploadLockUntil?: Date | null;
+  rejectionReason?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -617,6 +621,25 @@ const FeeSchema = new Schema<IFeeDocument>(
     recordedAt: {
       type: Date,
       default: Date.now,
+    },
+    hasPaymentProof: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    latestPaymentProofId: {
+      type: Schema.Types.ObjectId,
+      ref: "PaymentProof",
+      default: null,
+    },
+    proofUploadLockUntil: {
+      type: Date,
+      default: null,
+    },
+    rejectionReason: {
+      type: String,
+      trim: true,
+      default: null,
     },
   },
   {

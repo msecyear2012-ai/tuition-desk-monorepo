@@ -293,6 +293,8 @@ export async function POST(request: NextRequest) {
       status: pendingFee ? pendingFee.status : "Paid",
       utrNumber: pendingFee?.utrNumber || "",
       month: pendingFee?.month || "Current Cycle",
+      rejectionReason: (pendingFee as any)?.rejectionReason || null,
+      hasPaymentProof: Boolean((pendingFee as any)?.hasPaymentProof),
       history: feeRecords.map((f) => ({
         id: String(f._id),
         month: f.month,

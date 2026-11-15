@@ -206,11 +206,12 @@ export async function apiClient<T = unknown>(
 
   const method = (rest.method || "GET").toUpperCase();
   const isGet = method === "GET";
-  const canCache = isGet && !skipCache && (cacheTtlMs === undefined || cacheTtlMs > 0);
-  const cacheKey = canCache ? buildCacheKey(endpoint, queryParams, activeCenterId) : "";
+  const isEligibleForCache = isGet && (cacheTtlMs === undefined || cacheTtlMs > 0);
+  const cacheKey = isEligibleForCache ? buildCacheKey(endpoint, queryParams, activeCenterId) : "";
+  const canReadCache = isEligibleForCache && !skipCache;
 
   // 1. If eligible for cache read, check synchronous memory cache
-  if (canCache && cacheKey) {
+  if (canReadCache && cacheKey) {
     const cachedEntry = apiCache.get(cacheKey);
     if (cachedEntry && cachedEntry.centerId === activeCenterId && Date.now() < cachedEntry.expiresAt) {
       return cachedEntry.data as ApiResponse<T>;
@@ -239,17 +240,23 @@ export async function apiClient<T = unknown>(
       const json = (await response.json()) as ApiResponse<T>;
 
       if (!response.ok || !json.success) {
+        // If mutation failed (e.g. 409 Conflict, stale state), flush cache so subsequent reads get server truth
+        if (!isGet) {
+          invalidateApiCache();
+        }
         const error = new Error(json.error || `Request failed with status ${response.status}`) as Error & {
           code?: string;
           status?: number;
+          data?: unknown;
         };
         error.code = json.code;
         error.status = response.status;
+        error.data = json.data;
         throw error;
       }
 
-      // If GET was successful and cacheable, save to client cache
-      if (canCache && cacheKey) {
+      // If GET was successful and cacheable, update client cache with fresh authoritative response
+      if (isEligibleForCache && cacheKey) {
         const ttl = cacheTtlMs ?? 60000; // 60s default
         apiCache.set(cacheKey, {
           data: json,
@@ -265,13 +272,13 @@ export async function apiClient<T = unknown>(
 
       return json;
     } finally {
-      if (canCache && cacheKey) {
+      if (isEligibleForCache && cacheKey) {
         inFlightRequests.delete(cacheKey);
       }
     }
   };
 
-  if (canCache && cacheKey) {
+  if (canReadCache && cacheKey) {
     const promise = executeFetch();
     inFlightRequests.set(cacheKey, promise);
     return promise;

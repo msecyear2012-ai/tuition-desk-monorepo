@@ -228,10 +228,10 @@ export default function TopHeader(props: TopHeaderProps) {
       : "TD");
 
   return (
-    <header className="sticky top-0 z-40 glass-surface border-b border-slate-200/80 px-4 py-3 flex items-center justify-between">
-      <div className="flex items-center gap-3">
+    <header className="sticky top-0 z-40 glass-surface border-b border-slate-200/80 px-3.5 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between w-full max-w-full">
+      <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 mr-2">
         {/* Brand Avatar / Dynamic Center Initials */}
-        <div className="w-10 h-10 rounded-xl bg-[var(--primary-color)] text-white flex items-center justify-center font-bold text-sm shadow-sm shadow-blue-500/20 ring-2 ring-blue-100 flex-shrink-0">
+        <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[var(--primary-color)] text-white flex items-center justify-center font-bold text-xs sm:text-sm shadow-sm shadow-blue-500/20 ring-2 ring-blue-100 flex-shrink-0">
           {resolvedInitials || (
             <span className="w-3.5 h-3.5 rounded-full bg-white/40 animate-pulse" />
           )}

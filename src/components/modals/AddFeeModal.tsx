@@ -16,7 +16,7 @@ import {
   CreditCard,
   Hash,
 } from "lucide-react";
-import { apiClient, getCurrentCenterId } from "@/lib/apiClient";
+import { apiClient, getCurrentCenterId, invalidateApiCache } from "@/lib/apiClient";
 import { getAuthenticatedCenter } from "@/lib/centerProfile";
 
 export interface AddFeeModalProps {
@@ -324,8 +324,23 @@ export default function AddFeeModal({
       const errObj = err as { code?: string; message?: string; status?: number };
       const msg = errObj?.message || "Failed to record payment collection.";
 
-      // Specifically handle Duplicate UTR (E11000 / DUPLICATE_UTR)
       if (
+        errObj?.code === "FEE_ALREADY_PAID" ||
+        /already paid/i.test(msg)
+      ) {
+        invalidateApiCache();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("msec:fee-already-paid", {
+              detail: {
+                studentId: selectedStudent._id,
+                message: "This fee is already Paid in full. The pending dues list has been updated.",
+              },
+            })
+          );
+        }
+        setError("Monthly fee is already Paid in full. The pending dues list has been updated.");
+      } else if (
         errObj?.code === "DUPLICATE_UTR" ||
         errObj?.status === 409 ||
         /duplicate.*utr|transaction reference.*already exists|duplicate upi/i.test(msg)

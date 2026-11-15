@@ -64,8 +64,9 @@ interface ApiFees {
   pendingAmount: number;
   dueDate: string | null;
   daysLate: number;
-  status: "Pending" | "Paid" | "Verification Pending";
+  status: "Pending" | "Paid" | "Verification Pending" | "Partial Paid";
   utrNumber?: string;
+  rejectionReason?: string | null;
   month?: string;
   history?: Array<{
     id: string;
@@ -678,6 +679,7 @@ export default function ParentMagicLinkPage() {
           centerName={center?.name || "Tuition Center"}
           status={fees.status}
           utrNumber={fees.utrNumber}
+          rejectionReason={fees.rejectionReason}
           onPaymentSuccess={() => {
             handlePaymentSuccess();
             loadPortalData(selectedStudentId);
@@ -690,6 +692,13 @@ export default function ParentMagicLinkPage() {
           onAdvancePaymentSuccess={() => {
             setToastMessage(
               "Advance payment submitted successfully! Awaiting center verification."
+            );
+            setTimeout(() => setToastMessage(null), 4500);
+            loadPortalData(selectedStudentId);
+          }}
+          onProofSubmitted={() => {
+            setToastMessage(
+              "Payment proof submitted! Center staff will verify your payment."
             );
             setTimeout(() => setToastMessage(null), 4500);
             loadPortalData(selectedStudentId);

@@ -480,6 +480,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (
+      !body.feeId &&
       resolvedFeeType === "monthly_recurring" &&
       (!targetBillingMonth || !/^\d{4}-\d{2}$/.test(targetBillingMonth))
     ) {
@@ -494,6 +495,36 @@ export async function POST(request: NextRequest) {
 
     const incomingFeeId =
       body.feeId && String(body.feeId).trim() ? String(body.feeId).trim() : null;
+
+    let targetedFeeDoc: IFeeDocument | null = null;
+    if (incomingFeeId) {
+      if (!mongoose.Types.ObjectId.isValid(incomingFeeId)) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: "INVALID_FEE_ID",
+            error: `Invalid fee ID format: "${incomingFeeId}".`,
+          },
+          { status: 400, headers: corsHeaders }
+        );
+      }
+      targetedFeeDoc = (await Fee.findOne({
+        _id: new mongoose.Types.ObjectId(incomingFeeId),
+        centerId: targetCenterId,
+        studentId: new mongoose.Types.ObjectId(studentId),
+      })) as unknown as IFeeDocument | null;
+
+      if (!targetedFeeDoc) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: "FEE_NOT_FOUND",
+            error: `Target fee document "${incomingFeeId}" could not be found for this student.`,
+          },
+          { status: 404, headers: corsHeaders }
+        );
+      }
+    }
 
     const receiptNumber = generateReceiptNumber();
     const noteText = notes ? String(notes).trim() : "";
@@ -614,8 +645,9 @@ export async function POST(request: NextRequest) {
 
     // -------------------------------------------------------------------------
     // Branch A: Non-Recurring Fees (advance, registration, adhoc)
+    // Only applies if NOT targeting an existing fee document!
     // -------------------------------------------------------------------------
-    if (resolvedFeeType !== "monthly_recurring") {
+    if (!targetedFeeDoc && resolvedFeeType !== "monthly_recurring") {
       const currentMonthName = now.toLocaleString("en-IN", {
         month: "long",
         year: "numeric",
@@ -793,38 +825,44 @@ export async function POST(request: NextRequest) {
     }
 
     // -------------------------------------------------------------------------
-    // Branch B: Monthly Recurring Fee Deduplication & Settlement
+    // Branch B: Fee Deduplication & Settlement
     // -------------------------------------------------------------------------
-    const candidateQuery: Record<string, unknown> = {
-      centerId: targetCenterId,
-      studentId: new mongoose.Types.ObjectId(studentId),
-      feeType: { $ne: "advance" },
-      isAdvance: { $ne: true },
-      $or: [
-        { billingMonth: targetBillingMonth },
-        {
-          month: {
-            $in: [
-              targetBillingMonth,
-              dateComp.monthLabel,
-              dateComp.shortMonthLabel,
-            ],
+    let eligibleCandidates: IFeeDocument[] = [];
+
+    if (targetedFeeDoc) {
+      eligibleCandidates = [targetedFeeDoc];
+    } else {
+      const candidateQuery: Record<string, unknown> = {
+        centerId: targetCenterId,
+        studentId: new mongoose.Types.ObjectId(studentId),
+        feeType: { $ne: "advance" },
+        isAdvance: { $ne: true },
+        $or: [
+          { billingMonth: targetBillingMonth },
+          {
+            month: {
+              $in: [
+                targetBillingMonth,
+                dateComp.monthLabel,
+                dateComp.shortMonthLabel,
+              ],
+            },
           },
-        },
-      ],
-    };
+        ],
+      };
 
-    const candidates = (await Fee.find(
-      candidateQuery
-    )) as unknown as IFeeDocument[];
+      const candidates = (await Fee.find(
+        candidateQuery
+      )) as unknown as IFeeDocument[];
 
-    const eligibleCandidates: IFeeDocument[] = candidates.filter(
-      (c) =>
-        c.feeType !== "advance" &&
-        c.feeType !== "adhoc" &&
-        c.feeType !== "registration" &&
-        !c.isAdvance
-    );
+      eligibleCandidates = candidates.filter(
+        (c) =>
+          c.feeType !== "advance" &&
+          c.feeType !== "adhoc" &&
+          c.feeType !== "registration" &&
+          !c.isAdvance
+      );
+    }
 
     // Conflict Rule 1: Multiple candidates
     if (eligibleCandidates.length > 1) {
@@ -858,7 +896,7 @@ export async function POST(request: NextRequest) {
     // Conflict Rule 3: Already Paid in Full
     if (
       eligibleCandidates.length === 1 &&
-      eligibleCandidates[0].status === "Paid"
+      (eligibleCandidates[0].status === "Paid" || (Number(eligibleCandidates[0].amountDue) <= 0 && Number(eligibleCandidates[0].paidAmount) > 0))
     ) {
       const candidate = eligibleCandidates[0];
       return NextResponse.json(
@@ -866,6 +904,7 @@ export async function POST(request: NextRequest) {
           success: false,
           code: "FEE_ALREADY_PAID",
           error: `Monthly fee for billing cycle ${targetBillingMonth} is already Paid in full (Fee ID: ${candidate._id}, Receipt: ${candidate.receiptNumber || "N/A"}). Duplicate collection is blocked.`,
+          data: formatFeeResponse(candidate, authUser.role),
         },
         { status: 409, headers: corsHeaders }
       );
@@ -988,8 +1027,13 @@ export async function POST(request: NextRequest) {
             paidDate: resolvedPaymentDate,
             paidAt: now,
             paymentDate: resolvedPaymentDate,
-            billingMonth: targetBillingMonth,
-            feeType: "monthly_recurring",
+            feeType: candidate.feeType || resolvedFeeType || "monthly_recurring",
+            ...(candidate.billingMonth
+              ? { billingMonth: candidate.billingMonth }
+              : targetBillingMonth
+              ? { billingMonth: targetBillingMonth }
+              : {}),
+            rejectionReason: null,
             notes: updatedNotes,
             ...(cleanUtrNumber ? { utrNumber: cleanUtrNumber } : {}),
             ...attributionSet,

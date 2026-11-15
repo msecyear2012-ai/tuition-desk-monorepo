@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   Clock,
 } from "lucide-react";
-import { apiClient, getCurrentCenterId } from "@/lib/apiClient";
+import { apiClient, getCurrentCenterId, invalidateApiCache } from "@/lib/apiClient";
 import { getAuthenticatedCenter, CenterInfo } from "@/lib/centerProfile";
 import { ReceiptSlipData } from "./ReceiptSlipModal";
 
@@ -88,6 +88,7 @@ function FeePaymentModalContent({
   // Status states
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [isFeeAlreadyPaid, setIsFeeAlreadyPaid] = useState<boolean>(false);
 
   // Fetch logged-in user profile identity
   useEffect(() => {
@@ -228,9 +229,37 @@ function FeePaymentModalContent({
       onSuccess(feeData, receiptSlip);
       onClose();
     } catch (err: unknown) {
-      const errObj = err as { code?: string; message?: string };
+      const errObj = err as { code?: string; message?: string; status?: number; data?: unknown };
       const msg = errObj?.message || "Failed to record payment collection.";
-      setError(msg);
+      const isAlreadyPaid =
+        errObj?.code === "FEE_ALREADY_PAID" ||
+        errObj?.status === 409 ||
+        /already paid/i.test(msg);
+
+      if (isAlreadyPaid) {
+        setIsFeeAlreadyPaid(true);
+        const targetFeeId = String(fee?._id || "");
+        invalidateApiCache();
+
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("msec:fee-already-paid", {
+              detail: {
+                feeId: targetFeeId,
+                message: "This fee is already Paid in full. The pending dues list has been updated.",
+              },
+            })
+          );
+        }
+
+        setError("Monthly fee is already Paid in full. The pending dues list has been updated.");
+
+        setTimeout(() => {
+          onClose();
+        }, 1800);
+      } else {
+        setError(msg);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -490,15 +519,17 @@ function FeePaymentModalContent({
 
             <button
               type="submit"
-              disabled={Boolean(submitting || !isAmountValid || isOverpaying)}
+              disabled={Boolean(submitting || !isAmountValid || isOverpaying || isFeeAlreadyPaid)}
               className="tap-bounce flex-1 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/25 transition-all disabled:opacity-50 cursor-pointer"
             >
               {submitting ? (
                 <Loader2 className="w-4 h-4 animate-spin text-white" />
+              ) : isFeeAlreadyPaid ? (
+                <CheckCircle2 className="w-4 h-4 stroke-[2.2]" />
               ) : (
                 <CheckCircle2 className="w-4 h-4 stroke-[2.2]" />
               )}
-              <span>Record &amp; Issue Receipt</span>
+              <span>{isFeeAlreadyPaid ? "Already Paid • Refreshing..." : "Record & Issue Receipt"}</span>
             </button>
           </div>
         </form>

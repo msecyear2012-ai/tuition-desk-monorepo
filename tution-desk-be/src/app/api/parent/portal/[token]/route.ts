@@ -285,7 +285,11 @@ export async function GET(
 
     // Fees summary
     const pendingFee = feeRecords.find(
-      (f) => f.status === "Pending" || f.status === "Verification Pending"
+      (f) =>
+        (f.status === "Pending" ||
+          f.status === "Verification Pending" ||
+          f.status === "Partial Paid") &&
+        Number(f.amountDue) > 0
     );
     const pendingAmount = pendingFee ? Number(pendingFee.amountDue) || 0 : 0;
     const dueDate = pendingFee?.dueDate
@@ -302,6 +306,11 @@ export async function GET(
       status: pendingFee ? pendingFee.status : "Paid",
       utrNumber: pendingFee?.utrNumber || "",
       month: pendingFee?.month || "Current Cycle",
+      rejectionReason:
+        pendingFee && pendingFee.status === "Pending"
+          ? (pendingFee as any)?.rejectionReason || null
+          : null,
+      hasPaymentProof: Boolean((pendingFee as any)?.hasPaymentProof),
       history: feeRecords.map((f) => ({
         id: String(f._id),
         month: f.month,

@@ -67,8 +67,9 @@ interface ApiFees {
   pendingAmount: number;
   dueDate: string | null;
   daysLate: number;
-  status: "Pending" | "Paid" | "Verification Pending";
+  status: "Pending" | "Paid" | "Verification Pending" | "Partial Paid";
   utrNumber?: string;
+  rejectionReason?: string | null;
   month?: string;
   history?: Array<{
     id: string;
@@ -701,6 +702,7 @@ export default function StaticParentPortalPage() {
                 centerName={center?.name || "Tuition Center"}
                 status={fees.status}
                 utrNumber={fees.utrNumber}
+                rejectionReason={fees.rejectionReason}
                 onPaymentSuccess={() => {
                   handlePaymentSuccess();
                   executeExchange(undefined, selectedStudentId);
@@ -713,6 +715,13 @@ export default function StaticParentPortalPage() {
                 onAdvancePaymentSuccess={() => {
                   setToastMessage(
                     "Advance payment submitted successfully! Awaiting center verification."
+                  );
+                  setTimeout(() => setToastMessage(null), 4500);
+                  executeExchange(undefined, selectedStudentId);
+                }}
+                onProofSubmitted={() => {
+                  setToastMessage(
+                    "Payment proof submitted! Center staff will verify your payment."
                   );
                   setTimeout(() => setToastMessage(null), 4500);
                   executeExchange(undefined, selectedStudentId);

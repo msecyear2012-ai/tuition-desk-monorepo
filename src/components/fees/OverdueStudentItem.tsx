@@ -1,4 +1,4 @@
-import { Check, Clock, CheckCircle2, Loader2, ShieldCheck, Sparkles, Trash2, Banknote, Receipt, UserCheck, GraduationCap } from "lucide-react";
+import { Check, Clock, CheckCircle2, Loader2, ShieldCheck, Sparkles, Trash2, Banknote, Receipt, UserCheck, GraduationCap, Camera, FileText, AlertTriangle } from "lucide-react";
 import { OverdueFeeStudent } from "@/types";
 
 interface OverdueStudentItemProps {
@@ -14,6 +14,7 @@ interface OverdueStudentItemProps {
   isVerifyingPaid?: boolean;
   onRejectFee?: (student: OverdueFeeStudent) => void;
   isRejectingFee?: boolean;
+  onViewProof?: (student: OverdueFeeStudent) => void;
   onViewDetails?: (student: OverdueFeeStudent) => void;
   onViewReceipt?: (student: OverdueFeeStudent) => void;
 }
@@ -44,6 +45,7 @@ export default function OverdueStudentItem({
   isVerifyingPaid = false,
   onRejectFee,
   isRejectingFee = false,
+  onViewProof,
   onViewDetails,
   onViewReceipt,
 }: OverdueStudentItemProps) {
@@ -75,7 +77,7 @@ export default function OverdueStudentItem({
 
   return (
     <div
-      className={`rounded-2xl p-3.5 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+      className={`rounded-2xl p-3.5 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full max-w-full overflow-hidden ${
         isReviewTab
           ? "border-2 border-amber-400 bg-amber-50/80 shadow-md shadow-amber-500/5 ring-1 ring-amber-300/50"
           : isPaidTab
@@ -86,16 +88,16 @@ export default function OverdueStudentItem({
       }`}
     >
       {/* Left: Initials Avatar + Student Details */}
-      <div className="flex items-start sm:items-center gap-3 min-w-0">
+      <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
         <div
           className={`h-11 w-11 flex-shrink-0 rounded-2xl flex items-center justify-center font-bold text-xs border shadow-2xs ${student.avatarColor}`}
         >
           {student.initials}
         </div>
 
-        <div className="flex flex-col min-w-0">
+        <div className="flex flex-col min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <h3 className="text-[14px] font-bold text-slate-900 tracking-tight truncate">
+            <h3 className="text-[14px] font-bold text-slate-900 tracking-tight truncate max-w-[200px] min-[380px]:max-w-xs">
               {student.name}
             </h3>
 
@@ -172,15 +174,47 @@ export default function OverdueStudentItem({
             </div>
           )}
 
-          {/* Prominent UTR Display if Verification Pending / Awaiting Review */}
-          {isReviewTab && student.utrNumber && (
-            <div className="mt-1.5 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-xs shadow-2xs w-fit">
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-800">
-                UTR / Ref:
+          {/* Prior Rejection Notice (if returned to Pending after proof rejection) */}
+          {student.rejectionReason && !isReviewTab && !isPaidTab && !isPartialPaid && (
+            <div className="mt-1.5 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-800 w-fit max-w-full">
+              <AlertTriangle className="w-3.5 h-3.5 text-rose-600 flex-shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 flex-shrink-0">
+                Rejected:
               </span>
-              <span className="font-mono font-black text-amber-950 tracking-wider select-all">
-                {student.utrNumber}
+              <span className="font-medium text-rose-900 text-[11px] truncate">
+                &ldquo;{student.rejectionReason}&rdquo;
               </span>
+            </div>
+          )}
+
+          {/* Prominent UTR & Screenshot Badge if Verification Pending / Awaiting Review */}
+          {isReviewTab && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {student.utrNumber ? (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-xs shadow-2xs w-fit">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-800">
+                    UTR / Ref:
+                  </span>
+                  <span className="font-mono font-black text-amber-950 tracking-wider select-all">
+                    {student.utrNumber}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-xs shadow-2xs w-fit">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500">
+                    UTR:
+                  </span>
+                  <span className="font-medium text-slate-600 text-[11px]">
+                    UTR Not Fetched
+                  </span>
+                </div>
+              )}
+              {student.hasPaymentProof && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-bold shadow-2xs">
+                  <Camera className="w-3.5 h-3.5 text-indigo-600 stroke-[2.2]" />
+                  <span>Screenshot Attached</span>
+                </span>
+              )}
             </div>
           )}
 
@@ -230,21 +264,21 @@ export default function OverdueStudentItem({
 
       {/* Right Side: Amount + Action Buttons */}
       <div
-        className="flex flex-wrap sm:flex-nowrap items-center justify-between sm:justify-end gap-2.5 flex-shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 w-full sm:w-auto"
+        className="flex flex-col sm:flex-row sm:items-center justify-between sm:justify-end gap-2.5 sm:gap-3 flex-shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-200/80 w-full sm:w-auto"
       >
-        <div className="text-left sm:text-right mr-1">
-          <div className="text-[15px] font-extrabold text-slate-900 font-mono tracking-tight">
+        <div className="flex items-baseline justify-between sm:justify-end sm:block w-full sm:w-auto">
+          <div className="text-[15px] sm:text-base font-extrabold text-slate-900 font-mono tracking-tight">
             ₹{displayAmount.toLocaleString("en-IN")}
           </div>
           {isPartialPaid ? (
-            <div className="text-[10px] text-amber-800 text-left sm:text-right font-medium">
-              <span className="font-bold text-amber-700 block">Balance Due</span>
-              <span className="text-slate-500 block text-[9.5px]">
-                Paid ₹{amountPaidSoFar.toLocaleString("en-IN")} of ₹{totalFeeAmount.toLocaleString("en-IN")}
+            <div className="text-[10px] text-amber-800 text-right sm:text-right font-medium">
+              <span className="font-bold text-amber-700 sm:block inline">Balance Due </span>
+              <span className="text-slate-500 sm:block inline text-[9.5px]">
+                (Paid ₹{amountPaidSoFar.toLocaleString("en-IN")} of ₹{totalFeeAmount.toLocaleString("en-IN")})
               </span>
             </div>
           ) : (
-            <span className="text-[10px] font-semibold text-slate-400 block">
+            <span className="text-[10px] font-semibold text-slate-400 block sm:text-right">
               {isReviewTab
                 ? "Awaiting Approval"
                 : isPaidTab
@@ -255,10 +289,55 @@ export default function OverdueStudentItem({
         </div>
 
         <div className={`flex items-center gap-1.5 sm:gap-2 flex-wrap sm:flex-nowrap ${isReviewTab ? "w-full sm:w-auto" : ""}`}>
-          {/* Action 1: Green "Approve & Mark Paid" + Red "Reject & Delete" Button for Awaiting Review (Owner Only) */}
+          {/* Action 1: Green "Approve & Mark Paid" + Red "Reject" + "View Proof" for Awaiting Review (Owner Only) */}
           {isReviewTab ? (
-            userRole === "owner" && (onVerifyPaid || onRejectFee) ? (
-              <div className="flex flex-col min-[380px]:flex-row items-stretch min-[380px]:items-center gap-2 w-full sm:w-auto">
+            userRole === "owner" && (onVerifyPaid || onRejectFee || onViewProof) ? (
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                {/* Secondary Actions Row: View Proof + Reject (50/50 on mobile, inline on desktop) */}
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  {onViewProof && (
+                    <button
+                      type="button"
+                      onClick={() => onViewProof(student)}
+                      disabled={isVerifyingPaid || isRejectingFee}
+                      aria-label={`View payment proof screenshot for ${student.name}`}
+                      title="View screenshot proof"
+                      className="tap-bounce h-10 px-3 sm:px-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md shadow-indigo-600/25 disabled:opacity-50 flex-1 sm:flex-initial text-center cursor-pointer whitespace-nowrap"
+                    >
+                      {student.hasPaymentProof ? (
+                        <>
+                          <Camera className="h-4 w-4 text-white stroke-[2.2] flex-shrink-0" />
+                          <span>View Proof</span>
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="h-4 w-4 text-white stroke-[2.2] flex-shrink-0" />
+                          <span>View Details</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {onRejectFee && (
+                    <button
+                      type="button"
+                      onClick={() => onRejectFee(student)}
+                      disabled={isVerifyingPaid || isRejectingFee}
+                      aria-label={`Reject and delete fee submission for ${student.name}`}
+                      title="Reject & Delete (Remove invalid/fake submission)"
+                      className="tap-bounce h-10 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md shadow-rose-600/25 disabled:opacity-50 flex-1 sm:flex-initial text-center cursor-pointer whitespace-nowrap"
+                    >
+                      {isRejectingFee ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-white flex-shrink-0" />
+                      ) : (
+                        <Trash2 className="h-4 w-4 text-white stroke-[2.2] flex-shrink-0" />
+                      )}
+                      <span>Reject</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Primary Action: Approve & Mark Paid (full-width on mobile, inline on desktop) */}
                 {onVerifyPaid && (
                   <button
                     type="button"
@@ -266,32 +345,14 @@ export default function OverdueStudentItem({
                     disabled={isVerifyingPaid || isRejectingFee}
                     aria-label={`Approve and mark fee for ${student.name} as paid`}
                     title="Approve & Mark Paid (Online/UPI)"
-                    className="tap-bounce h-9 sm:h-10 px-3 sm:px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/25 disabled:opacity-50 flex-1 sm:flex-initial text-center cursor-pointer"
+                    className="tap-bounce h-10 px-3.5 sm:px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-600/25 disabled:opacity-50 w-full sm:w-auto text-center cursor-pointer whitespace-nowrap"
                   >
                     {isVerifyingPaid ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-white" />
+                      <Loader2 className="h-4 w-4 animate-spin text-white flex-shrink-0" />
                     ) : (
-                      <CheckCircle2 className="h-4 w-4 text-white stroke-[2.5]" />
+                      <CheckCircle2 className="h-4 w-4 text-white stroke-[2.5] flex-shrink-0" />
                     )}
                     <span>Approve &amp; Mark Paid</span>
-                  </button>
-                )}
-
-                {onRejectFee && (
-                  <button
-                    type="button"
-                    onClick={() => onRejectFee(student)}
-                    disabled={isVerifyingPaid || isRejectingFee}
-                    aria-label={`Reject and delete fee submission for ${student.name}`}
-                    title="Reject & Delete (Remove invalid/fake submission)"
-                    className="tap-bounce h-9 sm:h-10 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-md shadow-rose-600/25 disabled:opacity-50 flex-1 sm:flex-initial text-center cursor-pointer"
-                  >
-                    {isRejectingFee ? (
-                      <Loader2 className="h-4 w-4 animate-spin text-white" />
-                    ) : (
-                      <Trash2 className="h-4 w-4 text-white stroke-[2.2]" />
-                    )}
-                    <span>Reject &amp; Delete</span>
                   </button>
                 )}
               </div>
@@ -368,7 +429,7 @@ export default function OverdueStudentItem({
             </div>
           ) : (
             /* Action 3: Pending Tab Actions (Record Payment Cash + Details + WhatsApp Reminder) */
-            <>
+            <div className="flex items-center justify-end gap-1.5 sm:gap-2 flex-wrap sm:flex-nowrap w-full sm:w-auto">
               {onMarkPaid && (
                 <button
                   type="button"
@@ -376,15 +437,15 @@ export default function OverdueStudentItem({
                   disabled={isMarkingPaid}
                   aria-label={`Record payment for ${student.name}`}
                   title="Record manual payment (Cash)"
-                  className="tap-bounce h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-800 border border-emerald-300/80 text-xs font-bold flex items-center gap-1 sm:gap-1.5 transition-all shadow-2xs disabled:opacity-50 cursor-pointer flex-shrink-0"
+                  className="tap-bounce h-10 px-2.5 sm:px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-800 border border-emerald-300/80 text-xs font-bold flex items-center justify-center gap-1 sm:gap-1.5 transition-all shadow-2xs disabled:opacity-50 cursor-pointer flex-1 sm:flex-initial"
                 >
                   {isMarkingPaid ? (
-                    <Loader2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 animate-spin text-emerald-600" />
+                    <Loader2 className="h-3.5 w-3.5 sm:h-4 sm:w-4 animate-spin text-emerald-600 flex-shrink-0" />
                   ) : (
-                    <Banknote className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-700 stroke-[2.3]" />
+                    <Banknote className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-emerald-700 stroke-[2.3] flex-shrink-0" />
                   )}
-                  <span className="hidden min-[420px]:inline">Record Payment</span>
-                  <span className="min-[420px]:hidden inline">Pay</span>
+                  <span className="hidden min-[380px]:inline whitespace-nowrap">Record Payment</span>
+                  <span className="min-[380px]:hidden inline whitespace-nowrap">Pay</span>
                 </button>
               )}
 
@@ -392,11 +453,11 @@ export default function OverdueStudentItem({
                 <button
                   type="button"
                   onClick={() => onViewDetails(student)}
-                  className="tap-bounce h-9 sm:h-10 px-2 sm:px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center gap-1 shadow-2xs cursor-pointer flex-shrink-0"
+                  className="tap-bounce h-10 px-2.5 sm:px-3 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold flex items-center justify-center gap-1 shadow-2xs cursor-pointer flex-shrink-0"
                   title="View fee details and payment history"
                 >
-                  <Receipt className="h-3.5 w-3.5 text-slate-500" />
-                  <span className="hidden min-[360px]:inline">Details</span>
+                  <Receipt className="h-3.5 w-3.5 text-slate-500 flex-shrink-0" />
+                  <span className="hidden min-[360px]:inline whitespace-nowrap">Details</span>
                 </button>
               )}
 
@@ -406,7 +467,7 @@ export default function OverdueStudentItem({
                   onClick={() => onSendReminder(student)}
                   disabled={isSendingReminder}
                   aria-label={`Send WhatsApp reminder to ${student.name}'s parent`}
-                  className={`tap-bounce h-9 w-9 sm:h-10 sm:w-10 rounded-full flex items-center justify-center transition-all shadow-md flex-shrink-0 ${
+                  className={`tap-bounce h-10 w-10 rounded-full flex items-center justify-center transition-all shadow-md flex-shrink-0 ${
                     isSendingReminder
                       ? "bg-slate-300 text-slate-600 cursor-not-allowed"
                       : isReminderSent
@@ -415,15 +476,15 @@ export default function OverdueStudentItem({
                   }`}
                 >
                   {isSendingReminder ? (
-                    <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : isReminderSent ? (
-                    <Check className="h-4 w-4 sm:h-5 sm:w-5 stroke-[2.8]" />
+                    <Check className="h-4 w-4 stroke-[2.8]" />
                   ) : (
                     <WhatsAppIcon className="h-4 w-4 sm:h-5 sm:w-5" />
                   )}
                 </button>
               )}
-            </>
+            </div>
           )}
         </div>
       </div>

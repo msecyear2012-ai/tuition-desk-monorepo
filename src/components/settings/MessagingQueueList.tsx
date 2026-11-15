@@ -664,13 +664,13 @@ export default function MessagingQueueList({
 
   return (
     <div
-      className={`glass-card p-6 sm:p-7 rounded-3xl border border-slate-200/90 shadow-sm space-y-6 bg-white ${className}`}
+      className={`glass-card p-4 sm:p-6 sm:p-7 rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-sm space-y-4 sm:space-y-6 bg-white w-full max-w-full ${className}`}
     >
       {/* Top Header & Action Controls */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-        <div className="flex items-start gap-3.5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 pb-3.5 sm:pb-4 border-b border-slate-100">
+        <div className="flex items-start gap-3 sm:gap-3.5 min-w-0 flex-1">
           <div
-            className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-xs ${
+            className={`w-10 h-10 sm:w-11 sm:h-11 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-xs ${
               hasActiveMessages
                 ? "bg-blue-100 text-blue-700 ring-2 ring-blue-50"
                 : hasFailedMessages
@@ -687,9 +687,9 @@ export default function MessagingQueueList({
             )}
           </div>
 
-          <div>
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <h3 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
+              <h3 className="text-sm sm:text-lg font-bold text-slate-900 tracking-tight">
                 Live WhatsApp Dispatch Queue &amp; Delivery Monitor
               </h3>
               {loading ? (
@@ -715,7 +715,7 @@ export default function MessagingQueueList({
               )}
             </div>
 
-            <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+            <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5 leading-relaxed">
               Real-time multi-status tracking of automated student admission invites, fee
               reminders, and academic notifications.
             </p>
@@ -723,12 +723,12 @@ export default function MessagingQueueList({
         </div>
 
         {/* Action Buttons: Refresh, Clear Delivered, & Retry */}
-        <div className="flex items-center gap-2 self-start md:self-center flex-wrap">
+        <div className="flex items-center gap-2 self-start md:self-center flex-wrap w-full md:w-auto">
           <button
             type="button"
             onClick={() => fetchQueue(false)}
             disabled={loading || refreshing}
-            className="tap-bounce flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+            className="tap-bounce flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
             title="Refresh live queue status"
           >
             <RefreshCw
@@ -742,11 +742,11 @@ export default function MessagingQueueList({
               type="button"
               onClick={handleOpenClearModal}
               disabled={loading || clearingDelivered}
-              className="tap-bounce flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+              className="tap-bounce flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
               title="Clear confirmed delivered messages from active feed"
             >
               <Archive className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Clear Delivered ({summary.delivered})</span>
+              <span className="truncate">Clear Delivered ({summary.delivered})</span>
             </button>
           )}
 
@@ -755,11 +755,11 @@ export default function MessagingQueueList({
             type="button"
             onClick={handleOpenCleanupModal}
             disabled={executingCleanup}
-            className="tap-bounce flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200/80 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+            className="tap-bounce flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200/80 text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
             title="Permanently remove terminal dispatch records from database"
           >
             <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-            <span>
+            <span className="truncate">
               Clear Logs
               {eligibleLogCount !== null && eligibleLogCount > 0
                 ? ` (${eligibleLogCount})`
@@ -771,7 +771,7 @@ export default function MessagingQueueList({
             type="button"
             onClick={handleRetryAll}
             disabled={!canRetry || retrying || hasActiveMessages}
-            className={`tap-bounce flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold shadow-xs transition-all ${
+            className={`tap-bounce w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold shadow-xs transition-all ${
               canRetry && !retrying && !hasActiveMessages
                 ? "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.98] text-white shadow-emerald-500/25 cursor-pointer"
                 : "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-75"
@@ -807,84 +807,84 @@ export default function MessagingQueueList({
       </div>
 
       {/* KPI Metrics Summary Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
         {/* In-Flight Pending */}
         <div
           onClick={() => setActiveView("pending")}
-          className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+          className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border transition-all cursor-pointer min-w-0 ${
             activeView === "pending"
               ? "bg-blue-50/80 border-blue-300 ring-2 ring-blue-100"
               : "bg-slate-50/60 border-slate-200/70 hover:bg-slate-50"
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase tracking-wider truncate">
               In-Flight
             </span>
             {hasActiveMessages ? (
-              <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin" />
+              <Loader2 className="w-3.5 h-3.5 text-blue-600 animate-spin flex-shrink-0" />
             ) : (
-              <Clock className="w-3.5 h-3.5 text-slate-400" />
+              <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
             )}
           </div>
-          <div className="mt-1 text-xl font-extrabold text-slate-900 tracking-tight">
+          <div className="mt-1 text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight">
             {inFlightCount || pendingItems.length}
           </div>
-          <div className="text-[10px] text-slate-500 mt-0.5">
-            {inFlightCount > 0 ? "Pending rate-limiter queue" : "Zero in-flight"}
+          <div className="text-[9px] sm:text-[10px] text-slate-500 mt-0.5 truncate">
+            {inFlightCount > 0 ? "Pending queue" : "Zero in-flight"}
           </div>
         </div>
 
         {/* Accepted by Provider */}
         <div
           onClick={() => setActiveView("activity")}
-          className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+          className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border transition-all cursor-pointer min-w-0 ${
             activeView === "activity"
               ? "bg-teal-50/80 border-teal-300 ring-2 ring-teal-100"
               : "bg-slate-50/60 border-slate-200/70 hover:bg-slate-50"
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase tracking-wider truncate">
               Accepted
             </span>
-            <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
+            <CheckCircle2 className="w-3.5 h-3.5 text-teal-600 flex-shrink-0" />
           </div>
-          <div className="mt-1 text-xl font-extrabold text-teal-900 tracking-tight">
+          <div className="mt-1 text-lg sm:text-xl font-extrabold text-teal-900 tracking-tight">
             {summary.provider_accepted}
           </div>
-          <div className="text-[10px] text-teal-700 mt-0.5">
-            Accepted by WhatsApp
+          <div className="text-[9px] sm:text-[10px] text-teal-700 mt-0.5 truncate">
+            Accepted by WA
           </div>
         </div>
 
         {/* Confirmed Delivered */}
         <div
           onClick={() => setActiveView("activity")}
-          className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+          className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border transition-all cursor-pointer min-w-0 ${
             summary.delivered > 0
               ? "bg-emerald-50/40 border-emerald-200/80 hover:bg-emerald-50/70"
               : "bg-slate-50/60 border-slate-200/70 hover:bg-slate-50"
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase tracking-wider truncate">
               Delivered
             </span>
-            <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+            <CheckCheck className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
           </div>
-          <div className="mt-1 text-xl font-extrabold text-emerald-900 tracking-tight">
+          <div className="mt-1 text-lg sm:text-xl font-extrabold text-emerald-900 tracking-tight">
             {summary.delivered}
           </div>
-          <div className="text-[10px] text-emerald-700 mt-0.5">
-            {summary.delivered > 0 ? "Confirmed terminal delivery" : "Zero active delivered"}
+          <div className="text-[9px] sm:text-[10px] text-emerald-700 mt-0.5 truncate">
+            {summary.delivered > 0 ? "Confirmed delivery" : "Zero delivered"}
           </div>
         </div>
 
         {/* Action Required (Failed) */}
         <div
           onClick={() => setActiveView("failed")}
-          className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+          className={`p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border transition-all cursor-pointer min-w-0 ${
             activeView === "failed"
               ? "bg-rose-50/80 border-rose-300 ring-2 ring-rose-100"
               : hasFailedMessages
@@ -893,29 +893,29 @@ export default function MessagingQueueList({
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+            <span className="text-[10px] sm:text-[11px] font-bold text-slate-500 uppercase tracking-wider truncate">
               Failed
             </span>
             <AlertCircle
-              className={`w-3.5 h-3.5 ${hasFailedMessages ? "text-rose-600" : "text-slate-400"}`}
+              className={`w-3.5 h-3.5 flex-shrink-0 ${hasFailedMessages ? "text-rose-600" : "text-slate-400"}`}
             />
           </div>
           <div
-            className={`mt-1 text-xl font-extrabold tracking-tight ${
+            className={`mt-1 text-lg sm:text-xl font-extrabold tracking-tight ${
               hasFailedMessages ? "text-rose-900" : "text-slate-900"
             }`}
           >
             {failedItems.length}
           </div>
-          <div className="text-[10px] text-slate-500 mt-0.5">
-            {hasFailedMessages ? "Needs retry dispatch" : "Zero failed messages"}
+          <div className="text-[9px] sm:text-[10px] text-slate-500 mt-0.5 truncate">
+            {hasFailedMessages ? "Needs retry" : "Zero failed"}
           </div>
         </div>
       </div>
 
       {/* Disconnected Warning Note when items exist but WhatsApp is offline */}
       {hasFailedMessages && !isWhatsAppConnected && (
-        <div className="p-3.5 rounded-2xl bg-amber-50/90 border border-amber-200 text-amber-900 text-xs font-medium flex items-center gap-2.5">
+        <div className="p-3 sm:p-3.5 rounded-2xl bg-amber-50/90 border border-amber-200 text-amber-900 text-xs font-medium flex items-center gap-2.5">
           <WifiOff className="w-4 h-4 text-amber-600 flex-shrink-0" />
           <span>
             <strong>WhatsApp Engine Disconnected:</strong> Reconnect your
@@ -928,7 +928,7 @@ export default function MessagingQueueList({
       {/* Feedback Alert Banner */}
       {feedback && (
         <div
-          className={`p-3.5 rounded-2xl text-xs flex items-center gap-2.5 animate-fade-in ${
+          className={`p-3 sm:p-3.5 rounded-2xl text-xs flex items-center gap-2.5 animate-fade-in ${
             feedback.type === "success"
               ? "bg-emerald-50 text-emerald-900 border border-emerald-200"
               : "bg-rose-50 text-rose-900 border border-rose-200"
@@ -946,13 +946,13 @@ export default function MessagingQueueList({
       )}
 
       {/* Primary View Switcher & Type Filter Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 pt-1 w-full">
         {/* View Switcher Tabs */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-100/90 rounded-2xl self-start overflow-x-auto max-w-full no-scrollbar">
+        <div className="flex items-center gap-1 sm:gap-1.5 p-1 bg-slate-100/90 rounded-2xl overflow-x-auto max-w-full no-scrollbar w-full sm:w-auto">
           <button
             type="button"
             onClick={() => setActiveView("activity")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeView === "activity"
                 ? "bg-white text-slate-900 shadow-2xs"
                 : "text-slate-600 hover:text-slate-900"
@@ -970,7 +970,7 @@ export default function MessagingQueueList({
           <button
             type="button"
             onClick={() => setActiveView("failed")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeView === "failed"
                 ? "bg-white text-slate-900 shadow-2xs"
                 : "text-slate-600 hover:text-slate-900"
@@ -992,7 +992,7 @@ export default function MessagingQueueList({
           <button
             type="button"
             onClick={() => setActiveView("pending")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeView === "pending"
                 ? "bg-white text-slate-900 shadow-2xs"
                 : "text-slate-600 hover:text-slate-900"
@@ -1009,8 +1009,8 @@ export default function MessagingQueueList({
         </div>
 
         {/* Message Type Filter & Archive Toggle */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 self-start sm:self-auto max-w-full no-scrollbar">
-          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 mr-1 flex-shrink-0">
+        <div className="flex items-center gap-1 sm:gap-1.5 overflow-x-auto pb-1 max-w-full no-scrollbar w-full sm:w-auto">
+          <span className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 mr-0.5 sm:mr-1 flex-shrink-0">
             <Filter className="w-3 h-3" />
             Filter:
           </span>
@@ -1112,132 +1112,214 @@ export default function MessagingQueueList({
           </p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-slate-200/90 shadow-2xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50/90 text-slate-500 font-bold uppercase tracking-wider text-[10px] border-b border-slate-200/80">
-                <tr>
-                  <th scope="col" className="px-4 py-3">
-                    Type
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Student &amp; Parent Phone
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Status
-                  </th>
-                  <th scope="col" className="px-4 py-3">
-                    Delivery Details / Error
-                  </th>
-                  <th scope="col" className="px-4 py-3 text-right">
-                    Timestamp
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {filteredItems.map((item) => (
-                  <tr
-                    key={item.id}
-                    className="hover:bg-slate-50/70 transition-colors"
-                  >
-                    {/* Message Type Pill */}
-                    <td className="px-4 py-3.5 whitespace-nowrap">
-                      {item.type === "admission_welcome" ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200/60">
-                          <GraduationCap className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
-                          <span>Admission Welcome</span>
-                        </span>
-                      ) : item.type === "fee_reminder" ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200/60">
-                          <Bell className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
-                          <span>Fee Reminder</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200/60">
-                          <MessageSquare className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
-                          <span>{item.typeLabel || "Announcement"}</span>
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Student Name & Recipient Phone */}
-                    <td className="px-4 py-3.5">
-                      <div className="font-bold text-slate-900 text-xs">
-                        {item.studentName || "Student"}
-                      </div>
-                      <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
-                        <Smartphone className="w-3 h-3 text-slate-400" />
-                        <span>{formatPhoneDisplay(item.recipientPhone)}</span>
-                      </div>
-                    </td>
-
-                    {/* Distinct Status Badge */}
-                    <td className="px-4 py-3.5 whitespace-nowrap">
-                      {renderStatusBadge(item)}
-                    </td>
-
-                    {/* Reason / Delivery Notes */}
-                    <td className="px-4 py-3.5 text-slate-600 max-w-xs">
-                      {item.error ? (
-                        <span
-                          className={`text-[11px] font-medium truncate block ${
-                            item.status === "pending" || item.status === "processing"
-                              ? "text-blue-600 font-semibold"
-                              : item.status === "outcome_unknown" || item.status === "ambiguous"
-                              ? "text-amber-700 font-semibold"
-                              : "text-rose-600"
-                          }`}
-                          title={item.error}
-                        >
-                          {item.error}
-                        </span>
-                      ) : item.status === "outcome_unknown" || item.status === "ambiguous" ? (
-                        <span className="text-[11px] text-amber-700 font-medium">
-                          Dispatch outcome uncertain: awaiting delivery acknowledgment
-                        </span>
-                      ) : item.status === "delivered" ? (
-                        <span className="text-[11px] text-emerald-700 font-medium">
-                          Delivered to parent phone
-                        </span>
-                      ) : item.status === "provider_accepted" ? (
-                        <span className="text-[11px] text-teal-700 font-medium">
-                          Accepted by WhatsApp server
-                        </span>
-                      ) : item.status === "sent" ? (
-                        <span className="text-[11px] text-emerald-700 font-medium">
-                          Dispatched successfully
-                        </span>
-                      ) : item.status === "simulated" ? (
-                        <span className="text-[11px] text-purple-700 font-medium">
-                          Logged under simulation
-                        </span>
-                      ) : item.status === "processing" ? (
-                        <span className="text-[11px] text-blue-600 font-medium">
-                          In anti-ban dispatch queue (3–7s delay)
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-slate-400 italic">
-                          Queued for dispatch
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Timestamp */}
-                    <td className="px-4 py-3.5 text-right whitespace-nowrap text-[11px] font-medium text-slate-500 font-mono">
-                      {formatDateTime(item.timestamp)}
-                    </td>
+        <>
+          {/* Desktop Table View (hidden md:block) */}
+          <div className="hidden md:block overflow-hidden rounded-2xl border border-slate-200/90 shadow-2xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50/90 text-slate-500 font-bold uppercase tracking-wider text-[10px] border-b border-slate-200/80">
+                  <tr>
+                    <th scope="col" className="px-4 py-3">
+                      Type
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Student &amp; Parent Phone
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Status
+                    </th>
+                    <th scope="col" className="px-4 py-3">
+                      Delivery Details / Error
+                    </th>
+                    <th scope="col" className="px-4 py-3 text-right">
+                      Timestamp
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {filteredItems.map((item) => (
+                    <tr
+                      key={item.id}
+                      className="hover:bg-slate-50/70 transition-colors"
+                    >
+                      {/* Message Type Pill */}
+                      <td className="px-4 py-3.5 whitespace-nowrap">
+                        {item.type === "admission_welcome" ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200/60">
+                            <GraduationCap className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                            <span>Admission Welcome</span>
+                          </span>
+                        ) : item.type === "fee_reminder" ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200/60">
+                            <Bell className="w-3.5 h-3.5 text-amber-600 flex-shrink-0" />
+                            <span>Fee Reminder</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200/60">
+                            <MessageSquare className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
+                            <span>{item.typeLabel || "Announcement"}</span>
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Student Name & Recipient Phone */}
+                      <td className="px-4 py-3.5">
+                        <div className="font-bold text-slate-900 text-xs">
+                          {item.studentName || "Student"}
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
+                          <Smartphone className="w-3 h-3 text-slate-400" />
+                          <span>{formatPhoneDisplay(item.recipientPhone)}</span>
+                        </div>
+                      </td>
+
+                      {/* Distinct Status Badge */}
+                      <td className="px-4 py-3.5 whitespace-nowrap">
+                        {renderStatusBadge(item)}
+                      </td>
+
+                      {/* Reason / Delivery Notes */}
+                      <td className="px-4 py-3.5 text-slate-600 max-w-xs">
+                        {item.error ? (
+                          <span
+                            className={`text-[11px] font-medium truncate block ${
+                              item.status === "pending" || item.status === "processing"
+                                ? "text-blue-600 font-semibold"
+                                : item.status === "outcome_unknown" || item.status === "ambiguous"
+                                ? "text-amber-700 font-semibold"
+                                : "text-rose-600"
+                            }`}
+                            title={item.error}
+                          >
+                            {item.error}
+                          </span>
+                        ) : item.status === "outcome_unknown" || item.status === "ambiguous" ? (
+                          <span className="text-[11px] text-amber-700 font-medium">
+                            Dispatch outcome uncertain: awaiting delivery acknowledgment
+                          </span>
+                        ) : item.status === "delivered" ? (
+                          <span className="text-[11px] text-emerald-700 font-medium">
+                            Delivered to parent phone
+                          </span>
+                        ) : item.status === "provider_accepted" ? (
+                          <span className="text-[11px] text-teal-700 font-medium">
+                            Accepted by WhatsApp server
+                          </span>
+                        ) : item.status === "sent" ? (
+                          <span className="text-[11px] text-emerald-700 font-medium">
+                            Dispatched successfully
+                          </span>
+                        ) : item.status === "simulated" ? (
+                          <span className="text-[11px] text-purple-700 font-medium">
+                            Logged under simulation
+                          </span>
+                        ) : item.status === "processing" ? (
+                          <span className="text-[11px] text-blue-600 font-medium">
+                            In anti-ban dispatch queue (3–7s delay)
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-400 italic">
+                            Queued for dispatch
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Timestamp */}
+                      <td className="px-4 py-3.5 text-right whitespace-nowrap text-[11px] font-medium text-slate-500 font-mono">
+                        {formatDateTime(item.timestamp)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+
+          {/* Mobile Native Card Feed (block md:hidden) */}
+          <div className="block md:hidden divide-y divide-slate-100 bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden">
+            {filteredItems.map((item) => (
+              <div key={item.id} className="p-3.5 space-y-2.5 hover:bg-slate-50/70 transition-colors">
+                {/* Row 1: Student Name, Phone, and Status Badge */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-bold text-slate-900 text-xs sm:text-sm truncate">
+                      {item.studentName || "Student"}
+                    </div>
+                    <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
+                      <Smartphone className="w-3 h-3 text-slate-400 flex-shrink-0" />
+                      <span>{formatPhoneDisplay(item.recipientPhone)}</span>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    {renderStatusBadge(item)}
+                  </div>
+                </div>
+
+                {/* Row 2: Message Type Badge & Timestamp */}
+                <div className="flex items-center justify-between gap-2 text-[11px] pt-0.5">
+                  <div>
+                    {item.type === "admission_welcome" ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200/60">
+                        <GraduationCap className="w-3 h-3 text-emerald-600 flex-shrink-0" />
+                        <span>Admission</span>
+                      </span>
+                    ) : item.type === "fee_reminder" ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200/60">
+                        <Bell className="w-3 h-3 text-amber-600 flex-shrink-0" />
+                        <span>Fee Reminder</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200/60">
+                        <MessageSquare className="w-3 h-3 text-indigo-600 flex-shrink-0" />
+                        <span>{item.typeLabel || "Announcement"}</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] font-medium text-slate-400 font-mono">
+                    {formatDateTime(item.timestamp)}
+                  </div>
+                </div>
+
+                {/* Row 3: Delivery Details or Error Note */}
+                {(item.error || item.status) && (
+                  <div className="text-[11px] bg-slate-50/80 p-2 rounded-xl border border-slate-100">
+                    {item.error ? (
+                      <span
+                        className={`font-medium block break-words ${
+                          item.status === "pending" || item.status === "processing"
+                            ? "text-blue-600 font-semibold"
+                            : item.status === "outcome_unknown" || item.status === "ambiguous"
+                            ? "text-amber-700 font-semibold"
+                            : "text-rose-600"
+                        }`}
+                      >
+                        {item.error}
+                      </span>
+                    ) : item.status === "delivered" ? (
+                      <span className="text-emerald-700 font-medium">Delivered to parent phone</span>
+                    ) : item.status === "provider_accepted" ? (
+                      <span className="text-teal-700 font-medium">Accepted by WhatsApp server</span>
+                    ) : item.status === "sent" ? (
+                      <span className="text-emerald-700 font-medium">Dispatched successfully</span>
+                    ) : item.status === "simulated" ? (
+                      <span className="text-purple-700 font-medium">Logged under simulation</span>
+                    ) : item.status === "processing" ? (
+                      <span className="text-blue-600 font-medium">In anti-ban dispatch queue</span>
+                    ) : (
+                      <span className="text-slate-400 italic">Queued for dispatch</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {/* Clear Delivered Confirmation Modal */}
       {showClearModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in">
-          <div className="relative w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-100 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-fade-in">
+          <div className="relative w-full max-w-md bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl border border-slate-100 space-y-3.5 sm:space-y-4">
             <div className="flex items-start justify-between">
               <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
                 <Archive className="w-5 h-5" />
@@ -1263,12 +1345,12 @@ export default function MessagingQueueList({
               </p>
             </div>
 
-            <div className="flex items-center justify-end gap-2.5 pt-2">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setShowClearModal(false)}
                 disabled={clearingDelivered}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50 cursor-pointer"
+                className="px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50 cursor-pointer text-center"
               >
                 Cancel
               </button>
@@ -1276,7 +1358,7 @@ export default function MessagingQueueList({
                 type="button"
                 onClick={handleConfirmClearDelivered}
                 disabled={clearingDelivered}
-                className="tap-bounce flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all disabled:opacity-50 cursor-pointer"
+                className="tap-bounce flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all disabled:opacity-50 cursor-pointer"
               >
                 {clearingDelivered ? (
                   <>
@@ -1298,7 +1380,7 @@ export default function MessagingQueueList({
       {/* Permanent Clear Logs Confirmation Modal */}
       {showCleanupModal && (
         <div
-          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in"
           onClick={(e) => {
             if (e.target === e.currentTarget && !executingCleanup) {
               setShowCleanupModal(false);
@@ -1306,20 +1388,20 @@ export default function MessagingQueueList({
           }}
         >
           <div
-            className="relative w-full max-w-lg bg-white rounded-3xl p-6 shadow-2xl border border-slate-100 space-y-4 max-h-[90vh] overflow-y-auto"
+            className="relative w-full max-w-lg bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-2xl border border-slate-100 space-y-3.5 sm:space-y-4 max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
-                  <Trash2 className="w-5 h-5" />
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
                 </div>
-                <div>
-                  <h4 className="text-base font-bold text-slate-900">
+                <div className="min-w-0">
+                  <h4 className="text-sm sm:text-base font-bold text-slate-900 truncate">
                     Clear WhatsApp Dispatch Logs
                   </h4>
-                  <span className="text-[11px] font-semibold text-rose-600 uppercase tracking-wider">
+                  <span className="text-[10px] sm:text-[11px] font-semibold text-rose-600 uppercase tracking-wider block">
                     Permanent Deletion — Owner Only
                   </span>
                 </div>
@@ -1328,14 +1410,14 @@ export default function MessagingQueueList({
                 type="button"
                 onClick={() => setShowCleanupModal(false)}
                 disabled={executingCleanup}
-                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Warning Banner */}
-            <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3.5 flex items-start gap-3">
+            <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-3 sm:p-3.5 flex items-start gap-2.5 sm:gap-3">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div className="text-xs text-amber-900 leading-relaxed">
                 <p className="font-bold">Permanent hard deletion</p>
@@ -1347,7 +1429,7 @@ export default function MessagingQueueList({
 
             {/* Error Banners */}
             {previewError && (
-              <div className="bg-rose-50 border border-rose-200/80 rounded-2xl p-3.5 flex items-start justify-between gap-3">
+              <div className="bg-rose-50 border border-rose-200/80 rounded-2xl p-3 sm:p-3.5 flex items-start justify-between gap-3">
                 <div className="flex items-start gap-2.5">
                   <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                   <div className="text-xs text-rose-900 leading-relaxed">
@@ -1367,7 +1449,7 @@ export default function MessagingQueueList({
             )}
 
             {cleanupError && (
-              <div className="bg-rose-50 border border-rose-200/80 rounded-2xl p-3.5 flex items-start gap-2.5">
+              <div className="bg-rose-50 border border-rose-200/80 rounded-2xl p-3 sm:p-3.5 flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                 <div className="text-xs text-rose-900 leading-relaxed">
                   <p className="font-bold">Cleanup Failed</p>
@@ -1385,26 +1467,26 @@ export default function MessagingQueueList({
             ) : cleanupPreview ? (
               <div className="space-y-3">
                 {/* Count Cards */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-emerald-50/70 border border-emerald-100 rounded-2xl p-3 text-center">
-                    <span className="text-[11px] font-medium text-emerald-700 block">
+                <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
+                  <div className="bg-emerald-50/70 border border-emerald-100 rounded-2xl p-2.5 sm:p-3 text-center min-w-0">
+                    <span className="text-[10px] sm:text-[11px] font-medium text-emerald-700 block truncate">
                       Delivered & Sent
                     </span>
-                    <span className="text-xl font-bold text-emerald-800 mt-1 block">
+                    <span className="text-lg sm:text-xl font-bold text-emerald-800 mt-1 block">
                       {cleanupPreview.successfulCount}
                     </span>
-                    <span className="text-[10px] text-emerald-600">
+                    <span className="text-[9px] sm:text-[10px] text-emerald-600">
                       Terminal Success
                     </span>
                   </div>
-                  <div className="bg-rose-50/70 border border-rose-100 rounded-2xl p-3 text-center">
-                    <span className="text-[11px] font-medium text-rose-700 block">
+                  <div className="bg-rose-50/70 border border-rose-100 rounded-2xl p-2.5 sm:p-3 text-center min-w-0">
+                    <span className="text-[10px] sm:text-[11px] font-medium text-rose-700 block truncate">
                       Permanently Failed
                     </span>
-                    <span className="text-xl font-bold text-rose-800 mt-1 block">
+                    <span className="text-lg sm:text-xl font-bold text-rose-800 mt-1 block">
                       {cleanupPreview.failedCount}
                     </span>
-                    <span className="text-[10px] text-rose-600">
+                    <span className="text-[9px] sm:text-[10px] text-rose-600">
                       Terminal Failures
                     </span>
                   </div>
@@ -1413,7 +1495,7 @@ export default function MessagingQueueList({
                 {/* Safety Guarantee */}
                 <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3 space-y-1">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                    <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
                     <span>Protected Records ({cleanupPreview.protectedCount} safely preserved)</span>
                   </div>
                   <p className="text-[11px] text-slate-600 leading-relaxed">
@@ -1475,12 +1557,12 @@ export default function MessagingQueueList({
             </div>
 
             {/* Action Buttons */}
-            <div className="flex items-center justify-end gap-2.5 pt-2">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => setShowCleanupModal(false)}
                 disabled={executingCleanup}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50 cursor-pointer"
+                className="px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50 cursor-pointer text-center"
               >
                 Cancel
               </button>
@@ -1492,7 +1574,7 @@ export default function MessagingQueueList({
                   executingCleanup ||
                   (cleanupPreview !== null && cleanupPreview.eligibleTotal === 0)
                 }
-                className={`tap-bounce flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white shadow-xs transition-all ${
+                className={`tap-bounce flex items-center justify-center gap-1.5 px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold text-white shadow-xs transition-all ${
                   cleanupConfirmed &&
                   !executingCleanup &&
                   !(cleanupPreview !== null && cleanupPreview.eligibleTotal === 0)
