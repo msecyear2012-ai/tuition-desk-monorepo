@@ -177,12 +177,24 @@ export async function GET(request: NextRequest) {
 
     // 4. Detailed Overview Metrics & Activity Feed
     if (user.role === "owner") {
+      // Optimized payment fee filter: Only load fees with recorded payments for metrics & custody
+      const paymentFeeFilter: Record<string, unknown> = {
+        centerId: trimmedCenterId,
+        $or: [
+          { "paymentHistory.0": { $exists: true } },
+          { paidAmount: { $gt: 0 } },
+          { status: { $in: ["Paid", "Partial Paid"] } },
+        ],
+      };
+
       const [feesRaw, teachersRaw, handoversRaw] = await Promise.all([
-        (typeof Fee.find === "function"
-          ? (Fee.find({ centerId: trimmedCenterId }) as unknown as { populate: (path: string, fields: string) => Promise<unknown[]> }).populate?.("studentId", "name batch") || Fee.find({ centerId: trimmedCenterId })
-          : []) as Promise<unknown[]>,
-        Teacher.find({ centerId: trimmedCenterId }).select("_id name loginId"),
-        CashHandover.find({ centerId: trimmedCenterId }),
+        Fee.find(paymentFeeFilter)
+          .select(
+            "_id studentId paymentHistory paidAmount status paymentMode paidDate createdAt receivedBy receivedByRole recordedBy recordedByRole assignedTeacherAtPayment batchAtPayment"
+          )
+          .lean(),
+        Teacher.find({ centerId: trimmedCenterId }).select("_id name loginId").lean(),
+        CashHandover.find({ centerId: trimmedCenterId }).lean(),
       ]);
 
       const teacherMap = new Map<string, { name: string; loginId?: string }>();
@@ -196,10 +208,8 @@ export async function GET(request: NextRequest) {
       let pendingVerificationCash = 0;
       const recentCollections: RecentCollectionItem[] = [];
 
-      for (const rawFee of ((feesRaw || []) as IFeeDocument[])) {
+      for (const rawFee of ((feesRaw || []) as unknown as IFeeDocument[])) {
         const entries = getFeePaymentEntries(rawFee);
-        const sObj = rawFee.studentId as { name?: string } | null;
-        const studentName = sObj?.name || "Student";
 
         for (const entry of entries) {
           const amt = Number(entry.amount) || 0;
@@ -250,12 +260,12 @@ export async function GET(request: NextRequest) {
               : teacherMap.get(collectorId)?.name || "Teacher";
 
           recentCollections.push({
-            feeId: String(rawFee._id),
+            feeId: String((rawFee as { _id: unknown })._id),
             paymentId: String(entry.paymentId || (entry as unknown as { _id?: unknown })._id || ""),
             amount: amt,
             paymentDate: entry.paymentDate || entry.createdAt || new Date(),
             receiptNumber: entry.receiptNumber || "",
-            studentName,
+            studentName: String((rawFee as { studentId?: unknown }).studentId || ""),
             collectorName,
             collectorRole: entry.receivedByRole || "teacher",
             custodyStatus: custodyLabel,
@@ -265,6 +275,32 @@ export async function GET(request: NextRequest) {
 
       recentCollections.sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime());
       const top10Recent = recentCollections.slice(0, 10);
+
+      // Hydrate student names for ONLY the top 10 recent collections (avoids full-collection populates)
+      const top10StudentIds = Array.from(
+        new Set(
+          top10Recent
+            .map((item) => item.studentName)
+            .filter((id) => id && mongoose.Types.ObjectId.isValid(id))
+        )
+      );
+
+      if (top10StudentIds.length > 0) {
+        const students = await Student.find({ _id: { $in: top10StudentIds } })
+          .select("_id name")
+          .lean();
+        const studentNameMap = new Map<string, string>();
+        for (const s of (students as unknown as Array<{ _id: unknown; name?: string }>)) {
+          studentNameMap.set(String(s._id), s.name || "Student");
+        }
+        for (const item of top10Recent) {
+          item.studentName = studentNameMap.get(item.studentName) || "Student";
+        }
+      } else {
+        for (const item of top10Recent) {
+          item.studentName = "Student";
+        }
+      }
 
       let activeDiscrepancies = 0;
       let pendingHandoversCount = 0;
@@ -332,25 +368,57 @@ export async function GET(request: NextRequest) {
       ? new mongoose.Types.ObjectId(teacherIdStr)
       : null;
 
-    const [feesRaw, teacherHandoversRaw, teacherStudentsFull] = await Promise.all([
-      (typeof Fee.find === "function"
-        ? (Fee.find({ centerId: trimmedCenterId }) as unknown as { populate: (path: string, fields: string) => Promise<unknown[]> }).populate?.("studentId", "name batch") || Fee.find({ centerId: trimmedCenterId })
-        : []) as Promise<unknown[]>,
+    const [teacherHandoversRaw, teacherStudentsFull] = await Promise.all([
       CashHandover.find({
         centerId: trimmedCenterId,
         $or: [
           ...(teacherObjectId ? [{ teacherId: teacherObjectId }] : []),
           { teacherId: user.userId },
         ],
-      }),
+      }).lean(),
       teacherObjectId
         ? Student.find({
             centerId: trimmedCenterId,
             assignedTeacherId: teacherObjectId,
             isActive: { $ne: false },
-          }).select("_id name batch monthlyFee")
+          })
+            .select("_id name batch monthlyFee")
+            .lean()
         : Promise.resolve([]),
     ]);
+
+    const assignedStudentIds = ((teacherStudentsFull || []) as Array<{ _id: unknown; name: string; batch: string }>).map((s) => s._id);
+    const studentMetaMap = new Map<string, { name: string; batch: string }>();
+    for (const s of ((teacherStudentsFull || []) as Array<{ _id: unknown; name: string; batch: string }>)) {
+      studentMetaMap.set(String(s._id), { name: s.name, batch: s.batch });
+    }
+
+    // Scoped fee query for teacher
+    const teacherFeeFilter: Record<string, unknown> = {
+      centerId: trimmedCenterId,
+      $or: [
+        ...(assignedStudentIds.length > 0 ? [{ studentId: { $in: assignedStudentIds } }] : []),
+        ...(teacherObjectId
+          ? [
+              { receivedBy: teacherObjectId },
+              { recordedBy: teacherObjectId },
+              { assignedTeacherId: teacherObjectId },
+              { "paymentHistory.receivedBy": teacherObjectId },
+              { "paymentHistory.recordedBy": teacherObjectId },
+            ]
+          : []),
+        { receivedBy: user.userId },
+        { recordedBy: user.userId },
+        { "paymentHistory.receivedBy": user.userId },
+        { "paymentHistory.recordedBy": user.userId },
+      ],
+    };
+
+    const feesRaw = await Fee.find(teacherFeeFilter)
+      .select(
+        "_id studentId paymentHistory paidAmount status paymentMode paidDate createdAt receivedBy receivedByRole recordedBy recordedByRole amountDue originalAmountDue"
+      )
+      .lean();
 
     let ownCashCollected = 0;
     let ownCashInHand = 0;
@@ -358,10 +426,8 @@ export async function GET(request: NextRequest) {
     let ownVerifiedHandovers = 0;
     const teacherRecentCollections: RecentCollectionItem[] = [];
 
-    for (const rawFee of ((feesRaw || []) as IFeeDocument[])) {
+    for (const rawFee of ((feesRaw || []) as unknown as IFeeDocument[])) {
       const entries = getFeePaymentEntries(rawFee);
-      const sObj = rawFee.studentId as { name?: string } | null;
-      const studentName = sObj?.name || "Student";
 
       for (const entry of entries) {
         const rawEntry = entry as unknown as { isOwnerVerified?: boolean; recordedBy?: unknown };
@@ -395,12 +461,12 @@ export async function GET(request: NextRequest) {
         }
 
         teacherRecentCollections.push({
-          feeId: String(rawFee._id),
+          feeId: String((rawFee as { _id: unknown })._id),
           paymentId: String(entry.paymentId || (entry as unknown as { _id?: unknown })._id || ""),
           amount: amt,
           paymentDate: entry.paymentDate || entry.createdAt || new Date(),
           receiptNumber: entry.receiptNumber || "",
-          studentName,
+          studentName: String((rawFee as { studentId?: unknown }).studentId || ""),
           collectorName: "You",
           collectorRole: "teacher",
           custodyStatus: custodyLabel,
@@ -412,6 +478,33 @@ export async function GET(request: NextRequest) {
       (a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime()
     );
     const top10TeacherRecent = teacherRecentCollections.slice(0, 10);
+
+    // Resolve student names for top 10 items
+    const missingStudentIds: string[] = [];
+    for (const item of top10TeacherRecent) {
+      if (item.studentName && studentMetaMap.has(item.studentName)) {
+        item.studentName = studentMetaMap.get(item.studentName)!.name;
+      } else if (item.studentName && mongoose.Types.ObjectId.isValid(item.studentName)) {
+        missingStudentIds.push(item.studentName);
+      } else {
+        item.studentName = "Student";
+      }
+    }
+
+    if (missingStudentIds.length > 0) {
+      const extraStudents = await Student.find({ _id: { $in: missingStudentIds } })
+        .select("_id name")
+        .lean();
+      const extraMap = new Map<string, string>();
+      for (const s of (extraStudents as unknown as Array<{ _id: unknown; name?: string }>)) {
+        extraMap.set(String(s._id), s.name || "Student");
+      }
+      for (const item of top10TeacherRecent) {
+        if (extraMap.has(item.studentName)) {
+          item.studentName = extraMap.get(item.studentName)!;
+        }
+      }
+    }
 
     let pendingHandoverCount = 0;
     let rejectedHandoverCount = 0;
@@ -436,12 +529,6 @@ export async function GET(request: NextRequest) {
     }
 
     // SECTION B METRICS: Assigned Students Fee Status
-    const assignedStudentIds = ((teacherStudentsFull || []) as Array<{ _id: unknown; name: string; batch: string }>).map((s) => s._id);
-    const studentMetaMap = new Map<string, { name: string; batch: string }>();
-    for (const s of ((teacherStudentsFull || []) as Array<{ _id: unknown; name: string; batch: string }>)) {
-      studentMetaMap.set(String(s._id), { name: s.name, batch: s.batch });
-    }
-
     // Filter assigned students' fees from feesRaw
     const assignedFees = ((feesRaw || []) as IFeeDocument[]).filter((f) => {
       const sId = typeof f.studentId === "object" && f.studentId !== null && "_id" in f.studentId

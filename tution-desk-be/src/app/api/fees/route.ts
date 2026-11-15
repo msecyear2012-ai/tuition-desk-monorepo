@@ -343,9 +343,27 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const fees = await Fee.find(filter)
-      .populate("studentId")
+    const limitParam = searchParams.get("limit");
+    const pageParam = searchParams.get("page");
+    const skipParam = searchParams.get("skip");
+
+    const feeQuery = Fee.find(filter)
+      .populate("studentId", "name batch parentWhatsApp phone")
       .sort({ createdAt: -1 });
+
+    if (limitParam) {
+      const limit = Math.min(Math.max(1, parseInt(limitParam, 10)), 500);
+      let skip = 0;
+      if (skipParam) {
+        skip = Math.max(0, parseInt(skipParam, 10));
+      } else if (pageParam) {
+        const page = Math.max(1, parseInt(pageParam, 10));
+        skip = (page - 1) * limit;
+      }
+      feeQuery.skip(skip).limit(limit);
+    }
+
+    const fees = await feeQuery;
 
     // 3. Resolve Center & Teacher Entities for human-readable labels
     const [centerDoc, teachers] = await Promise.all([

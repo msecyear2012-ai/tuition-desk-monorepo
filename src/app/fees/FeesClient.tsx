@@ -227,6 +227,20 @@ function calculateDaysLate(dueDateString?: string): number {
   return Math.max(0, diffDays);
 }
 
+interface ProofListItem {
+  _id?: string;
+  submittedUtr?: string;
+  fileUrl?: string;
+  thumbnailUrl?: string;
+  status?: string;
+  createdAt?: string;
+  fileSizeBytes?: number;
+  originalFileName?: string;
+  mimeType?: string;
+  notes?: string;
+  rejectionReason?: string;
+}
+
 function mapFeeToStudent(fee: ApiFee, idx: number): OverdueFeeStudent {
   const studentObj =
     typeof fee.studentId === "object" && fee.studentId !== null
@@ -372,7 +386,7 @@ export default function FeesClient({
   const [proofModalOpen, setProofModalOpen] = useState(false);
   const [activeProofStudent, setActiveProofStudent] = useState<OverdueFeeStudent | null>(null);
   const [proofLoading, setProofLoading] = useState(false);
-  const [proofList, setProofList] = useState<any[]>([]);
+  const [proofList, setProofList] = useState<ProofListItem[]>([]);
   const [proofError, setProofError] = useState<string | null>(null);
   const [isZoomed, setIsZoomed] = useState(false);
 
@@ -483,6 +497,7 @@ export default function FeesClient({
         params: {
           centerId: activeId,
           status: "Paid,Partial Paid",
+          limit: 100,
           ...teacherParam,
         },
         skipCache: isRefresh,
@@ -495,7 +510,7 @@ export default function FeesClient({
           (sum, f) => sum + (Number(f.paidAmount || f.amountDue) || 0),
           0
         );
-        setCollectedAmount(totalPaid);
+        setCollectedAmount((prev) => (prev > 0 ? prev : totalPaid));
         setHasLoadedPaid(true);
       }
     } catch {
@@ -517,11 +532,11 @@ export default function FeesClient({
         selectedTeacherFilter !== "all" ? { assignedTeacher: selectedTeacherFilter } : {};
       const [pendingRes, reviewRes, summaryRes] = await Promise.allSettled([
         apiClient<ApiFee[]>("/fees", {
-          params: { centerId: activeId, status: "Pending,Partial Paid", ...teacherParam },
+          params: { centerId: activeId, status: "Pending,Partial Paid", limit: 200, ...teacherParam },
           skipCache: isRefresh,
         }),
         apiClient<ApiFee[]>("/fees", {
-          params: { centerId: activeId, status: "Verification Pending", ...teacherParam },
+          params: { centerId: activeId, status: "Verification Pending", limit: 100, ...teacherParam },
           skipCache: isRefresh,
         }),
         apiClient<FeesSummaryData>("/fees/summary", {
@@ -774,7 +789,7 @@ export default function FeesClient({
     setIsZoomed(false);
 
     try {
-      const res = await apiClient<any[]>(`/fees/${feeId}/payment-proof`, {
+      const res = await apiClient<ProofListItem[]>(`/fees/${feeId}/payment-proof`, {
         method: "GET",
       });
 
@@ -2557,12 +2572,12 @@ export default function FeesClient({
                         </div>
                       </div>
 
-                      {hasScreenshot && latestProof.fileSizeBytes > 0 && (
+                      {hasScreenshot && (latestProof.fileSizeBytes ?? 0) > 0 && (
                         <div className="text-[11px] text-slate-500">
                           <span className="text-slate-400">File:</span>{" "}
                           <span className="font-medium text-slate-700">
                             {latestProof.originalFileName || "screenshot.jpg"} (
-                            {(latestProof.fileSizeBytes / 1024).toFixed(0)} KB •{" "}
+                            {((latestProof.fileSizeBytes || 0) / 1024).toFixed(0)} KB •{" "}
                             {latestProof.mimeType?.replace("image/", "").toUpperCase()})
                           </span>
                         </div>
