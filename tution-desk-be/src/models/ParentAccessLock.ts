@@ -120,4 +120,42 @@ export async function verifyParentAccessLockIndexIntegrity(model?: any): Promise
   return false;
 }
 
+/**
+ * Verifies whether the TTL index on 'expiresAt' is active and enforced on the collection.
+ */
+export async function verifyParentAccessLockTtlIndexIntegrity(model?: any): Promise<boolean> {
+  const targetModel = model || ParentAccessLock;
+  if (!targetModel) return false;
+
+  try {
+    if (typeof targetModel.hasTtlIndex === "function") {
+      return await targetModel.hasTtlIndex();
+    }
+    const collection = targetModel.collection;
+    if (collection) {
+      let indexes: any[] = [];
+      if (typeof collection.indexes === "function") {
+        indexes = await collection.indexes();
+      } else if (typeof collection.listIndexes === "function") {
+        const cursor = collection.listIndexes();
+        indexes =
+          typeof cursor.toArray === "function" ? await cursor.toArray() : await cursor;
+      }
+
+      if (Array.isArray(indexes)) {
+        return indexes.some((idx: any) => {
+          if (!idx || !idx.key || typeof idx.key !== "object") return false;
+          return (
+            idx.key.expiresAt === 1 &&
+            (typeof idx.expireAfterSeconds === "number" || typeof idx.expires !== "undefined")
+          );
+        });
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 export default ParentAccessLock;

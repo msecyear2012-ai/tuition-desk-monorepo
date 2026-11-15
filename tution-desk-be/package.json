@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "db:verify": "tsx scripts/manage-indexes.ts --verify",
+    "db:apply": "tsx scripts/manage-indexes.ts --apply"
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",

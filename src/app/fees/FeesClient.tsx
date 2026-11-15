@@ -119,7 +119,7 @@ interface RecentCollectionFeedItem {
   feeId: string;
   paymentId: string;
   amount: number;
-  paymentDate: string | Date;
+  paymentDate?: string | Date | null;
   receiptNumber: string;
   studentName: string;
   collectorName: string;
@@ -241,6 +241,49 @@ interface ProofListItem {
   rejectionReason?: string;
 }
 
+function FeePaginationBar({
+  currentPage,
+  totalPages,
+  totalItems,
+  onPageChange,
+  label = "records",
+}: {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  onPageChange: (newPage: number) => void;
+  label?: string;
+}) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-50 border border-slate-200/90 rounded-2xl text-xs text-slate-600 mt-3 shadow-2xs">
+      <div className="font-semibold text-slate-500">
+        Page <span className="text-slate-800 font-bold">{currentPage}</span> of{" "}
+        <span className="text-slate-800 font-bold">{Math.max(1, totalPages)}</span>{" "}
+        <span className="hidden sm:inline">({totalItems} {label})</span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage <= 1}
+          className="tap-bounce px-3 py-1 rounded-xl border border-slate-200 bg-white font-bold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition-all shadow-2xs"
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage >= totalPages}
+          className="tap-bounce px-3 py-1 rounded-xl border border-slate-200 bg-white font-bold text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 transition-all shadow-2xs"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function mapFeeToStudent(fee: ApiFee, idx: number): OverdueFeeStudent {
   const studentObj =
     typeof fee.studentId === "object" && fee.studentId !== null
@@ -353,6 +396,19 @@ export default function FeesClient({
 
   // Sub-filter for Pending Dues tab
   const [pendingFilter, setPendingFilter] = useState<"all" | "critical" | "moderate">("all");
+
+  // Server-side pagination states (P0 Optimization)
+  const [pendingPage, setPendingPage] = useState<number>(1);
+  const [pendingTotal, setPendingTotal] = useState<number>(0);
+  const [pendingTotalPages, setPendingTotalPages] = useState<number>(1);
+
+  const [reviewPage, setReviewPage] = useState<number>(1);
+  const [reviewTotal, setReviewTotal] = useState<number>(0);
+  const [reviewTotalPages, setReviewTotalPages] = useState<number>(1);
+
+  const [paidPage, setPaidPage] = useState<number>(1);
+  const [paidTotal, setPaidTotal] = useState<number>(0);
+  const [paidTotalPages, setPaidTotalPages] = useState<number>(1);
 
   // Reminder & Action States
   const [sentReminders, setSentReminders] = useState<Record<string, boolean>>({});
@@ -487,17 +543,19 @@ export default function FeesClient({
   }, []);
 
   // Lazy fetch historical paid records on demand
-  const fetchPaidHistory = useCallback(async (isRefresh = false) => {
+  const fetchPaidHistory = useCallback(async (isRefresh = false, targetPage?: number) => {
     setLoadingPaid(true);
     try {
       const activeId = getCurrentCenterId();
       const teacherParam =
         selectedTeacherFilter !== "all" ? { assignedTeacher: selectedTeacherFilter } : {};
+      const pageToFetch = targetPage !== undefined ? targetPage : paidPage;
       const res = await apiClient<ApiFee[]>("/fees", {
         params: {
           centerId: activeId,
           status: "Paid,Partial Paid",
-          limit: 100,
+          page: pageToFetch,
+          limit: 50,
           ...teacherParam,
         },
         skipCache: isRefresh,
@@ -505,6 +563,15 @@ export default function FeesClient({
       if (res.success && Array.isArray(res.data)) {
         const rawPaid = res.data;
         setPaidStudents(rawPaid.map(mapFeeToStudent));
+
+        const paginationObj = (res as unknown as { pagination?: { total?: number; totalPages?: number } }).pagination;
+        if (paginationObj) {
+          setPaidTotal(paginationObj.total || rawPaid.length);
+          setPaidTotalPages(paginationObj.totalPages || 1);
+        } else {
+          setPaidTotal(rawPaid.length);
+          setPaidTotalPages(1);
+        }
 
         const totalPaid = rawPaid.reduce(
           (sum, f) => sum + (Number(f.paidAmount || f.amountDue) || 0),
@@ -518,10 +585,10 @@ export default function FeesClient({
     } finally {
       setLoadingPaid(false);
     }
-  }, [selectedTeacherFilter]);
+  }, [selectedTeacherFilter, paidPage]);
 
   // Fetch active fee data & enriched summary
-  const fetchFeesData = useCallback(async (isRefresh = false) => {
+  const fetchFeesData = useCallback(async (isRefresh = false, targetPendingPage?: number, targetReviewPage?: number) => {
     if (isRefresh || (!cachedPending && !cachedReview)) {
       queueMicrotask(() => setLoading(true));
     }
@@ -530,13 +597,16 @@ export default function FeesClient({
       const activeId = getCurrentCenterId();
       const teacherParam =
         selectedTeacherFilter !== "all" ? { assignedTeacher: selectedTeacherFilter } : {};
+      const penPage = targetPendingPage !== undefined ? targetPendingPage : pendingPage;
+      const revPage = targetReviewPage !== undefined ? targetReviewPage : reviewPage;
+
       const [pendingRes, reviewRes, summaryRes] = await Promise.allSettled([
         apiClient<ApiFee[]>("/fees", {
-          params: { centerId: activeId, status: "Pending,Partial Paid", limit: 200, ...teacherParam },
+          params: { centerId: activeId, status: "Pending,Partial Paid", page: penPage, limit: 50, ...teacherParam },
           skipCache: isRefresh,
         }),
         apiClient<ApiFee[]>("/fees", {
-          params: { centerId: activeId, status: "Verification Pending", limit: 100, ...teacherParam },
+          params: { centerId: activeId, status: "Verification Pending", page: revPage, limit: 50, ...teacherParam },
           skipCache: isRefresh,
         }),
         apiClient<FeesSummaryData>("/fees/summary", {
@@ -549,6 +619,11 @@ export default function FeesClient({
       if (reviewRes.status === "fulfilled" && reviewRes.value.success && Array.isArray(reviewRes.value.data)) {
         validReviewFees = reviewRes.value.data;
         setReviewStudents(validReviewFees.map(mapFeeToStudent));
+        const revPagination = (reviewRes.value as unknown as { pagination?: { total?: number; totalPages?: number } }).pagination;
+        if (revPagination) {
+          setReviewTotal(revPagination.total || validReviewFees.length);
+          setReviewTotalPages(revPagination.totalPages || 1);
+        }
       } else if (isRefresh || !cachedReview) {
         setReviewStudents([]);
       }
@@ -576,6 +651,11 @@ export default function FeesClient({
           return true;
         });
         setPendingStudents(cleanPending.map(mapFeeToStudent));
+        const penPagination = (pendingRes.value as unknown as { pagination?: { total?: number; totalPages?: number } }).pagination;
+        if (penPagination) {
+          setPendingTotal(penPagination.total || cleanPending.length);
+          setPendingTotalPages(penPagination.totalPages || 1);
+        }
       } else if (isRefresh || !cachedPending) {
         setPendingStudents([]);
       }
@@ -595,7 +675,22 @@ export default function FeesClient({
     } finally {
       setLoading(false);
     }
-  }, [hasLoadedPaid, fetchPaidHistory, cachedPending, cachedReview, selectedTeacherFilter]);
+  }, [hasLoadedPaid, fetchPaidHistory, cachedPending, cachedReview, selectedTeacherFilter, pendingPage, reviewPage]);
+
+  const handlePendingPageChange = (newPage: number) => {
+    setPendingPage(newPage);
+    fetchFeesData(true, newPage, reviewPage);
+  };
+
+  const handleReviewPageChange = (newPage: number) => {
+    setReviewPage(newPage);
+    fetchFeesData(true, pendingPage, newPage);
+  };
+
+  const handlePaidPageChange = (newPage: number) => {
+    setPaidPage(newPage);
+    fetchPaidHistory(true, newPage);
+  };
 
   useEffect(() => {
     let ignore = false;
@@ -1545,7 +1640,11 @@ export default function FeesClient({
                                   {item.studentName}
                                 </div>
                                 <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5 flex-wrap">
-                                  <span>{new Date(item.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
+                                  <span>
+                                    {item.paymentDate && !isNaN(new Date(item.paymentDate).getTime())
+                                      ? new Date(item.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
+                                      : "Undated"}
+                                  </span>
                                   <span>•</span>
                                   <span className="font-mono text-slate-600 truncate max-w-[120px]">{item.receiptNumber || "Offline"}</span>
                                   <span>•</span>
@@ -1830,7 +1929,11 @@ export default function FeesClient({
                               {item.studentName}
                             </div>
                             <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5 flex-wrap">
-                              <span>{new Date(item.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
+                              <span>
+                                {item.paymentDate && !isNaN(new Date(item.paymentDate).getTime())
+                                  ? new Date(item.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
+                                  : "Undated"}
+                              </span>
                               <span>•</span>
                               <span className="font-mono text-slate-600 truncate max-w-[120px]">{item.receiptNumber || "Offline"}</span>
                               <span>•</span>
@@ -2140,6 +2243,15 @@ export default function FeesClient({
                       </div>
                     )}
                   </div>
+
+                  {/* Server-Side Pagination for Pending Dues */}
+                  <FeePaginationBar
+                    currentPage={pendingPage}
+                    totalPages={pendingTotalPages}
+                    totalItems={pendingTotal}
+                    onPageChange={handlePendingPageChange}
+                    label="pending dues"
+                  />
                 </div>
               )}
 
@@ -2213,6 +2325,15 @@ export default function FeesClient({
                       </div>
                     )}
                   </div>
+
+                  {/* Server-Side Pagination for Review Queue */}
+                  <FeePaginationBar
+                    currentPage={reviewPage}
+                    totalPages={reviewTotalPages}
+                    totalItems={reviewTotal}
+                    onPageChange={handleReviewPageChange}
+                    label="review items"
+                  />
                 </div>
               )}
 
@@ -2288,6 +2409,15 @@ export default function FeesClient({
                       </div>
                     )}
                   </div>
+
+                  {/* Server-Side Pagination for Paid History */}
+                  <FeePaginationBar
+                    currentPage={paidPage}
+                    totalPages={paidTotalPages}
+                    totalItems={paidTotal}
+                    onPageChange={handlePaidPageChange}
+                    label="paid records"
+                  />
                 </div>
               )}
             </>

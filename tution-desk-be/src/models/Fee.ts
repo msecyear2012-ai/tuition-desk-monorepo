@@ -773,8 +773,11 @@ export function getFeePaymentEntries(fee: IFee | IFeeDocument): IPaymentEntry[] 
   if ((fee.status === "Paid" || fee.status === "Partial Paid") && paidAmount > 0) {
     const feeDoc = fee as IFee & { _id?: Types.ObjectId };
     const feeId = feeDoc._id || new Types.ObjectId();
-    const fallbackDate =
-      fee.paymentDate || fee.paidDate || fee.paidAt || fee.createdAt || new Date();
+    const reliablePaymentDate =
+      fee.paymentDate || fee.paidDate || fee.paidAt;
+    const fallbackDate = reliablePaymentDate
+      ? new Date(reliablePaymentDate)
+      : (undefined as unknown as Date);
     const fallbackCollector =
       fee.receivedBy ||
       fee.recordedBy ||
@@ -807,11 +810,11 @@ export function getFeePaymentEntries(fee: IFee | IFeeDocument): IPaymentEntry[] 
             handoverId: feeId,
             handoverNumber: "LEGACY-SETTLED",
             allocatedAmount: paidAmount,
-            allocatedAt: fallbackDate,
+            allocatedAt: fallbackDate || new Date(0),
             allocatedBy: fallbackCollector,
             status: "verified",
             verifiedAmount: paidAmount,
-            verifiedAt: fallbackDate,
+            verifiedAt: fallbackDate || new Date(0),
             verifiedBy: fallbackRecorder,
           },
         ],

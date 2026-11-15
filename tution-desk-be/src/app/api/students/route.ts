@@ -16,6 +16,7 @@ import {
   getOrCreateParentAccess,
   getRecoverableInvitationToken,
 } from "../../../lib/parentAccessService.ts";
+import { encryptToken } from "../../../lib/tokenCipher.ts";
 import {
   getAppBaseUrl,
   sendAdmissionWelcomeMessage,
@@ -188,16 +189,63 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const students = await Student.find(filter).sort({ createdAt: -1 });
+    // Pagination parameters (P0 Optimization)
+    const isAllRequested = searchParams.get("all") === "true";
+    const pageParam = searchParams.get("page");
+    const limitParam = searchParams.get("limit");
+
+    const page = pageParam ? Math.max(1, parseInt(pageParam, 10) || 1) : 1;
+    const limit = limitParam
+      ? Math.min(100, Math.max(1, parseInt(limitParam, 10) || 50))
+      : 50;
+    const skip = (page - 1) * limit;
+
+    let studentQuery: any = Student.find(filter);
+    if (studentQuery && typeof studentQuery.select === "function") {
+      studentQuery = studentQuery.select(
+        "_id centerId name rollNumber batch phone parentWhatsApp parentPhone parentName monthlyFee billingCycleDate assignedTeacherId isActive createdAt updatedAt"
+      );
+    }
+    if (studentQuery && typeof studentQuery.sort === "function") {
+      studentQuery = studentQuery.sort({ createdAt: -1 });
+    }
+    if (!isAllRequested && studentQuery && typeof studentQuery.skip === "function") {
+      studentQuery = studentQuery.skip(skip).limit(limit);
+    }
+
+    let totalCount = 0;
+    try {
+      if (typeof Student.countDocuments === "function") {
+        totalCount = await Student.countDocuments(filter);
+      }
+    } catch {
+      totalCount = 0;
+    }
+
+    const students = await studentQuery;
+    const total = totalCount > 0 ? totalCount : students.length;
+    const totalPages = isAllRequested ? 1 : Math.max(1, Math.ceil(total / limit));
 
     // REQ-02: Sanitize student phone numbers for teacher roles
     const sanitizedStudents = sanitizeStudentListForRole(
-      students.map((s) => (s.toObject ? s.toObject() : { ...s })),
+      students.map((s: any) => (s && typeof s.toObject === "function" ? s.toObject() : { ...s })),
       user.role
     );
 
     return NextResponse.json(
-      { success: true, count: sanitizedStudents.length, data: sanitizedStudents },
+      {
+        success: true,
+        count: sanitizedStudents.length,
+        data: sanitizedStudents,
+        pagination: {
+          page: isAllRequested ? 1 : page,
+          limit: isAllRequested ? sanitizedStudents.length : limit,
+          total,
+          totalPages,
+          hasNextPage: isAllRequested ? false : page * limit < total,
+          hasPreviousPage: isAllRequested ? false : page > 1,
+        },
+      },
       { status: 200, headers: corsHeaders }
     );
   } catch (error: unknown) {
@@ -346,6 +394,8 @@ export async function POST(request: NextRequest) {
 
       let portalUrl: string | null = null;
       let isExistingActivePortal = false;
+      let invitationToken: string | null = null;
+      let encryptedToken: { iv: string; authTag: string; ciphertext: string } | null = null;
 
       // Programmatically call parentAccessService to auto-generate portal access token
       try {
@@ -359,11 +409,12 @@ export async function POST(request: NextRequest) {
         );
         // Prefer the token just created; otherwise reuse the token already
         // issued to this student's ParentAccess (never regenerated).
-        const invitationToken =
+        invitationToken =
           accessResult?.rawToken ||
           getRecoverableInvitationToken(accessResult?.parentAccess);
 
         if (invitationToken) {
+          encryptedToken = encryptToken(invitationToken);
           const urlRes = resolvePortalAppBaseUrl();
           if (urlRes.success) {
             portalUrl = buildPortalActivationUrl(invitationToken, urlRes.url);
@@ -432,41 +483,64 @@ export async function POST(request: NextRequest) {
           cleanCenterId,
           newStudent._id
         );
-        await AdmissionWelcomeJob.create({
-          centerId: cleanCenterId,
-          studentId: newStudent._id,
-          idempotencyKey,
-          parentPhone: formattedPhone,
-          studentName: newStudent.name,
-          batchName: newStudent.batch,
-          status: dispatchRes?.simulated
+
+        // Check if job already exists (idempotency guard)
+        const existingJob = await AdmissionWelcomeJob.findOne({ idempotencyKey });
+        if (!existingJob) {
+          const isLiveSent = Boolean(dispatchRes?.success && !dispatchRes?.simulated && dispatchRes?.accepted);
+          const isSimulated = Boolean(dispatchRes?.simulated);
+
+          // If dispatch failed or was offline, preserve job as 'pending' with retry backoff
+          const jobStatus = isSimulated
             ? "simulated"
-            : dispatchRes?.success
+            : isLiveSent
             ? "sent"
-            : "failed",
-          attempts: 1,
-          maxAttempts: 3,
-          parentAccessStatus: portalUrl
-            ? "provisioned"
-            : isExistingActivePortal
-            ? "existing_active"
-            : "failed",
-          dispatchedAt: new Date(),
-          simulated: Boolean(dispatchRes?.simulated),
-          failureReason: dispatchRes?.error || null,
-        });
-      } catch (jobErr) {
-        console.warn(
-          "[ADMISSION WELCOME] Direct job creation notice (falling back to enqueue):",
-          jobErr instanceof Error ? jobErr.message : jobErr
-        );
-        enqueueAdmissionWelcomeJob({
-          centerId: cleanCenterId,
-          studentId: newStudent._id,
-          parentPhone: formattedPhone,
-          studentName: newStudent.name,
-          batchName: newStudent.batch,
-        }).catch(() => {});
+            : "pending";
+
+          const nextRetryAt = jobStatus === "pending"
+            ? new Date(Date.now() + 60000) // retry in 1 minute
+            : null;
+
+          await AdmissionWelcomeJob.create({
+            centerId: cleanCenterId,
+            studentId: newStudent._id,
+            idempotencyKey,
+            parentPhone: formattedPhone,
+            studentName: newStudent.name,
+            batchName: newStudent.batch,
+            status: jobStatus,
+            attempts: 1,
+            maxAttempts: 3,
+            nextRetryAt,
+            parentAccessStatus: portalUrl
+              ? "provisioned"
+              : isExistingActivePortal
+              ? "existing_active"
+              : "failed",
+            encryptedInvitationToken: isLiveSent ? null : encryptedToken,
+            tokenPrefix: invitationToken ? invitationToken.slice(0, 8) : null,
+            messageId: dispatchRes?.messageId || null,
+            dispatchedAt: (isLiveSent || isSimulated) ? new Date() : null,
+            simulated: isSimulated,
+            failureReason: isLiveSent ? null : dispatchRes?.error || (jobStatus === "pending" ? "Initial dispatch unavailable; queued for automatic retry" : null),
+          });
+        }
+      } catch (jobErr: any) {
+        if (jobErr && jobErr.code === 11000) {
+          // E11000 duplicate idempotency key on concurrent retry - safe no-op
+        } else {
+          console.warn(
+            "[ADMISSION WELCOME] Direct job creation notice (falling back to enqueue):",
+            jobErr instanceof Error ? jobErr.message : jobErr
+          );
+          enqueueAdmissionWelcomeJob({
+            centerId: cleanCenterId,
+            studentId: newStudent._id,
+            parentPhone: formattedPhone,
+            studentName: newStudent.name,
+            batchName: newStudent.batch,
+          }).catch(() => {});
+        }
       }
     } catch (welcomeErr) {
       console.error(

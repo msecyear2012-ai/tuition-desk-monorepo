@@ -78,7 +78,7 @@ next-env.d.ts
 
 # internal documentation, reports & agent instructions (Do not commit to client repo)
 docs/
-reports/
+/reports/
 scratch/
 MSEC_INSTRUCTION.md
 backend-agent.md

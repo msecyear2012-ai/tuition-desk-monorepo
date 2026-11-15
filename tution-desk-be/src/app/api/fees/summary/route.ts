@@ -4,6 +4,7 @@ import connectDB from "../../../../lib/db.ts";
 import { getAuthenticatedUser } from "../../../../lib/auth.ts";
 import Fee, {
   type IFeeDocument,
+  type IPaymentEntry,
   calculatePaymentCustody,
   getFeePaymentEntries,
 } from "../../../../models/Fee.ts";
@@ -21,12 +22,36 @@ export interface RecentCollectionItem {
   feeId: string;
   paymentId: string;
   amount: number;
-  paymentDate: Date | string;
+  paymentDate: Date | string | null;
   receiptNumber: string;
   studentName: string;
   collectorName: string;
   collectorRole: string;
   custodyStatus: string;
+}
+
+function extractPaymentDate(entry: IPaymentEntry, rawFee: IFeeDocument): Date | null {
+  if (entry.paymentDate && !isNaN(new Date(entry.paymentDate).getTime())) {
+    return new Date(entry.paymentDate);
+  }
+  if (entry.recordedAt && !isNaN(new Date(entry.recordedAt).getTime())) {
+    return new Date(entry.recordedAt);
+  }
+  const feeRecord = rawFee as unknown as {
+    paymentDate?: string | Date;
+    paidDate?: string | Date;
+    paidAt?: string | Date;
+  };
+  if (feeRecord.paymentDate && !isNaN(new Date(feeRecord.paymentDate).getTime())) {
+    return new Date(feeRecord.paymentDate);
+  }
+  if (feeRecord.paidDate && !isNaN(new Date(feeRecord.paidDate).getTime())) {
+    return new Date(feeRecord.paidDate);
+  }
+  if (feeRecord.paidAt && !isNaN(new Date(feeRecord.paidAt).getTime())) {
+    return new Date(feeRecord.paidAt);
+  }
+  return null;
 }
 
 export async function GET(request: NextRequest) {
@@ -259,11 +284,13 @@ export async function GET(request: NextRequest) {
               ? "Institute Owner"
               : teacherMap.get(collectorId)?.name || "Teacher";
 
+          const genuinePaymentDate = extractPaymentDate(entry, rawFee);
+
           recentCollections.push({
             feeId: String((rawFee as { _id: unknown })._id),
             paymentId: String(entry.paymentId || (entry as unknown as { _id?: unknown })._id || ""),
             amount: amt,
-            paymentDate: entry.paymentDate || entry.createdAt || new Date(),
+            paymentDate: genuinePaymentDate,
             receiptNumber: entry.receiptNumber || "",
             studentName: String((rawFee as { studentId?: unknown }).studentId || ""),
             collectorName,
@@ -273,7 +300,11 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      recentCollections.sort((a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime());
+      recentCollections.sort((a, b) => {
+        const timeB = b.paymentDate ? new Date(b.paymentDate).getTime() : 0;
+        const timeA = a.paymentDate ? new Date(a.paymentDate).getTime() : 0;
+        return timeB - timeA;
+      });
       const top10Recent = recentCollections.slice(0, 10);
 
       // Hydrate student names for ONLY the top 10 recent collections (avoids full-collection populates)
@@ -460,11 +491,13 @@ export async function GET(request: NextRequest) {
           custodyLabel = "Pending Verification";
         }
 
+        const genuinePaymentDate = extractPaymentDate(entry, rawFee);
+
         teacherRecentCollections.push({
           feeId: String((rawFee as { _id: unknown })._id),
           paymentId: String(entry.paymentId || (entry as unknown as { _id?: unknown })._id || ""),
           amount: amt,
-          paymentDate: entry.paymentDate || entry.createdAt || new Date(),
+          paymentDate: genuinePaymentDate,
           receiptNumber: entry.receiptNumber || "",
           studentName: String((rawFee as { studentId?: unknown }).studentId || ""),
           collectorName: "You",
@@ -474,9 +507,11 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    teacherRecentCollections.sort(
-      (a, b) => new Date(b.paymentDate).getTime() - new Date(a.paymentDate).getTime()
-    );
+    teacherRecentCollections.sort((a, b) => {
+      const timeB = b.paymentDate ? new Date(b.paymentDate).getTime() : 0;
+      const timeA = a.paymentDate ? new Date(a.paymentDate).getTime() : 0;
+      return timeB - timeA;
+    });
     const top10TeacherRecent = teacherRecentCollections.slice(0, 10);
 
     // Resolve student names for top 10 items

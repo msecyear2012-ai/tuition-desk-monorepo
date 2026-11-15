@@ -101,7 +101,7 @@ export default function TeacherHandoverConsole({ userProfile }: TeacherHandoverC
       try {
         const [feesRes, handoversRes] = await Promise.allSettled([
           apiClient<RawFeeResponse[]>("/fees", {
-            params: { centerId, status: "Paid,Partial Paid" },
+            params: { centerId, status: "Paid,Partial Paid", all: true },
             skipCache: true,
           }),
           apiClient<CashHandoverRecord[]>("/handovers", { skipCache: true }),

@@ -212,11 +212,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Today's date boundary
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
+    // Date boundaries in IST (UTC+5:30)
+    const nowUtcMs = Date.now();
+    const istOffsetMs = 5.5 * 60 * 60 * 1000;
+    const istNow = new Date(nowUtcMs + (new Date().getTimezoneOffset() * 60000) + istOffsetMs);
+
+    const istYear = istNow.getFullYear();
+    const istMonth = String(istNow.getMonth() + 1).padStart(2, "0");
+    const istDay = String(istNow.getDate()).padStart(2, "0");
+    const lastDayOfMonth = new Date(istYear, istNow.getMonth() + 1, 0).getDate();
+
+    const startOfDay = new Date(`${istYear}-${istMonth}-${istDay}T00:00:00.000+05:30`);
+    const endOfDay = new Date(`${istYear}-${istMonth}-${istDay}T23:59:59.999+05:30`);
+
+    const startOfMonth = new Date(`${istYear}-${istMonth}-01T00:00:00.000+05:30`);
+    const endOfMonth = new Date(`${istYear}-${istMonth}-${String(lastDayOfMonth).padStart(2, "0")}T23:59:59.999+05:30`);
 
     // 3. Run concurrent MongoDB queries using Promise.all
     const [
@@ -280,7 +290,7 @@ export async function GET(request: NextRequest) {
         ...attendanceMatchCondition,
       }),
 
-      // Sum of collected fees (scoped)
+      // Sum of collected fees strictly within current month in IST (scoped)
       Fee.aggregate<{ _id: null; total: number }>([
         {
           $match: {
@@ -290,17 +300,35 @@ export async function GET(request: NextRequest) {
           },
         },
         {
+          $project: {
+            payments: {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ["$paymentHistory", []] } }, 0] },
+                "$paymentHistory",
+                [
+                  {
+                    amount: {
+                      $cond: [{ $gt: ["$paidAmount", 0] }, "$paidAmount", "$amountDue"],
+                    },
+                    paymentDate: {
+                      $ifNull: ["$paidDate", { $ifNull: ["$paymentDate", "$paidAt"] }],
+                    },
+                  },
+                ],
+              ],
+            },
+          },
+        },
+        { $unwind: "$payments" },
+        {
+          $match: {
+            "payments.paymentDate": { $gte: startOfMonth, $lte: endOfMonth },
+          },
+        },
+        {
           $group: {
             _id: null,
-            total: {
-              $sum: {
-                $cond: [
-                  { $gt: ["$paidAmount", 0] },
-                  "$paidAmount",
-                  "$amountDue",
-                ],
-              },
-            },
+            total: { $sum: "$payments.amount" },
           },
         },
       ]),

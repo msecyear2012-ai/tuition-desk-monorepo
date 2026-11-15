@@ -200,7 +200,7 @@ export default function StudentProfile({
       try {
         const [studentRes, feesRes] = await Promise.allSettled([
           apiClient<StudentRecord>(`/students/${studentId}`),
-          apiClient<StudentFeeItem[]>("/fees", { params: { studentId } }),
+          apiClient<StudentFeeItem[]>("/fees", { params: { studentId, all: true } }),
         ]);
 
         if (ignore) return;

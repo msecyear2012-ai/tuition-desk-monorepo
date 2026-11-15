@@ -343,27 +343,44 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const isAllRequested = searchParams.get("all") === "true";
     const limitParam = searchParams.get("limit");
     const pageParam = searchParams.get("page");
     const skipParam = searchParams.get("skip");
 
-    const feeQuery = Fee.find(filter)
+    const defaultLimit = studentId ? 500 : 50;
+    const page = pageParam ? Math.max(1, parseInt(pageParam, 10) || 1) : 1;
+    const limit = limitParam
+      ? Math.min(Math.max(1, parseInt(limitParam, 10) || defaultLimit), 500)
+      : defaultLimit;
+
+    let skip = 0;
+    if (skipParam) {
+      skip = Math.max(0, parseInt(skipParam, 10) || 0);
+    } else {
+      skip = (page - 1) * limit;
+    }
+
+    let feeQuery: any = Fee.find(filter)
       .populate("studentId", "name batch parentWhatsApp phone")
       .sort({ createdAt: -1 });
 
-    if (limitParam) {
-      const limit = Math.min(Math.max(1, parseInt(limitParam, 10)), 500);
-      let skip = 0;
-      if (skipParam) {
-        skip = Math.max(0, parseInt(skipParam, 10));
-      } else if (pageParam) {
-        const page = Math.max(1, parseInt(pageParam, 10));
-        skip = (page - 1) * limit;
+    if (!isAllRequested && feeQuery && typeof feeQuery.skip === "function") {
+      feeQuery = feeQuery.skip(skip).limit(limit);
+    }
+
+    let totalCount = 0;
+    try {
+      if (typeof Fee.countDocuments === "function") {
+        totalCount = await Fee.countDocuments(filter);
       }
-      feeQuery.skip(skip).limit(limit);
+    } catch {
+      totalCount = 0;
     }
 
     const fees = await feeQuery;
+    const total = totalCount > 0 ? totalCount : (fees ? fees.length : 0);
+    const totalPages = isAllRequested ? 1 : Math.max(1, Math.ceil(total / limit));
 
     // 3. Resolve Center & Teacher Entities for human-readable labels
     const [centerDoc, teachers] = await Promise.all([
@@ -380,7 +397,7 @@ export async function GET(request: NextRequest) {
     });
 
     // 4. Enrich fee records with human-readable collector & academic teacher attribution
-    const enrichedFees = fees.map((feeDoc) => {
+    const enrichedFees = fees.map((feeDoc: any) => {
       const fee = feeDoc.toObject ? feeDoc.toObject() : { ...feeDoc };
 
       // Resolve collector identity (Physical / Digital Cash Custody)
@@ -446,7 +463,19 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.json(
-      { success: true, count: enrichedFees.length, data: enrichedFees },
+      {
+        success: true,
+        count: enrichedFees.length,
+        data: enrichedFees,
+        pagination: {
+          page: isAllRequested ? 1 : page,
+          limit: isAllRequested ? enrichedFees.length : limit,
+          total,
+          totalPages,
+          hasNextPage: isAllRequested ? false : page * limit < total,
+          hasPreviousPage: isAllRequested ? false : page > 1,
+        },
+      },
       { status: 200, headers: corsHeaders }
     );
   } catch (error: unknown) {
