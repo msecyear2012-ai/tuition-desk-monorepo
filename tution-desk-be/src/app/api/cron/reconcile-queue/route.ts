@@ -40,9 +40,16 @@ async function handleReconcileQueue(request: NextRequest) {
       );
     }
 
+    const searchParams = request.nextUrl
+      ? request.nextUrl.searchParams
+      : new URL(request.url).searchParams;
+
     const incomingSecret =
       request.headers.get("x-cron-secret") ||
-      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ||
+      searchParams.get("secret") ||
+      searchParams.get("cron_secret") ||
+      searchParams.get("key");
 
     if (
       !incomingSecret ||
@@ -58,9 +65,8 @@ async function handleReconcileQueue(request: NextRequest) {
     }
 
     // 2. Parse optional centerId and staleThresholdMs parameters
-    const centerId =
-      request.nextUrl.searchParams.get("centerId")?.trim() || undefined;
-    const staleThresholdParam = request.nextUrl.searchParams.get("staleThresholdMs");
+    const centerId = searchParams.get("centerId")?.trim() || undefined;
+    const staleThresholdParam = searchParams.get("staleThresholdMs");
     const staleThresholdMs = staleThresholdParam
       ? parseInt(staleThresholdParam, 10)
       : undefined;
@@ -90,6 +96,10 @@ async function handleReconcileQueue(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  return handleReconcileQueue(request);
+}
+
+export async function HEAD(request: NextRequest) {
   return handleReconcileQueue(request);
 }
 

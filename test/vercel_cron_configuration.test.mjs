@@ -2,11 +2,12 @@
  * TuitionDesk / MSEC — Vercel Cron Configuration & Route Protection Tests
  *
  * Verifies:
- * 1. vercel.json contains all 4 required cron definitions with valid paths and schedules.
- * 2. Every cron path maps to a physical route.ts handler that exports GET.
+ * 1. vercel.json does NOT contain crons array (removed to prevent Vercel Hobby tier daily cron limit deployment errors).
+ * 2. Every cron path maps to a physical route.ts handler that exports GET, HEAD, and POST.
  * 3. /api/cron/process-admission-welcome and /api/cron/reconcile-queue enforce strict CRON_SECRET authorization.
- * 4. Invalid or missing secrets are rejected with HTTP 401.
- * 5. Missing server CRON_SECRET fails closed with HTTP 500.
+ * 4. Routes accept CRON_SECRET via headers (authorization Bearer, x-cron-secret) AND query parameters (?secret=, ?key=, ?cron_secret=) for external ping monitors like UptimeRobot.
+ * 5. Invalid or missing secrets are rejected with HTTP 401.
+ * 6. Missing server CRON_SECRET fails closed with HTTP 500.
  */
 
 import test from "node:test";
@@ -21,7 +22,14 @@ const REPO_ROOT = path.resolve(__dirname, "..");
 const BE_DIR = path.resolve(REPO_ROOT, "tution-desk-be");
 const VERCEL_JSON_PATH = path.resolve(BE_DIR, "vercel.json");
 
-test("MSEC Vercel Cron Configuration Suite", async (t) => {
+const CRON_ROUTES = [
+  "/api/cron/generate-fees",
+  "/api/cron/process-fee-reminders",
+  "/api/cron/process-admission-welcome",
+  "/api/cron/reconcile-queue",
+];
+
+test("MSEC Vercel Cron Configuration Suite (Hobby Tier Compatible)", async (t) => {
   await t.test("1.1 vercel.json exists and is valid JSON", () => {
     assert.ok(fs.existsSync(VERCEL_JSON_PATH), "vercel.json must exist in tution-desk-be");
     const rawContent = fs.readFileSync(VERCEL_JSON_PATH, "utf8");
@@ -29,81 +37,49 @@ test("MSEC Vercel Cron Configuration Suite", async (t) => {
     assert.ok(config && typeof config === "object");
   });
 
-  await t.test("1.2 vercel.json contains all 4 required cron jobs with correct paths and schedules", () => {
+  await t.test("1.2 vercel.json does NOT contain crons array (preventing Vercel Hobby daily limit failure)", () => {
     const rawContent = fs.readFileSync(VERCEL_JSON_PATH, "utf8");
     const config = JSON.parse(rawContent);
-    assert.ok(Array.isArray(config.crons), "crons must be an array");
-    assert.strictEqual(config.crons.length, 4, "Must have exactly 4 cron definitions");
-
-    const cronMap = new Map(config.crons.map((c) => [c.path, c.schedule]));
-
-    // 1. Fee generation
-    assert.ok(cronMap.has("/api/cron/generate-fees"), "Missing /api/cron/generate-fees");
-    assert.strictEqual(cronMap.get("/api/cron/generate-fees"), "0 0 * * *");
-
-    // 2. Fee reminder dispatcher
-    assert.ok(cronMap.has("/api/cron/process-fee-reminders"), "Missing /api/cron/process-fee-reminders");
-    assert.strictEqual(cronMap.get("/api/cron/process-fee-reminders"), "0 4 * * *");
-
-    // 3. Admission welcome processor
-    assert.ok(cronMap.has("/api/cron/process-admission-welcome"), "Missing /api/cron/process-admission-welcome");
-    assert.strictEqual(cronMap.get("/api/cron/process-admission-welcome"), "*/10 * * * *");
-
-    // 4. Queue reconciler
-    assert.ok(cronMap.has("/api/cron/reconcile-queue"), "Missing /api/cron/reconcile-queue");
-    assert.strictEqual(cronMap.get("/api/cron/reconcile-queue"), "*/15 * * * *");
+    assert.strictEqual(
+      config.crons,
+      undefined,
+      "vercel.json must not have crons array configured so Vercel Hobby tier deployments succeed"
+    );
   });
 
   await t.test("1.3 Every cron route path corresponds to an existing route.ts file on disk", () => {
-    const rawContent = fs.readFileSync(VERCEL_JSON_PATH, "utf8");
-    const config = JSON.parse(rawContent);
-
-    for (const entry of config.crons) {
-      // Map /api/cron/... to tution-desk-be/src/app/api/cron/.../route.ts
-      const relPath = entry.path.replace(/^\/api\//, "src/app/api/");
+    for (const routePath of CRON_ROUTES) {
+      const relPath = routePath.replace(/^\/api\//, "src/app/api/");
       const fullPath = path.resolve(BE_DIR, relPath, "route.ts");
       assert.ok(
         fs.existsSync(fullPath),
-        `Route file does not exist on disk: ${fullPath} for path ${entry.path}`
-      );
-    }
-  });
-
-  await t.test("1.4 Standard 5-field cron schedule syntax is valid for all entries", () => {
-    const rawContent = fs.readFileSync(VERCEL_JSON_PATH, "utf8");
-    const config = JSON.parse(rawContent);
-
-    for (const entry of config.crons) {
-      const parts = entry.schedule.trim().split(/\s+/);
-      assert.strictEqual(
-        parts.length,
-        5,
-        `Schedule "${entry.schedule}" for ${entry.path} must have exactly 5 fields`
+        `Route file does not exist on disk: ${fullPath} for path ${routePath}`
       );
     }
   });
 });
 
-test("MSEC Cron Route Security & Authorization Protection", async (t) => {
+test("MSEC Cron Route Security & External Ping Authorization Protection", async (t) => {
   const TEST_SECRET = "test-secret-cron-msec-tuitiondesk-2026";
   const origEnvSecret = process.env.CRON_SECRET;
 
-  const { GET: getAdmissionWelcome } = await import(
+  const { GET: getAdmissionWelcome, HEAD: headAdmissionWelcome } = await import(
     "../tution-desk-be/src/app/api/cron/process-admission-welcome/route.ts"
   );
-  const { GET: getReconcileQueue } = await import(
+  const { GET: getReconcileQueue, HEAD: headReconcileQueue } = await import(
     "../tution-desk-be/src/app/api/cron/reconcile-queue/route.ts"
   );
 
-  function createMockRequest(headers = {}) {
+  function createMockRequest(headers = {}, query = "") {
     const headerMap = new Map();
     for (const [k, v] of Object.entries(headers)) {
       headerMap.set(k.toLowerCase(), v);
     }
+    const fullUrl = `http://localhost:3000/api/cron/test${query ? (query.startsWith("?") ? query : `?${query}`) : ""}`;
     return {
       method: "GET",
-      url: "http://localhost:3000/api/cron/test",
-      nextUrl: new URL("http://localhost:3000/api/cron/test"),
+      url: fullUrl,
+      nextUrl: new URL(fullUrl),
       headers: {
         get: (name) => headerMap.get(name.toLowerCase()) || null,
       },
@@ -186,5 +162,38 @@ test("MSEC Cron Route Security & Authorization Protection", async (t) => {
     const req2 = createMockRequest({ "x-cron-secret": "wrong-secret" });
     const res2 = await getReconcileQueue(req2);
     assert.strictEqual(res2.status, 401);
+  });
+
+  await t.test("4.1 Routes accept secret passed via query parameter ?secret= (for external ping services like UptimeRobot)", async () => {
+    process.env.CRON_SECRET = TEST_SECRET;
+    
+    // Invalid secret query param -> 401
+    const reqInvalid = createMockRequest({}, "secret=invalid-ping-secret");
+    const resInvalid = await getAdmissionWelcome(reqInvalid);
+    assert.strictEqual(resInvalid.status, 401);
+
+    // Valid secret query param -> does not return 401 or 500 auth error
+    const reqValid = createMockRequest({}, `secret=${TEST_SECRET}`);
+    const resValid = await getAdmissionWelcome(reqValid);
+    // Since admissionWelcomeQueue handles DB connection (which might succeed or return 200),
+    // status should not be 401 Unauthorized
+    assert.notStrictEqual(resValid.status, 401);
+  });
+
+  await t.test("4.2 Routes accept secret passed via ?key= or ?cron_secret= query parameters", async () => {
+    process.env.CRON_SECRET = TEST_SECRET;
+
+    const reqKey = createMockRequest({}, `key=${TEST_SECRET}`);
+    const resKey = await getReconcileQueue(reqKey);
+    assert.notStrictEqual(resKey.status, 401);
+
+    const reqCronSecret = createMockRequest({}, `cron_secret=${TEST_SECRET}`);
+    const resCronSecret = await getAdmissionWelcome(reqCronSecret);
+    assert.notStrictEqual(resCronSecret.status, 401);
+  });
+
+  await t.test("4.3 HEAD method is exported on routes for external HEAD ping monitors", () => {
+    assert.strictEqual(typeof headAdmissionWelcome, "function");
+    assert.strictEqual(typeof headReconcileQueue, "function");
   });
 });

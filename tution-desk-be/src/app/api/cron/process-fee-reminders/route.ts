@@ -42,9 +42,16 @@ async function handleProcessReminders(request: NextRequest) {
       );
     }
 
+    const searchParams = request.nextUrl
+      ? request.nextUrl.searchParams
+      : new URL(request.url).searchParams;
+
     const incomingSecret =
       request.headers.get("x-cron-secret") ||
-      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ||
+      searchParams.get("secret") ||
+      searchParams.get("cron_secret") ||
+      searchParams.get("key");
 
     if (
       !incomingSecret ||
@@ -60,7 +67,6 @@ async function handleProcessReminders(request: NextRequest) {
     }
 
     // 2. Parse Trigger Parameters (Query params or optional JSON body)
-    const { searchParams } = request.nextUrl;
     const body =
       request.method === "POST" ? await request.json().catch(() => ({})) : {};
 
@@ -125,6 +131,10 @@ async function handleProcessReminders(request: NextRequest) {
  * Requires Authorization: Bearer <CRON_SECRET> or x-cron-secret header.
  */
 export async function GET(request: NextRequest) {
+  return handleProcessReminders(request);
+}
+
+export async function HEAD(request: NextRequest) {
   return handleProcessReminders(request);
 }
 

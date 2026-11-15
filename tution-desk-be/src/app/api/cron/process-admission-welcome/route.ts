@@ -40,9 +40,16 @@ async function handleProcessQueue(request: NextRequest) {
       );
     }
 
+    const searchParams = request.nextUrl
+      ? request.nextUrl.searchParams
+      : new URL(request.url).searchParams;
+
     const incomingSecret =
       request.headers.get("x-cron-secret") ||
-      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ||
+      searchParams.get("secret") ||
+      searchParams.get("cron_secret") ||
+      searchParams.get("key");
 
     if (
       !incomingSecret ||
@@ -58,9 +65,6 @@ async function handleProcessQueue(request: NextRequest) {
     }
 
     // 2. Parse optional centerId and limit parameters
-    const searchParams = request.nextUrl
-      ? request.nextUrl.searchParams
-      : new URL(request.url).searchParams;
     const body =
       request.method === "POST" ? await request.json().catch(() => ({})) : {};
 
@@ -95,6 +99,10 @@ async function handleProcessQueue(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  return handleProcessQueue(request);
+}
+
+export async function HEAD(request: NextRequest) {
   return handleProcessQueue(request);
 }
 
