@@ -10,6 +10,7 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
+  X,
 } from "lucide-react";
 
 interface PushNotificationToggleProps {
@@ -30,6 +31,7 @@ export default function PushNotificationToggle({
     error,
     subscribe,
     unsubscribe,
+    clearError,
   } = useWebPush();
 
   if (!isSupported) {
@@ -57,8 +59,8 @@ export default function PushNotificationToggle({
     <div
       className={`bg-white border border-slate-200/80 rounded-2xl p-4 shadow-xs transition-all ${className}`}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+        <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
           <div
             className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
               isSubscribed
@@ -76,8 +78,8 @@ export default function PushNotificationToggle({
               <Bell className="w-5 h-5" />
             )}
           </div>
-          <div>
-            <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
               <h4 className="text-sm font-semibold text-slate-900">
                 Push Notifications
               </h4>
@@ -99,7 +101,7 @@ export default function PushNotificationToggle({
                 )}
               </span>
             </div>
-            <p className="text-xs text-slate-500 mt-0.5">
+            <p className="text-xs text-slate-500 mt-0.5 break-words">
               {isSubscribed
                 ? "Real-time attendance & fee reminders are active."
                 : isBlocked
@@ -113,7 +115,7 @@ export default function PushNotificationToggle({
           type="button"
           onClick={handleToggle}
           disabled={loading || isBlocked}
-          className={`px-4 py-2 text-xs font-medium rounded-xl transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer ${
+          className={`w-full sm:w-auto px-4 py-2.5 sm:py-2 text-xs font-medium rounded-xl transition-all flex items-center justify-center gap-1.5 shrink-0 shadow-xs cursor-pointer ${
             isSubscribed
               ? "bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300/80"
               : isBlocked
@@ -143,15 +145,25 @@ export default function PushNotificationToggle({
       </div>
 
       {error && (
-        <div className="mt-3 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-          <span>{error}</span>
+        <div className="mt-3 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-start justify-between gap-2 break-words">
+          <div className="flex items-start gap-2 flex-1 min-w-0">
+            <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+            <span className="flex-1 break-words">{error}</span>
+          </div>
+          <button
+            type="button"
+            onClick={clearError}
+            className="text-rose-400 hover:text-rose-600 p-0.5 rounded shrink-0 cursor-pointer"
+            title="Dismiss error"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 
       {/* iOS Safari PWA Installation Hint */}
       {!isStandalone && typeof window !== "undefined" && /iPhone|iPad|iPod/.test(navigator.userAgent) && (
-        <div className="mt-3 p-2.5 bg-amber-50 border border-amber-200/80 rounded-xl text-xs text-amber-800">
+        <div className="mt-3 p-2.5 bg-amber-50 border border-amber-200/80 rounded-xl text-xs text-amber-800 break-words">
           <span className="font-semibold">iOS Note:</span> To receive push
           notifications on iPhone or iPad, tap the Share icon ⎋ and choose{" "}
           <span className="font-semibold">&quot;Add to Home Screen&quot;</span>, then

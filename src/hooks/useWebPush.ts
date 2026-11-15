@@ -17,6 +17,7 @@ export interface UseWebPushReturn {
   error: string | null;
   subscribe: (rawToken?: string) => Promise<boolean>;
   unsubscribe: (rawToken?: string) => Promise<boolean>;
+  clearError: () => void;
 }
 
 export function useWebPush(customBackendUrl?: string): UseWebPushReturn {
@@ -224,6 +225,10 @@ export function useWebPush(customBackendUrl?: string): UseWebPushReturn {
     [backendUrl]
   );
 
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
   return {
     isSupported,
     isStandalone,
@@ -234,5 +239,6 @@ export function useWebPush(customBackendUrl?: string): UseWebPushReturn {
     error,
     subscribe,
     unsubscribe,
+    clearError,
   };
 }
