@@ -75,20 +75,50 @@ export const ParentAccessLock: Model<IParentAccessLockDocument> =
 let parentAccessLockInitPromise: Promise<any> | null = null;
 
 async function syncParentAccessLockIndexes(targetModel: any): Promise<void> {
+  const collection = targetModel?.collection;
   const isConnected =
     targetModel?.db?.readyState === 1 ||
-    targetModel?.collection?.conn?.readyState === 1 ||
+    collection?.conn?.readyState === 1 ||
     mongoose.connection?.readyState === 1;
 
-  if (isConnected && typeof targetModel?.init === "function") {
+  if (isConnected) {
     try {
       if (!parentAccessLockInitPromise) {
-        const initCall = targetModel.init().catch((err: any) => {
-          parentAccessLockInitPromise = null;
-          console.warn("[ParentAccessLock] Index sync notice:", err?.message || err);
-        });
-        const timeoutCall = new Promise<void>((resolve) => setTimeout(resolve, 3000));
-        parentAccessLockInitPromise = Promise.race([initCall, timeoutCall]);
+        const buildCall = (async () => {
+          // 1. Model-level index build (bypasses autoIndex check)
+          if (typeof targetModel?.createIndexes === "function") {
+            try {
+              await targetModel.createIndexes();
+            } catch (err: any) {
+              console.warn("[ParentAccessLock] createIndexes notice:", err?.message || err);
+            }
+          }
+          // 2. Direct collection-level creation of the critical unique index on lockKey
+          if (collection && typeof collection.createIndex === "function") {
+            try {
+              await collection.createIndex(
+                { lockKey: 1 },
+                { unique: true, name: "lockKey_1" }
+              );
+            } catch (err: any) {
+              console.warn("[ParentAccessLock] createIndex unique notice:", err?.message || err);
+            }
+          }
+          // 3. Direct collection-level creation of the TTL index on expiresAt
+          if (collection && typeof collection.createIndex === "function") {
+            try {
+              await collection.createIndex(
+                { expiresAt: 1 },
+                { expireAfterSeconds: 600, name: "expiresAt_1" }
+              );
+            } catch (err: any) {
+              console.warn("[ParentAccessLock] createIndex TTL notice:", err?.message || err);
+            }
+          }
+        })();
+
+        const timeoutCall = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+        parentAccessLockInitPromise = Promise.race([buildCall, timeoutCall]);
       }
       await parentAccessLockInitPromise;
     } catch {
@@ -143,11 +173,9 @@ export async function verifyParentAccessLockIndexIntegrity(model?: any): Promise
       if (hasIndex) return true;
 
       // When autoIndex is false in production, attempt to build/sync schema indexes on the fly
-      if (typeof targetModel.init === "function") {
-        await syncParentAccessLockIndexes(targetModel);
-        const verifiedAfterInit = await inspectIndexes();
-        if (verifiedAfterInit) return true;
-      }
+      await syncParentAccessLockIndexes(targetModel);
+      const verifiedAfterInit = await inspectIndexes();
+      if (verifiedAfterInit) return true;
     }
     if (targetModel.enforceUniqueness !== undefined) {
       return Boolean(targetModel.enforceUniqueness);
@@ -197,11 +225,9 @@ export async function verifyParentAccessLockTtlIndexIntegrity(model?: any): Prom
       if (hasTtl) return true;
 
       // When autoIndex is false in production, attempt to build/sync schema indexes on the fly
-      if (typeof targetModel.init === "function") {
-        await syncParentAccessLockIndexes(targetModel);
-        const verifiedAfterInit = await inspectTtl();
-        if (verifiedAfterInit) return true;
-      }
+      await syncParentAccessLockIndexes(targetModel);
+      const verifiedAfterInit = await inspectTtl();
+      if (verifiedAfterInit) return true;
     }
   } catch {
     return false;

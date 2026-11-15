@@ -564,6 +564,7 @@ export default function StudentProfile({
                 studentName={student.name}
                 parentPhone={student.parentWhatsApp}
                 centerId={student.centerId}
+                onLinkGenerated={handleManualRefresh}
               />
             )}
 

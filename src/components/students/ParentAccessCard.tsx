@@ -79,12 +79,14 @@ export default function ParentAccessCard({
   studentName,
   parentPhone,
   centerName = "Tuition Center",
+  onLinkGenerated,
 }: {
   studentId: string;
   studentName: string;
   parentPhone: string;
   centerId?: string;
   centerName?: string;
+  onLinkGenerated?: () => void;
 }) {
   const [loading, setLoading] = useState(true);
   const [isOwner, setIsOwner] = useState<boolean | null>(null);
@@ -179,11 +181,22 @@ export default function ParentAccessCard({
         },
       });
 
-      const data = res?.data || (res as unknown as GenerateResponse);
-      if (res && res.success && data?.portalUrl) {
-        setActivePortalUrl(data.portalUrl);
-        setAccess(data.parentAccess);
+      const data = res?.data;
+      const portalUrl = data?.portalUrl;
+      const parentAccess = data?.parentAccess;
+
+      if (res && res.success && portalUrl) {
+        setErrorMessage(null);
+        setActivePortalUrl(portalUrl);
+        if (parentAccess) {
+          setAccess(parentAccess);
+        }
         showToast("Secure portal link generated!");
+        // Re-fetch authoritative status and notify parent component
+        await fetchAccessInfo();
+        if (typeof onLinkGenerated === "function") {
+          onLinkGenerated();
+        }
       } else {
         throw new Error(res.error || "Failed to generate portal link");
       }
@@ -217,11 +230,21 @@ export default function ParentAccessCard({
         },
       });
 
-      const data = res?.data || (res as unknown as GenerateResponse);
-      if (res && res.success && data?.portalUrl) {
-        setActivePortalUrl(data.portalUrl);
-        setAccess(data.parentAccess);
+      const data = res?.data;
+      const portalUrl = data?.portalUrl;
+      const parentAccess = data?.parentAccess;
+
+      if (res && res.success && portalUrl) {
+        setErrorMessage(null);
+        setActivePortalUrl(portalUrl);
+        if (parentAccess) {
+          setAccess(parentAccess);
+        }
         showToast("New portal link generated. Previous link is now invalid.");
+        await fetchAccessInfo();
+        if (typeof onLinkGenerated === "function") {
+          onLinkGenerated();
+        }
       } else {
         throw new Error(res.error || "Failed to regenerate portal link");
       }
@@ -421,12 +444,29 @@ export default function ParentAccessCard({
 
       {/* Error */}
       {errorMessage && (
-        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl text-xs font-semibold flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-          <span className="flex-1">{errorMessage}</span>
-          <button onClick={() => setErrorMessage(null)}>
-            <X className="w-4 h-4" />
-          </button>
+        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl text-xs font-semibold flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+            <span className="flex-1 break-words">{errorMessage}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => {
+                setErrorMessage(null);
+                void handleGenerateLink();
+              }}
+              className="px-2 py-1 text-[11px] font-bold rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-700 transition-colors"
+            >
+              Retry
+            </button>
+            <button
+              onClick={() => setErrorMessage(null)}
+              className="p-1 hover:bg-rose-100 rounded-lg transition-colors text-rose-600"
+              title="Dismiss error"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 

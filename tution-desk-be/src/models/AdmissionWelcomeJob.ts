@@ -213,20 +213,39 @@ export const AdmissionWelcomeJob: Model<IAdmissionWelcomeJobDocument> =
 let admissionWelcomeJobInitPromise: Promise<any> | null = null;
 
 async function syncAdmissionWelcomeJobIndexes(targetModel: any): Promise<void> {
+  const collection = targetModel?.collection;
   const isConnected =
     targetModel?.db?.readyState === 1 ||
-    targetModel?.collection?.conn?.readyState === 1 ||
+    collection?.conn?.readyState === 1 ||
     mongoose.connection?.readyState === 1;
 
-  if (isConnected && typeof targetModel?.init === "function") {
+  if (isConnected) {
     try {
       if (!admissionWelcomeJobInitPromise) {
-        const initCall = targetModel.init().catch((err: any) => {
-          admissionWelcomeJobInitPromise = null;
-          console.warn("[AdmissionWelcomeJob] Index sync notice:", err?.message || err);
-        });
-        const timeoutCall = new Promise<void>((resolve) => setTimeout(resolve, 3000));
-        admissionWelcomeJobInitPromise = Promise.race([initCall, timeoutCall]);
+        const buildCall = (async () => {
+          // 1. Model-level index build (bypasses autoIndex check)
+          if (typeof targetModel?.createIndexes === "function") {
+            try {
+              await targetModel.createIndexes();
+            } catch (err: any) {
+              console.warn("[AdmissionWelcomeJob] createIndexes notice:", err?.message || err);
+            }
+          }
+          // 2. Direct collection-level creation of unique index on idempotencyKey
+          if (collection && typeof collection.createIndex === "function") {
+            try {
+              await collection.createIndex(
+                { idempotencyKey: 1 },
+                { unique: true, name: "idempotencyKey_1" }
+              );
+            } catch (err: any) {
+              console.warn("[AdmissionWelcomeJob] createIndex unique notice:", err?.message || err);
+            }
+          }
+        })();
+
+        const timeoutCall = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+        admissionWelcomeJobInitPromise = Promise.race([buildCall, timeoutCall]);
       }
       await admissionWelcomeJobInitPromise;
     } catch {
@@ -281,11 +300,9 @@ export async function verifyAdmissionWelcomeJobIndexIntegrity(model?: any): Prom
       if (hasIndex) return true;
 
       // When autoIndex is false in production, attempt to build/sync schema indexes on the fly
-      if (typeof targetModel.init === "function") {
-        await syncAdmissionWelcomeJobIndexes(targetModel);
-        const verifiedAfterInit = await inspectIndexes();
-        if (verifiedAfterInit) return true;
-      }
+      await syncAdmissionWelcomeJobIndexes(targetModel);
+      const verifiedAfterInit = await inspectIndexes();
+      if (verifiedAfterInit) return true;
     }
     if (targetModel.enforceUniqueness !== undefined) {
       return Boolean(targetModel.enforceUniqueness);
