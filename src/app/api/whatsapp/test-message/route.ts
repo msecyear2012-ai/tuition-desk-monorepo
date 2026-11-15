@@ -114,6 +114,23 @@ export async function POST(request: NextRequest) {
     // Verify upstream microservice acceptance before reporting accepted: true
     // Preserves accepted: true, delivered: false semantics (never reports delivered without delivery receipt)
     if (res.ok && data && data.success) {
+      if (data.simulated) {
+        return NextResponse.json(
+          {
+            success: true,
+            simulated: true,
+            accepted: false,
+            delivered: false,
+            centerId,
+            messageId: data.messageId || "simulated",
+            status: data.status || "simulated",
+            message:
+              data.message ||
+              "Message was processed in simulation mode by the WhatsApp service.",
+          },
+          { status: 200 }
+        );
+      }
       return NextResponse.json(
         {
           success: true,

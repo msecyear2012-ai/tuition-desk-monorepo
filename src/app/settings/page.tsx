@@ -831,7 +831,7 @@ export default function SettingsPage() {
           type: "warning",
           message:
             data?.message ||
-            `⚠️ Simulation Mode: Message was simulated (not sent to WhatsApp). Set ALLOW_TEST_WHATSAPP_DISPATCH=true in local development to test dispatch, or WHATSAPP_MODE=live and ENABLE_LIVE_WHATSAPP=true for live delivery.`,
+            `⚠️ Simulation Mode: Message was simulated (not sent to WhatsApp network). Ensure WHATSAPP_MODE=live and ENABLE_LIVE_WHATSAPP=true are configured for live dispatch.`,
         });
       } else if (res.ok && data?.success) {
         setTestResult({

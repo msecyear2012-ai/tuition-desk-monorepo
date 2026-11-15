@@ -159,12 +159,26 @@ export function normalizeIndianPhone(phone: string | number): string {
 }
 
 /**
- * Strict QA Live-Recipient Allowlist Guard:
- * - If QA_LIVE_MODE is active, a missing, empty, or invalid allowlist MUST fail closed (rejects live send).
- * - If QA_LIVE_RECIPIENT_ALLOWLIST is configured, only explicitly allowlisted numbers may proceed live.
- * - Non-allowlisted numbers fail closed and revert to simulation mode.
+ * Production and QA Live-Recipient Guard:
+ * - If QA_LIVE_MODE is active ('true'), strict QA safety isolation applies:
+ *   * Missing or empty allowlist MUST fail closed (rejects live send).
+ *   * If QA_LIVE_RECIPIENT_ALLOWLIST is configured, only explicitly allowlisted numbers may proceed live.
+ *   * Non-allowlisted numbers fail closed and revert to simulation mode.
+ * - In production mode (QA_LIVE_MODE is unset or false):
+ *   * Normal tenant production dispatch does not depend on QA_LIVE_MODE or QA_LIVE_RECIPIENT_ALLOWLIST.
+ *   * Any valid Indian phone number (normalizes to 10-15 digits) is allowed for live dispatch.
+ *   * Missing or invalid recipient numbers fail closed.
  */
 export function isPhoneAllowedForLiveDispatch(phone?: string | number): boolean {
+  if (!phone || String(phone).trim() === "") {
+    return false;
+  }
+
+  const normRecipient = normalizeIndianPhone(phone);
+  if (!normRecipient || normRecipient.length < 10 || normRecipient.length > 15) {
+    return false;
+  }
+
   const isQaLiveMode = process.env.QA_LIVE_MODE?.trim().toLowerCase() === "true";
   const allowlistRaw = process.env.QA_LIVE_RECIPIENT_ALLOWLIST?.trim();
 
@@ -176,10 +190,8 @@ export function isPhoneAllowedForLiveDispatch(phone?: string | number): boolean 
     return false;
   }
 
-  // If an allowlist is provided (whether QA_LIVE_MODE is set or not)
-  if (allowlistRaw) {
-    if (!phone) return false;
-    const normRecipient = normalizeIndianPhone(phone);
+  // In QA live mode with configured allowlist, only explicitly allowlisted numbers may proceed live
+  if (isQaLiveMode && allowlistRaw) {
     const allowedList = allowlistRaw
       .split(",")
       .map((p) => normalizeIndianPhone(p.trim()))
@@ -210,11 +222,9 @@ export function isAdmissionWelcomeLiveDispatchEnabled(
   recipientPhone?: string | number
 ): boolean {
   const flag = process.env.ENABLE_ADMISSION_WELCOME_WHATSAPP?.trim().toLowerCase();
-  if (flag === "false") return false;
-  if (flag === "true") {
-    return isPhoneAllowedForLiveDispatch(recipientPhone);
-  }
-  return isLiveDispatchEnabled(recipientPhone);
+  if (flag !== "true") return false;
+  if (recipientPhone === undefined) return true;
+  return isPhoneAllowedForLiveDispatch(recipientPhone);
 }
 
 export function isLiveDispatchEnabled(
@@ -225,6 +235,7 @@ export function isLiveDispatchEnabled(
   if (mode !== "live" || liveOptIn !== "true") {
     return false;
   }
+  if (recipientPhone === undefined) return true;
   return isPhoneAllowedForLiveDispatch(recipientPhone);
 }
 
@@ -344,8 +355,8 @@ export async function sendWelcomeMessage(
     };
   }
 
-  // Fail-closed simulation guard: zero network requests unless explicitly opted into live mode
-  if (!isLiveDispatchEnabled(cleanDigits)) {
+  // Fail-closed simulation guard: requires dedicated admission welcome dispatch opt-in
+  if (!isAdmissionWelcomeLiveDispatchEnabled(cleanDigits)) {
     logSimulatedDispatch("welcome_message", centerId, cleanDigits, message);
     return {
       success: false,
@@ -358,7 +369,7 @@ export async function sendWelcomeMessage(
       message,
       messageId: `sim_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       error:
-        "Simulation mode active: outbound live WhatsApp dispatch disabled. Set WHATSAPP_MODE=live and ENABLE_LIVE_WHATSAPP=true to enable live delivery.",
+        "Simulation mode active: admission welcome live dispatch disabled. Set ENABLE_ADMISSION_WELCOME_WHATSAPP=true with WHATSAPP_MODE=live and ENABLE_LIVE_WHATSAPP=true to enable live delivery.",
     };
   }
 

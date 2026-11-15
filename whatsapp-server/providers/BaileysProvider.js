@@ -1012,7 +1012,7 @@ class BaileysProvider extends IWhatsAppProvider {
       };
     }
 
-    if (allowlistRaw) {
+    if (isQaLiveMode && allowlistRaw) {
       const cleanedTargetDigits = formattedJid.replace('@s.whatsapp.net', '');
       const allowedList = allowlistRaw
         .split(',')
@@ -1121,6 +1121,7 @@ class BaileysProvider extends IWhatsAppProvider {
   
       return {
         success: true,
+        simulated: false,
         centerId: targetCenterId,
         messageId: response?.key?.id || response?.id || 'sent',
         recipient: formattedJid,
