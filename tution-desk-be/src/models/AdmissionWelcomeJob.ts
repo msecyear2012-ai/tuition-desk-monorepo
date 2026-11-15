@@ -210,6 +210,31 @@ export const AdmissionWelcomeJob: Model<IAdmissionWelcomeJobDocument> =
     AdmissionWelcomeJobSchema
   );
 
+let admissionWelcomeJobInitPromise: Promise<any> | null = null;
+
+async function syncAdmissionWelcomeJobIndexes(targetModel: any): Promise<void> {
+  const isConnected =
+    targetModel?.db?.readyState === 1 ||
+    targetModel?.collection?.conn?.readyState === 1 ||
+    mongoose.connection?.readyState === 1;
+
+  if (isConnected && typeof targetModel?.init === "function") {
+    try {
+      if (!admissionWelcomeJobInitPromise) {
+        const initCall = targetModel.init().catch((err: any) => {
+          admissionWelcomeJobInitPromise = null;
+          console.warn("[AdmissionWelcomeJob] Index sync notice:", err?.message || err);
+        });
+        const timeoutCall = new Promise<void>((resolve) => setTimeout(resolve, 3000));
+        admissionWelcomeJobInitPromise = Promise.race([initCall, timeoutCall]);
+      }
+      await admissionWelcomeJobInitPromise;
+    } catch {
+      admissionWelcomeJobInitPromise = null;
+    }
+  }
+}
+
 /**
  * Verifies whether the unique index on 'idempotencyKey' is active and enforced on the collection.
  * When Mongoose autoIndex is false (standard in production), unique constraints are NOT automatically
@@ -225,28 +250,41 @@ export async function verifyAdmissionWelcomeJobIndexIntegrity(model?: any): Prom
     }
     const collection = targetModel.collection;
     if (collection) {
-      let indexes: any[] = [];
-      if (typeof collection.indexes === "function") {
-        indexes = await collection.indexes();
-      } else if (typeof collection.listIndexes === "function") {
-        const cursor = collection.listIndexes();
-        indexes =
-          typeof cursor.toArray === "function" ? await cursor.toArray() : await cursor;
-      }
+      const inspectIndexes = async () => {
+        let indexes: any[] = [];
+        if (typeof collection.indexes === "function") {
+          indexes = await collection.indexes();
+        } else if (typeof collection.listIndexes === "function") {
+          const cursor = collection.listIndexes();
+          indexes =
+            typeof cursor.toArray === "function" ? await cursor.toArray() : await cursor;
+        }
 
-      if (Array.isArray(indexes)) {
-        return indexes.some((idx: any) => {
-          if (!idx || !idx.key || typeof idx.key !== "object") return false;
-          const keyProps = Object.keys(idx.key);
-          // Strict verification: exactly one key field 'idempotencyKey' with sort 1, and unique: true.
-          // Reject compound indexes (e.g. { idempotencyKey: 1, centerId: 1 }) and partial matches.
-          return (
-            keyProps.length === 1 &&
-            keyProps[0] === "idempotencyKey" &&
-            idx.key.idempotencyKey === 1 &&
-            idx.unique === true
-          );
-        });
+        if (Array.isArray(indexes)) {
+          return indexes.some((idx: any) => {
+            if (!idx || !idx.key || typeof idx.key !== "object") return false;
+            const keyProps = Object.keys(idx.key);
+            // Strict verification: exactly one key field 'idempotencyKey' with sort 1, and unique: true.
+            // Reject compound indexes (e.g. { idempotencyKey: 1, centerId: 1 }) and partial matches.
+            return (
+              keyProps.length === 1 &&
+              keyProps[0] === "idempotencyKey" &&
+              idx.key.idempotencyKey === 1 &&
+              idx.unique === true
+            );
+          });
+        }
+        return false;
+      };
+
+      const hasIndex = await inspectIndexes();
+      if (hasIndex) return true;
+
+      // When autoIndex is false in production, attempt to build/sync schema indexes on the fly
+      if (typeof targetModel.init === "function") {
+        await syncAdmissionWelcomeJobIndexes(targetModel);
+        const verifiedAfterInit = await inspectIndexes();
+        if (verifiedAfterInit) return true;
       }
     }
     if (targetModel.enforceUniqueness !== undefined) {

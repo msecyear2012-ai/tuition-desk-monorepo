@@ -84,6 +84,31 @@ export const FeeCreationLock: Model<IFeeCreationLockDocument> =
   (mongoose.models.FeeCreationLock as Model<IFeeCreationLockDocument>) ||
   mongoose.model<IFeeCreationLockDocument>("FeeCreationLock", FeeCreationLockSchema);
 
+let feeCreationLockInitPromise: Promise<any> | null = null;
+
+async function syncFeeCreationLockIndexes(targetModel: any): Promise<void> {
+  const isConnected =
+    targetModel?.db?.readyState === 1 ||
+    targetModel?.collection?.conn?.readyState === 1 ||
+    mongoose.connection?.readyState === 1;
+
+  if (isConnected && typeof targetModel?.init === "function") {
+    try {
+      if (!feeCreationLockInitPromise) {
+        const initCall = targetModel.init().catch((err: any) => {
+          feeCreationLockInitPromise = null;
+          console.warn("[FeeCreationLock] Index sync notice:", err?.message || err);
+        });
+        const timeoutCall = new Promise<void>((resolve) => setTimeout(resolve, 3000));
+        feeCreationLockInitPromise = Promise.race([initCall, timeoutCall]);
+      }
+      await feeCreationLockInitPromise;
+    } catch {
+      feeCreationLockInitPromise = null;
+    }
+  }
+}
+
 /**
  * Verifies whether the unique index on 'lockKey' is active and enforced on the collection.
  * When Mongoose autoIndex is false (standard in production), unique constraints are NOT automatically
@@ -99,19 +124,31 @@ export async function verifyLockIndexIntegrity(model?: any): Promise<boolean> {
     }
     const collection = targetModel.collection;
     if (collection) {
-      if (typeof collection.indexes === "function") {
-        const indexes = await collection.indexes();
-        return indexes.some(
-          (idx: any) => idx.key && idx.key.lockKey === 1 && idx.unique === true
-        );
-      }
-      if (typeof collection.listIndexes === "function") {
-        const cursor = collection.listIndexes();
-        const indexes =
-          typeof cursor.toArray === "function" ? await cursor.toArray() : await cursor;
-        return indexes.some(
-          (idx: any) => idx.key && idx.key.lockKey === 1 && idx.unique === true
-        );
+      const inspectIndexes = async () => {
+        let indexes: any[] = [];
+        if (typeof collection.indexes === "function") {
+          indexes = await collection.indexes();
+        } else if (typeof collection.listIndexes === "function") {
+          const cursor = collection.listIndexes();
+          indexes =
+            typeof cursor.toArray === "function" ? await cursor.toArray() : await cursor;
+        }
+        if (Array.isArray(indexes)) {
+          return indexes.some(
+            (idx: any) => idx.key && idx.key.lockKey === 1 && idx.unique === true
+          );
+        }
+        return false;
+      };
+
+      const hasIndex = await inspectIndexes();
+      if (hasIndex) return true;
+
+      // When autoIndex is false in production, attempt to build/sync schema indexes on the fly
+      if (typeof targetModel.init === "function") {
+        await syncFeeCreationLockIndexes(targetModel);
+        const verifiedAfterInit = await inspectIndexes();
+        if (verifiedAfterInit) return true;
       }
     }
     if (targetModel.enforceUniqueness !== undefined) {
@@ -136,23 +173,36 @@ export async function verifyFeeCreationLockTtlIndexIntegrity(model?: any): Promi
     }
     const collection = targetModel.collection;
     if (collection) {
-      let indexes: any[] = [];
-      if (typeof collection.indexes === "function") {
-        indexes = await collection.indexes();
-      } else if (typeof collection.listIndexes === "function") {
-        const cursor = collection.listIndexes();
-        indexes =
-          typeof cursor.toArray === "function" ? await cursor.toArray() : await cursor;
-      }
+      const inspectTtl = async () => {
+        let indexes: any[] = [];
+        if (typeof collection.indexes === "function") {
+          indexes = await collection.indexes();
+        } else if (typeof collection.listIndexes === "function") {
+          const cursor = collection.listIndexes();
+          indexes =
+            typeof cursor.toArray === "function" ? await cursor.toArray() : await cursor;
+        }
 
-      if (Array.isArray(indexes)) {
-        return indexes.some((idx: any) => {
-          if (!idx || !idx.key || typeof idx.key !== "object") return false;
-          return (
-            idx.key.expiresAt === 1 &&
-            (typeof idx.expireAfterSeconds === "number" || typeof idx.expires !== "undefined")
-          );
-        });
+        if (Array.isArray(indexes)) {
+          return indexes.some((idx: any) => {
+            if (!idx || !idx.key || typeof idx.key !== "object") return false;
+            return (
+              idx.key.expiresAt === 1 &&
+              (typeof idx.expireAfterSeconds === "number" || typeof idx.expires !== "undefined")
+            );
+          });
+        }
+        return false;
+      };
+
+      const hasTtl = await inspectTtl();
+      if (hasTtl) return true;
+
+      // When autoIndex is false in production, attempt to build/sync schema indexes on the fly
+      if (typeof targetModel.init === "function") {
+        await syncFeeCreationLockIndexes(targetModel);
+        const verifiedAfterInit = await inspectTtl();
+        if (verifiedAfterInit) return true;
       }
     }
   } catch {
