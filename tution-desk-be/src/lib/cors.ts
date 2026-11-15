@@ -3,6 +3,7 @@ import { NextResponse } from "next/server.js";
 
 // Default allowed origins (in production, localhost is strictly excluded unless explicitly set via ALLOWED_ORIGINS)
 const PRODUCTION_ALLOWED_ORIGINS = [
+  "https://tuition-desk-monorepo.vercel.app",
   "https://tuition-desk-one.vercel.app",
   "https://tution-desk-one.vercel.app",
 ];

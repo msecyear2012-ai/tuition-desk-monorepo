@@ -524,6 +524,16 @@ export async function POST(request: NextRequest) {
             simulated: isSimulated,
             failureReason: isLiveSent ? null : dispatchRes?.error || (jobStatus === "pending" ? "Initial dispatch unavailable; queued for automatic retry" : null),
           });
+
+          // If direct dispatch could not complete, immediately trigger background queue processing
+          if (jobStatus === "pending") {
+            processPendingAdmissionWelcomeJobs(cleanCenterId, 1).catch((retryErr) => {
+              console.warn(
+                "[ADMISSION WELCOME] Immediate queue processing trigger notice:",
+                retryErr instanceof Error ? retryErr.message : retryErr
+              );
+            });
+          }
         }
       } catch (jobErr: any) {
         if (jobErr && jobErr.code === 11000) {
@@ -539,7 +549,9 @@ export async function POST(request: NextRequest) {
             parentPhone: formattedPhone,
             studentName: newStudent.name,
             batchName: newStudent.batch,
-          }).catch(() => {});
+          })
+            .then(() => processPendingAdmissionWelcomeJobs(cleanCenterId, 1))
+            .catch(() => {});
         }
       }
     } catch (welcomeErr) {

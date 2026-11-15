@@ -19,6 +19,8 @@ import {
   isProductionEnvironment,
   isLocalhostOrLoopbackUrl,
   ProductionAppUrlError,
+  CANONICAL_FRONTEND_DOMAIN,
+  isBackendDomain,
 } from "./portalLinks.ts";
 import { resolvePortalInvitationUrl } from "./parentAccessService.ts";
 
@@ -495,7 +497,11 @@ export function formatAdmissionWelcomeMessage({
 
   let portalSection = "";
   if (portalUrl) {
-    portalSection = `\nAccess your secure Parent Portal here:\n${portalUrl}\n(Please keep this private to your family.)\n`;
+    let cleanPortalUrl = portalUrl;
+    if (isBackendDomain(cleanPortalUrl)) {
+      cleanPortalUrl = cleanPortalUrl.replace(/^https?:\/\/[^\/]+/, CANONICAL_FRONTEND_DOMAIN);
+    }
+    portalSection = `\nAccess your secure Parent Portal here:\n${cleanPortalUrl}\n(Please keep this private to your family.)\n`;
   } else if (isExistingActivePortal) {
     portalSection = `\nYour Parent Portal account is already active. Access your student updates at:\n${base}/portal\n`;
   }

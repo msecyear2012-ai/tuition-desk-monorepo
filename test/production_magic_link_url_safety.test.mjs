@@ -125,6 +125,35 @@ describe("MSEC — P1-5 Production Magic Link URL Safety Suite", () => {
         "https://tution-desk-one.vercel.app/portal"
       );
     });
+
+    it("strictly resolves canonical frontend domain when VERCEL_PROJECT_PRODUCTION_URL is a backend deployment domain", () => {
+      const env = {
+        NODE_ENV: "production",
+        VERCEL_PROJECT_PRODUCTION_URL: "tuition-desk-backend-opal.vercel.app",
+        VERCEL_URL: "tuition-desk-backend-opal-xyz.vercel.app",
+      };
+      const res = resolvePortalAppBaseUrl(env);
+      assert.strictEqual(res.success, true);
+      assert.strictEqual(res.url, "https://tuition-desk-monorepo.vercel.app");
+
+      const link = buildPortalActivationUrl("pt_test_secret_token_123", undefined, env);
+      assert.strictEqual(
+        link,
+        "https://tuition-desk-monorepo.vercel.app/portal#token=pt_test_secret_token_123"
+      );
+    });
+
+    it("sanitizes explicit backend baseUrl to canonical frontend domain in production", () => {
+      process.env.NODE_ENV = "production";
+      const link = buildPortalActivationUrl(
+        "pt_test_secret_token_123",
+        "https://tuition-desk-backend-opal.vercel.app"
+      );
+      assert.strictEqual(
+        link,
+        "https://tuition-desk-monorepo.vercel.app/portal#token=pt_test_secret_token_123"
+      );
+    });
   });
 
   // 2. Production with missing URL

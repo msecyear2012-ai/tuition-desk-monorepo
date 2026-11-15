@@ -14,6 +14,28 @@
 export const PORTAL_ENTRY_PATH = "/portal";
 
 /**
+ * Canonical production frontend application origin.
+ * The Parent VIP Portal is hosted on the frontend Next.js app.
+ */
+export const CANONICAL_FRONTEND_DOMAIN = "https://tuition-desk-monorepo.vercel.app";
+
+/**
+ * Checks whether a URL or host string points to an API backend service.
+ * Backend services do not host the Parent Portal UI and will 404 if linked.
+ */
+export function isBackendDomain(urlOrHost: string): boolean {
+  if (!urlOrHost || typeof urlOrHost !== "string") return false;
+  const lower = urlOrHost.toLowerCase().trim();
+  return (
+    lower.includes("backend") ||
+    lower.includes("tution-desk-be") ||
+    lower.includes("tuition-desk-be") ||
+    lower.includes("backend-opal") ||
+    lower.includes("-be.")
+  );
+}
+
+/**
  * Custom error thrown when a production Parent Portal base URL fails security
  * validation or is missing in a production environment.
  */
@@ -98,15 +120,31 @@ export function resolvePortalAppBaseUrl(
   const isProd = isProductionEnvironment(env);
 
   // Candidate evaluation in priority order
-  const rawCandidate =
-    env.NEXT_PUBLIC_APP_URL ||
-    env.APP_URL ||
-    env.FRONTEND_URL ||
-    env.APP_BASE_URL ||
-    (env.VERCEL_PROJECT_PRODUCTION_URL
+  const candidates = [
+    env.FRONTEND_URL,
+    env.NEXT_PUBLIC_FRONTEND_URL,
+    env.PARENT_PORTAL_BASE_URL,
+    env.NEXT_PUBLIC_APP_URL,
+    env.APP_URL,
+    env.APP_BASE_URL,
+    env.VERCEL_PROJECT_PRODUCTION_URL
       ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}`
-      : null) ||
-    (env.VERCEL_URL ? `https://${env.VERCEL_URL}` : null);
+      : undefined,
+    env.VERCEL_URL ? `https://${env.VERCEL_URL}` : undefined,
+  ].filter(
+    (c): c is string => Boolean(c && typeof c === "string" && c.trim().length > 0)
+  );
+
+  // Pick first candidate that does not point to an API backend service domain
+  let rawCandidate = candidates.find((c) => !isBackendDomain(c));
+
+  // If candidate is missing or only backend deployment candidates were available:
+  // In production, fallback to canonical frontend domain if backend candidates were present
+  if (!rawCandidate && candidates.length > 0 && candidates.some((c) => isBackendDomain(c))) {
+    if (isProd) {
+      rawCandidate = CANONICAL_FRONTEND_DOMAIN;
+    }
+  }
 
   if (!rawCandidate || !rawCandidate.trim()) {
     if (isProd) {
@@ -224,6 +262,9 @@ export function buildPortalActivationUrl(
 
   if (baseUrl && baseUrl.trim()) {
     base = baseUrl.trim().replace(/\/+$/, "");
+    if (isBackendDomain(base)) {
+      base = CANONICAL_FRONTEND_DOMAIN;
+    }
     if (isProd && isLocalhostOrLoopbackUrl(base)) {
       throw new ProductionAppUrlError(
         "Production configuration error: Cannot build portal activation URL with localhost base URL in production."
