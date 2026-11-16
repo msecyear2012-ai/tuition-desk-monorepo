@@ -10,10 +10,45 @@ const fontSans = Plus_Jakarta_Sans({
   variable: "--font-sans",
 });
 
+const siteUrl =
+  process.env.NEXT_PUBLIC_APP_URL || "https://tuition-desk-monorepo.vercel.app";
+const cleanBaseUrl = siteUrl.replace(/\/+$/, "");
+const ogImageUrl = `${cleanBaseUrl}/icons/icon-512x512.png`;
+
 export const metadata: Metadata = {
-  title: "TuitionDesk | Aroven Tech",
+  metadataBase: new URL(cleanBaseUrl),
+  title: {
+    default: "TuitionDesk | Smart Tuition Center Management",
+    template: "%s | TuitionDesk",
+  },
   description:
-    "Mobile-first, single-tenant SaaS web application for local tuition centers in India.",
+    "Mobile-first tuition center management and automated fee collection platform.",
+  openGraph: {
+    type: "website",
+    locale: "en_IN",
+    url: cleanBaseUrl,
+    siteName: "TuitionDesk",
+    title: "TuitionDesk | Smart Tuition Center Management",
+    description:
+      "Mobile-first tuition center management and automated fee collection platform.",
+    images: [
+      {
+        url: ogImageUrl,
+        secureUrl: ogImageUrl,
+        width: 512,
+        height: 512,
+        alt: "TuitionDesk Logo",
+        type: "image/png",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: "TuitionDesk | Smart Tuition Center Management",
+    description:
+      "Mobile-first tuition center management and automated fee collection platform.",
+    images: [ogImageUrl],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",

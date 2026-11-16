@@ -116,10 +116,54 @@ export const ImportBatchLock: Model<IImportBatchLockDocument> =
     ImportBatchLockSchema
   );
 
+let importBatchLockInitPromise: Promise<any> | null = null;
+
+async function syncImportBatchLockIndexes(targetModel: any): Promise<void> {
+  const collection = targetModel?.collection;
+  const isConnected =
+    targetModel?.db?.readyState === 1 ||
+    collection?.conn?.readyState === 1 ||
+    mongoose.connection?.readyState === 1;
+
+  if (isConnected) {
+    try {
+      if (!importBatchLockInitPromise) {
+        const buildCall = (async () => {
+          // 1. Model-level index build (bypasses autoIndex check)
+          if (typeof targetModel?.createIndexes === "function") {
+            try {
+              await targetModel.createIndexes();
+            } catch (err: any) {
+              console.warn("[ImportBatchLock] createIndexes notice:", err?.message || err);
+            }
+          }
+          // 2. Direct collection-level creation of unique compound index { centerId: 1, previewId: 1 }
+          if (collection && typeof collection.createIndex === "function") {
+            try {
+              await collection.createIndex(
+                { centerId: 1, previewId: 1 },
+                { unique: true, name: "centerId_1_previewId_1" }
+              );
+            } catch (err: any) {
+              console.warn("[ImportBatchLock] createIndex unique notice:", err?.message || err);
+            }
+          }
+        })();
+
+        const timeoutCall = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+        importBatchLockInitPromise = Promise.race([buildCall, timeoutCall]);
+      }
+      await importBatchLockInitPromise;
+    } catch {
+      importBatchLockInitPromise = null;
+    }
+  }
+}
+
 /**
  * Checks whether the unique compound index { centerId: 1, previewId: 1 }
  * exists on the collection. In production where Mongoose autoIndex may be disabled,
- * this provides preflight verification without writing to the database.
+ * this provides preflight verification and auto-syncs the index if missing.
  */
 export async function verifyImportLockIndexIntegrity(
   model?: any
@@ -127,20 +171,49 @@ export async function verifyImportLockIndexIntegrity(
   const targetModel = model || ImportBatchLock;
   if (!targetModel) return false;
 
-  try {
-    const collection = targetModel.collection;
-    if (!collection) return false;
-    const indexes = await collection.indexes();
-    return indexes.some(
-      (idx: any) =>
-        idx.unique === true &&
-        idx.key &&
-        idx.key.centerId === 1 &&
-        idx.key.previewId === 1
-    );
-  } catch {
-    return false;
+  const inspectIndexes = async (): Promise<boolean> => {
+    try {
+      const collection = targetModel.collection;
+      if (!collection) return false;
+
+      let indexes: any[] = [];
+      if (typeof collection.indexes === "function") {
+        indexes = await collection.indexes();
+      } else if (typeof collection.listIndexes === "function") {
+        const cursor = collection.listIndexes();
+        indexes =
+          typeof cursor.toArray === "function" ? await cursor.toArray() : await cursor;
+      }
+
+      if (!Array.isArray(indexes)) return false;
+
+      return indexes.some((idx: any) => {
+        if (!idx || !idx.key || typeof idx.key !== "object") return false;
+        return (
+          idx.unique === true &&
+          idx.key.centerId === 1 &&
+          idx.key.previewId === 1
+        );
+      });
+    } catch {
+      return false;
+    }
+  };
+
+  const hasIndex = await inspectIndexes();
+  if (hasIndex) return true;
+
+  // If index is not yet built and model has sync/create capabilities, trigger active synchronization
+  const canSync =
+    typeof targetModel.createIndexes === "function" ||
+    (targetModel.collection && typeof targetModel.collection.createIndex === "function");
+
+  if (canSync) {
+    await syncImportBatchLockIndexes(targetModel);
+    return await inspectIndexes();
   }
+
+  return false;
 }
 
 export const DEFAULT_LOCK_LEASE_MS = 60 * 1000; // 60 seconds
