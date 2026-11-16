@@ -33,6 +33,13 @@ function getWhatsappServiceUrl(): string {
 }
 
 /**
+ * 45-second timeout for outbound WhatsApp microservice dispatches.
+ * Prevents premature client-side aborts when the microservice is legitimately
+ * queueing and pacing messages through its internal anti-ban rate limiter.
+ */
+export const WHATSAPP_DISPATCH_TIMEOUT_MS = 45000;
+
+/**
  * Resolves the canonical public frontend application base URL for parent magic links.
  * Priority order:
  * 1. process.env.NEXT_PUBLIC_APP_URL
@@ -385,7 +392,7 @@ export async function sendWelcomeMessage(
         phone: cleanDigits,
         message,
       }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(WHATSAPP_DISPATCH_TIMEOUT_MS),
     });
 
     const data = await response.json().catch(() => null);
@@ -626,7 +633,7 @@ export async function sendAdmissionWelcomeMessage({
         phone: cleanDigits,
         message,
       }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(WHATSAPP_DISPATCH_TIMEOUT_MS),
     });
 
     const data = await response.json().catch(() => null);
@@ -735,7 +742,7 @@ export async function sendAdmissionWelcomeDirect(
         phone: cleanDigits,
         message,
       }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(WHATSAPP_DISPATCH_TIMEOUT_MS),
     });
 
     const data = await response.json().catch(() => null);
@@ -824,7 +831,7 @@ export async function sendCustomWhatsAppMessage(
       method: "POST",
       headers: getInternalHeaders(),
       body: JSON.stringify({ centerId, phone: cleanDigits, message }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(WHATSAPP_DISPATCH_TIMEOUT_MS),
     });
 
     const data = await response.json().catch(() => null);
@@ -982,7 +989,7 @@ export async function sendFeeReminder(
       method: "POST",
       headers: getInternalHeaders(),
       body: JSON.stringify({ centerId, phone: cleanDigits, message }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(WHATSAPP_DISPATCH_TIMEOUT_MS),
     });
 
     const data = await response.json().catch(() => null);
@@ -1157,7 +1164,7 @@ export async function sendPaymentReceipt(
       method: "POST",
       headers: getInternalHeaders(),
       body: JSON.stringify({ centerId, phone: cleanDigits, message }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(WHATSAPP_DISPATCH_TIMEOUT_MS),
     });
 
     const data = await response.json().catch(() => null);
@@ -1307,7 +1314,7 @@ export async function sendTestResult(
       method: "POST",
       headers: getInternalHeaders(),
       body: JSON.stringify({ centerId, phone: cleanDigits, message }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(WHATSAPP_DISPATCH_TIMEOUT_MS),
     });
 
     const data = await response.json().catch(() => null);
@@ -1483,7 +1490,7 @@ export async function sendAttendanceAlert({
       method: "POST",
       headers: getInternalHeaders(),
       body: JSON.stringify({ centerId, phone: cleanDigits, message }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(WHATSAPP_DISPATCH_TIMEOUT_MS),
     });
 
     const data = await response.json().catch(() => null);

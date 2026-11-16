@@ -650,6 +650,16 @@ export async function processPendingAdmissionWelcomeJobs(
       break;
     }
 
+    // Anti-Ban Sequential Pacing: Enforce randomized delay (2s-5s) between sequential queue dispatches
+    const isTestEnvironment =
+      process.env.NODE_ENV === "test" ||
+      process.env.DISABLE_DISPATCH_PACING === "true";
+    if (summary.processed > 0 && !isTestEnvironment) {
+      const antiBanDelayMs =
+        Math.floor(Math.random() * (5000 - 2000 + 1)) + 2000;
+      await new Promise((res) => setTimeout(res, antiBanDelayMs));
+    }
+
     summary.processed++;
 
     try {

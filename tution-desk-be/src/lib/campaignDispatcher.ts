@@ -24,19 +24,30 @@ export interface DispatchSummary {
   error?: string;
 }
 
+export interface DispatchCampaignOptions {
+  /**
+   * Maximum number of messages to process in a single invocation.
+   * Defaults to 15. Set to 0 to disable chunking (unlimited).
+   */
+  maxChunkSize?: number;
+}
+
 /**
  * Dispatches a specific campaign's pending messages to WhatsApp.
- * Implements strict per-message Kill Switch checks and duplicate prevention.
+ * Implements strict per-message Kill Switch checks, anti-ban pacing, and chunking.
  */
 export async function dispatchCampaign(
   campaignId: string | Types.ObjectId,
-  centerId: string
+  centerId: string,
+  options: DispatchCampaignOptions = {}
 ): Promise<DispatchSummary> {
   await connectDB();
 
   const cleanCenterId = String(centerId).trim();
   const cId =
     typeof campaignId === "string" ? new Types.ObjectId(campaignId) : campaignId;
+  const maxChunkSize =
+    options.maxChunkSize !== undefined ? options.maxChunkSize : 15;
 
   // 1. Fetch campaign scoped strictly to this centerId (tenant boundary)
   const campaign = await MessageCampaign.findOne({
@@ -87,6 +98,14 @@ export async function dispatchCampaign(
       continue;
     }
 
+    // Chunking Guard: If limit is reached, exit gracefully so subsequent cron cycle resumes
+    if (maxChunkSize > 0 && processedCount >= maxChunkSize) {
+      console.log(
+        `[SMART ENGINE] [Center: ${cleanCenterId}] Campaign chunk limit reached (${processedCount}/${maxChunkSize}). Pausing iteration for next worker cycle.`
+      );
+      break;
+    }
+
     // 2. EMERGENCY KILL SWITCH CHECK:
     // Re-query the live campaign status in MongoDB before dispatching each individual message!
     const liveDoc = await MessageCampaign.findById(campaign._id, "status");
@@ -101,7 +120,6 @@ export async function dispatchCampaign(
     // Anti-Ban Sequential Pacing: Enforce randomized delay (3-7s) after the first message
     const isTestEnvironment =
       process.env.NODE_ENV === "test" ||
-      Boolean((globalThis as any).mongooseCache) ||
       process.env.DISABLE_DISPATCH_PACING === "true";
     if (processedCount > 0 && !isTestEnvironment) {
       const antiBanDelayMs =
@@ -442,29 +460,32 @@ export async function dispatchCampaign(
 }
 
 /**
- * Sweeps and processes all approved campaigns across one or all centers.
+ * Sweeps and processes all approved and in_progress campaigns across one or all centers in chunks.
  * Ideal for periodic cron execution or background worker triggers.
  */
 export async function processApprovedCampaigns(
-  centerId?: string
+  centerId?: string,
+  maxChunkSize: number = 15
 ): Promise<DispatchSummary[]> {
   await connectDB();
 
   const filter: Record<string, unknown> = {
-    status: "approved",
+    status: { $in: ["approved", "in_progress"] },
   };
   if (centerId) {
     filter.centerId = String(centerId).trim();
   }
 
-  const approvedCampaigns = await MessageCampaign.find(filter).sort({
-    createdAt: 1,
-  });
+  const eligibleCampaigns = await MessageCampaign.find(filter)
+    .sort({ updatedAt: 1, createdAt: 1 })
+    .limit(10);
   const results: DispatchSummary[] = [];
 
-  for (const campaign of approvedCampaigns) {
+  for (const campaign of eligibleCampaigns) {
     try {
-      const summary = await dispatchCampaign(campaign._id, campaign.centerId);
+      const summary = await dispatchCampaign(campaign._id, campaign.centerId, {
+        maxChunkSize,
+      });
       results.push(summary);
     } catch (err: unknown) {
       console.error(
