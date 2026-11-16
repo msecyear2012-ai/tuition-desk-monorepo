@@ -11,7 +11,7 @@ import {
 import { getCorsHeaders, handleCorsPreflight } from "../../../../../lib/cors.ts";
 
 export async function OPTIONS(request: NextRequest) {
-  return handleCorsPreflight(request, "PUT, OPTIONS");
+  return handleCorsPreflight(request, "POST, PUT, OPTIONS");
 }
 
 export async function PUT(
@@ -228,3 +228,6 @@ export async function PUT(
     );
   }
 }
+
+export const POST = PUT;
+

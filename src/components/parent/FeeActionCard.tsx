@@ -148,6 +148,12 @@ export default function FeeActionCard({
   const [submittingAdvanceUtr, setSubmittingAdvanceUtr] = useState(false);
   const [advanceError, setAdvanceError] = useState<string | null>(null);
 
+  // In-modal advance proof upload states
+  const [showAdvanceProofForm, setShowAdvanceProofForm] = useState(false);
+  const [advanceProofFile, setAdvanceProofFile] = useState<File | null>(null);
+  const [advanceProofNotes, setAdvanceProofNotes] = useState("");
+  const [isSubmittingAdvanceProof, setIsSubmittingAdvanceProof] = useState(false);
+
   // Payment Proof Screenshot Modal & Upload States
   const [showProofModal, setShowProofModal] = useState(false);
   const [selectedProofFile, setSelectedProofFile] = useState<File | null>(null);
@@ -633,18 +639,47 @@ export default function FeeActionCard({
     }
   };
 
-  // Handle advance UTR submission fallback
-  const handleSubmitAdvanceUtr = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!createdAdvanceFee?._id) return;
+  // Handle selecting advance screenshot file
+  const handleSelectAdvanceProofFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-    const cleanUtr = advanceUtrInput.trim();
-    if (!cleanUtr || cleanUtr.length < 6) {
-      setAdvanceError("Please enter a valid 12-digit UTR / reference number.");
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setAdvanceError("Only JPG, PNG, and WebP images are supported.");
       return;
     }
 
-    setSubmittingAdvanceUtr(true);
+    if (file.size > 3 * 1024 * 1024) {
+      setAdvanceError("Screenshot file size must be less than 3 MB.");
+      return;
+    }
+
+    setAdvanceProofFile(file);
+    setAdvanceError(null);
+  };
+
+  const handleClearAdvanceProofFile = () => {
+    setAdvanceProofFile(null);
+  };
+
+  // Handle advance UTR / Screenshot submission
+  const handleSubmitAdvanceProof = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createdAdvanceFee?._id) return;
+
+    const cleanUtr = advanceUtrInput.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+
+    if (!cleanUtr && !advanceProofFile) {
+      setAdvanceError("Please enter a transaction UTR or attach a payment screenshot.");
+      return;
+    }
+
+    if (cleanUtr && (cleanUtr.length < 6 || cleanUtr.length > 30)) {
+      setAdvanceError("Please enter a valid UTR (6-30 alphanumeric characters).");
+      return;
+    }
+
+    setIsSubmittingAdvanceProof(true);
     setAdvanceError(null);
 
     try {
@@ -663,29 +698,75 @@ export default function FeeActionCard({
         authHeaders["Authorization"] = `Bearer ${token}`;
       }
 
-      const res = await fetch(
-        `${backendUrl}/fees/${createdAdvanceFee._id}/submit-utr`,
-        {
-          method: "PUT",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            ...authHeaders,
-          },
-          body: JSON.stringify({ utrNumber: cleanUtr }),
+      if (advanceProofFile) {
+        const formData = new FormData();
+        formData.append("file", advanceProofFile);
+        if (cleanUtr) {
+          formData.append("utrNumber", cleanUtr);
         }
-      );
+        if (advanceProofNotes.trim()) {
+          formData.append("notes", advanceProofNotes.trim());
+        }
+        if (token) {
+          formData.append("token", token);
+        }
+        formData.append("amount", String(createdAdvanceFee.amountDue));
 
-      const data = await res.json().catch(() => null);
+        const res = await fetch(
+          `${backendUrl}/fees/${createdAdvanceFee._id}/payment-proof`,
+          {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              Accept: "application/json",
+              ...authHeaders,
+            },
+            body: formData,
+          }
+        );
 
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || "Failed to submit advance UTR reference.");
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.success) {
+          throw new Error(data?.error || "Failed to upload advance payment proof.");
+        }
+
+        if (onProofSubmitted) {
+          onProofSubmitted(data.data);
+        }
+      } else {
+        const res = await fetch(
+          `${backendUrl}/fees/${createdAdvanceFee._id}/submit-utr`,
+          {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+              ...authHeaders,
+            },
+            body: JSON.stringify({
+              utrNumber: cleanUtr,
+              token,
+            }),
+          }
+        );
+
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.success) {
+          throw new Error(data?.error || "Failed to submit advance UTR.");
+        }
       }
 
       setShowAdvanceModal(false);
       setCreatedAdvanceFee(null);
       setAdvanceUtrInput("");
+      setAdvanceProofFile(null);
+      setAdvanceProofNotes("");
+      setShowAdvanceProofForm(false);
 
+      if (cleanUtr && onUtrSubmitted) {
+        onUtrSubmitted(cleanUtr);
+      }
       if (onAdvancePaymentSuccess) {
         onAdvancePaymentSuccess();
       } else if (onPaymentSuccess) {
@@ -693,10 +774,10 @@ export default function FeeActionCard({
       }
     } catch (err: unknown) {
       setAdvanceError(
-        err instanceof Error ? err.message : "Failed to submit advance UTR."
+        err instanceof Error ? err.message : "Failed to submit advance payment proof."
       );
     } finally {
-      setSubmittingAdvanceUtr(false);
+      setIsSubmittingAdvanceProof(false);
     }
   };
 
@@ -1670,34 +1751,87 @@ export default function FeeActionCard({
                   </div>
                 </div>
 
-                {/* TASK 3: SMOOTH FALLBACK TRANSITION (Button appears after exactly 30s) */}
-                {advanceDelayedButtonVisible && !showAdvanceManualUtrInput && (
-                  <div className="pt-2 text-center border-t border-slate-100 transition-opacity duration-700 ease-in-out opacity-100 animate-fade-in">
+                {/* Manual Fallback & Payment Proof Submission */}
+                {!showAdvanceProofForm ? (
+                  <div className="pt-1">
                     <button
                       type="button"
-                      onClick={() => setShowAdvanceManualUtrInput(true)}
-                      className="tap-bounce text-xs text-slate-500 hover:text-slate-800 underline font-medium transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+                      onClick={() => setShowAdvanceProofForm(true)}
+                      className="tap-bounce w-full py-2.5 px-3 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 active:scale-[0.98] text-amber-950 text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-amber-300 shadow-2xs"
                     >
-                      <Clock className="w-3.5 h-3.5 text-amber-500" />
-                      <span>Payment taking too long? Enter UTR manually</span>
+                      <Camera className="w-4 h-4 text-amber-700 stroke-[2.2]" />
+                      <span>Submit Payment Proof / I have paid</span>
                     </button>
                   </div>
-                )}
-
-                {/* Advance Manual UTR Input Box (Revealed ONLY after clicking delayed button) */}
-                {showAdvanceManualUtrInput && (
-                  <div className="pt-3 border-t border-amber-200/80 bg-amber-50/60 p-3.5 rounded-2xl space-y-2.5 transition-all duration-500 ease-in-out animate-fade-in">
-                    <div className="space-y-0.5">
-                      <h4 className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-                        <Sparkles className="h-3.5 w-3.5 text-amber-600" />
-                        Enter 12-Digit UTR / Ref No.
+                ) : (
+                  <form onSubmit={handleSubmitAdvanceProof} className="space-y-3 pt-2.5 border-t border-amber-200/80 bg-amber-50/70 p-3.5 rounded-2xl animate-fade-in">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                        <Camera className="h-3.5 w-3.5 text-amber-700" />
+                        <span>Payment Proof & Verification</span>
                       </h4>
-                      <p className="text-[11px] text-slate-500 leading-tight">
-                        Enter transaction reference from your bank receipt to manually verify.
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAdvanceProofForm(false);
+                          if (advanceError) setAdvanceError(null);
+                        }}
+                        className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-tight">
+                      Attach your payment screenshot or enter the transaction reference from your UPI app.
+                    </p>
+
+                    {/* Screenshot File Picker */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+                        <span>Payment Screenshot</span>
+                        <span className="text-[10px] font-normal text-slate-400">
+                          JPG, PNG, WebP (Max 3 MB)
+                        </span>
+                      </label>
+
+                      {!advanceProofFile ? (
+                        <label className="flex items-center justify-center gap-2 py-2.5 px-3 border border-dashed border-amber-300 rounded-xl bg-white hover:bg-amber-50/50 text-amber-900 text-xs font-semibold cursor-pointer transition-colors shadow-2xs">
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            capture="environment"
+                            onChange={handleSelectAdvanceProofFile}
+                            className="hidden"
+                            disabled={isSubmittingAdvanceProof}
+                          />
+                          <Camera className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Attach Screenshot</span>
+                        </label>
+                      ) : (
+                        <div className="flex items-center justify-between p-2 rounded-xl bg-white border border-amber-200 text-xs">
+                          <span className="font-semibold text-slate-800 truncate max-w-[200px]">
+                            {advanceProofFile.name} ({(advanceProofFile.size / 1024).toFixed(0)} KB)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handleClearAdvanceProofFile}
+                            className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
+                            title="Remove Screenshot"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
 
-                    <form onSubmit={handleSubmitAdvanceUtr} className="space-y-2">
+                    {/* UTR Input */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+                        <span>UTR / Ref No.</span>
+                        <span className="text-[10px] font-normal text-slate-400">
+                          {advanceProofFile ? "Optional if screenshot attached" : "Required if no screenshot"}
+                        </span>
+                      </label>
                       <input
                         type="text"
                         maxLength={22}
@@ -1709,27 +1843,32 @@ export default function FeeActionCard({
                         placeholder="e.g. 428910293847"
                         className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-white font-mono font-bold text-slate-900 placeholder:text-slate-400 placeholder:font-normal focus:outline-hidden focus:ring-2 focus:ring-amber-200"
                       />
+                    </div>
 
-                      {advanceError && (
-                        <p className="text-[11px] text-rose-600 font-semibold">
-                          {advanceError}
-                        </p>
-                      )}
+                    {advanceError && (
+                      <p className="text-[11px] text-rose-600 font-semibold bg-rose-50 border border-rose-200 p-2 rounded-xl">
+                        {advanceError}
+                      </p>
+                    )}
 
-                      <button
-                        type="submit"
-                        disabled={submittingAdvanceUtr || !advanceUtrInput.trim()}
-                        className="tap-bounce w-full h-9 rounded-xl bg-slate-900 hover:bg-black text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all disabled:opacity-50 cursor-pointer"
-                      >
-                        {submittingAdvanceUtr ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
+                    <button
+                      type="submit"
+                      disabled={isSubmittingAdvanceProof || (!advanceProofFile && !advanceUtrInput.trim())}
+                      className="tap-bounce w-full h-10 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-[0.98] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all disabled:opacity-50 cursor-pointer"
+                    >
+                      {isSubmittingAdvanceProof ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
+                          <span>Submitting Advance Proof...</span>
+                        </>
+                      ) : (
+                        <>
                           <CheckCircle2 className="h-3.5 w-3.5 stroke-[2.2]" />
-                        )}
-                        <span>Submit Advance UTR for Verification</span>
-                      </button>
-                    </form>
-                  </div>
+                          <span>Submit Advance Proof for Review</span>
+                        </>
+                      )}
+                    </button>
+                  </form>
                 )}
               </div>
             )}
