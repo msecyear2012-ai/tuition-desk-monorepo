@@ -66,6 +66,12 @@ export async function getAuthenticatedUser(
   if (cookieToken) {
     const payload = await verifyToken(cookieToken);
     if (payload?.centerId) {
+      if (!payload.userId) {
+        payload.userId =
+          payload.teacherId ||
+          (typeof (payload as any).sub === "string" ? (payload as any).sub : null) ||
+          String(payload.centerId);
+      }
       return payload;
     }
   }
@@ -76,6 +82,12 @@ export async function getAuthenticatedUser(
     const token = authHeader.substring(7).trim();
     const payload = await verifyToken(token);
     if (payload?.centerId) {
+      if (!payload.userId) {
+        payload.userId =
+          payload.teacherId ||
+          (typeof (payload as any).sub === "string" ? (payload as any).sub : null) ||
+          String(payload.centerId);
+      }
       return payload;
     }
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, memo } from "react";
 import {
   RotateCcw,
   CheckCircle2,
@@ -27,7 +27,7 @@ interface RetryStatusData {
   };
 }
 
-export default function FailedMessagesWidget({
+function FailedMessagesWidget({
   isWhatsAppConnected = false,
   onRetrySuccess,
   className = "",
@@ -278,3 +278,5 @@ export default function FailedMessagesWidget({
     </div>
   );
 }
+
+export default memo(FailedMessagesWidget);

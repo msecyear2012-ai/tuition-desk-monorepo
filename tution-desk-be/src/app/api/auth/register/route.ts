@@ -81,10 +81,12 @@ export async function POST(request: NextRequest) {
       isActive: true,
     });
 
-    // Generate JWT strictly using the dynamically created center's centerId
+    // Generate JWT strictly using the dynamically created center's centerId & _id
     const token = await signToken({
+      userId: String(newCenter._id),
       centerId: newCenter.centerId,
       role: "owner",
+      name: newCenter.ownerName || newCenter.name,
     });
 
     const sanitizedCenter = {

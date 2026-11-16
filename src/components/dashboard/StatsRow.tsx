@@ -1,3 +1,6 @@
+"use client";
+
+import { memo, useMemo } from "react";
 import { Users, Layers, ClipboardCheck } from "lucide-react";
 import { DashboardMetrics } from "@/types";
 
@@ -5,30 +8,33 @@ interface StatsRowProps {
   metrics: DashboardMetrics;
 }
 
-export default function StatsRow({ metrics }: StatsRowProps) {
-  const stats = [
-    {
-      id: "students",
-      label: "Total Students",
-      value: metrics.totalActiveStudents,
-      icon: Users,
-      iconBg: "bg-blue-50 text-blue-600 border-blue-100/80",
-    },
-    {
-      id: "batches",
-      label: "Total Batches",
-      value: metrics.totalBatchesToday,
-      icon: Layers,
-      iconBg: "bg-emerald-50 text-emerald-600 border-emerald-100/80",
-    },
-    {
-      id: "tests",
-      label: "Pending Tests",
-      value: metrics.pendingTestsCount,
-      icon: ClipboardCheck,
-      iconBg: "bg-amber-50 text-amber-600 border-amber-100/80",
-    },
-  ];
+function StatsRowComponent({ metrics }: StatsRowProps) {
+  const stats = useMemo(
+    () => [
+      {
+        id: "students",
+        label: "Total Students",
+        value: metrics.totalActiveStudents,
+        icon: Users,
+        iconBg: "bg-blue-50 text-blue-600 border-blue-100/80",
+      },
+      {
+        id: "batches",
+        label: "Total Batches",
+        value: metrics.totalBatchesToday,
+        icon: Layers,
+        iconBg: "bg-emerald-50 text-emerald-600 border-emerald-100/80",
+      },
+      {
+        id: "tests",
+        label: "Pending Tests",
+        value: metrics.pendingTestsCount,
+        icon: ClipboardCheck,
+        iconBg: "bg-amber-50 text-amber-600 border-amber-100/80",
+      },
+    ],
+    [metrics.totalActiveStudents, metrics.totalBatchesToday, metrics.pendingTestsCount]
+  );
 
   return (
     <div className="grid grid-cols-3 gap-2.5">
@@ -63,3 +69,5 @@ export default function StatsRow({ metrics }: StatsRowProps) {
     </div>
   );
 }
+
+export default memo(StatsRowComponent);

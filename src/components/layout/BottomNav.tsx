@@ -1,5 +1,6 @@
 "use client";
 
+import { memo, useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -19,7 +20,7 @@ interface TabItem {
   badge?: string | number;
 }
 
-const TABS: TabItem[] = [
+const TABS: readonly TabItem[] = [
   {
     id: "dashboard",
     label: "Dashboard",
@@ -52,25 +53,29 @@ const TABS: TabItem[] = [
   },
 ];
 
-export default function BottomNav() {
+function BottomNavComponent() {
   const pathname = usePathname();
   const headerContext = useHeader();
   const overdueCount = headerContext?.overdueCount ?? 0;
 
-  const tabs = TABS.map((tab) => {
-    if (tab.id === "fees") {
-      return {
-        ...tab,
-        badge:
-          overdueCount > 0
-            ? overdueCount > 99
-              ? "99+"
-              : String(overdueCount)
-            : undefined,
-      };
-    }
-    return tab;
-  });
+  const tabs = useMemo(
+    () =>
+      TABS.map((tab) => {
+        if (tab.id === "fees") {
+          return {
+            ...tab,
+            badge:
+              overdueCount > 0
+                ? overdueCount > 99
+                  ? "99+"
+                  : String(overdueCount)
+                : undefined,
+          };
+        }
+        return tab;
+      }),
+    [overdueCount]
+  );
 
   return (
     <nav
@@ -131,3 +136,5 @@ export default function BottomNav() {
     </nav>
   );
 }
+
+export default memo(BottomNavComponent);

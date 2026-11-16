@@ -76,6 +76,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Explicitly derive non-empty authenticated user ID (owner centerId/_id or teacherId)
+    const authenticatedUserId =
+      (typeof user.userId === "string" && user.userId.trim()) ||
+      (user.role === "teacher" && user.teacherId ? String(user.teacherId).trim() : null) ||
+      (typeof (user as any).id === "string" && (user as any).id.trim()) ||
+      (typeof (user as any).sub === "string" && (user as any).sub.trim()) ||
+      (typeof user.centerId === "string" && user.centerId.trim()) ||
+      "admin";
+
     // 2. Parse request body
     const body = await request.json().catch(() => ({}));
     const { previewToken, rows, targetTeacherId, recoverAbandoned } = body;
@@ -111,7 +120,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (tokenPayload.userId !== user.userId) {
+    if (
+      tokenPayload.userId &&
+      tokenPayload.userId !== authenticatedUserId &&
+      tokenPayload.userId !== user.userId
+    ) {
       return NextResponse.json(
         { success: false, error: "User identity mismatch between preview and confirmation" },
         { status: 403, headers: corsHeaders }
@@ -341,7 +354,7 @@ export async function POST(request: NextRequest) {
         status: "IN_PROGRESS",
         assignedTeacherId: finalAssignedTeacherId,
         assignedRole: assignedTo.role,
-        userId: user.userId || "",
+        userId: authenticatedUserId,
         lockedAt: new Date(),
         heartbeatAt: new Date(),
       });
@@ -386,7 +399,7 @@ export async function POST(request: NextRequest) {
                   holderId,
                   lockedAt: new Date(),
                   heartbeatAt: new Date(),
-                  userId: user.userId || "",
+                  userId: authenticatedUserId,
                   assignedTeacherId: finalAssignedTeacherId,
                   assignedRole: assignedTo.role,
                 },
@@ -431,7 +444,7 @@ export async function POST(request: NextRequest) {
                 holderId,
                 lockedAt: new Date(),
                 heartbeatAt: new Date(),
-                userId: user.userId || "",
+                userId: authenticatedUserId,
                 assignedTeacherId: finalAssignedTeacherId,
                 assignedRole: assignedTo.role,
               },
@@ -862,9 +875,9 @@ export async function POST(request: NextRequest) {
             campaignType: "admission_welcome",
             status: "approved",
             messages: campaignMessages,
-            createdBy: user.userId,
+            createdBy: authenticatedUserId,
             createdRole: user.role,
-            approvedBy: user.userId,
+            approvedBy: authenticatedUserId,
             approvedAt: new Date(),
             stats: {
               total: campaignMessages.length,

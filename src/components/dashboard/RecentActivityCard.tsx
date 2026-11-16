@@ -1,3 +1,6 @@
+"use client";
+
+import { memo } from "react";
 import { IndianRupee, CheckCircle2, UserPlus, Award } from "lucide-react";
 import { RecentActivityItem } from "@/types";
 
@@ -5,35 +8,35 @@ interface RecentActivityCardProps {
   activities: RecentActivityItem[];
 }
 
-export default function RecentActivityCard({
+function getIcon(type: RecentActivityItem["type"]) {
+  switch (type) {
+    case "fee":
+      return <IndianRupee className="w-4 h-4 text-emerald-600" />;
+    case "attendance":
+      return <CheckCircle2 className="w-4 h-4 text-blue-600" />;
+    case "enquiry":
+      return <UserPlus className="w-4 h-4 text-purple-600" />;
+    case "test":
+      return <Award className="w-4 h-4 text-amber-600" />;
+  }
+}
+
+function getBg(type: RecentActivityItem["type"]) {
+  switch (type) {
+    case "fee":
+      return "bg-emerald-50 border-emerald-100 text-emerald-600";
+    case "attendance":
+      return "bg-blue-50 border-blue-100 text-blue-600";
+    case "enquiry":
+      return "bg-purple-50 border-purple-100 text-purple-600";
+    case "test":
+      return "bg-amber-50 border-amber-100 text-amber-600";
+  }
+}
+
+function RecentActivityCardComponent({
   activities,
 }: RecentActivityCardProps) {
-  const getIcon = (type: RecentActivityItem["type"]) => {
-    switch (type) {
-      case "fee":
-        return <IndianRupee className="w-4 h-4 text-emerald-600" />;
-      case "attendance":
-        return <CheckCircle2 className="w-4 h-4 text-blue-600" />;
-      case "enquiry":
-        return <UserPlus className="w-4 h-4 text-purple-600" />;
-      case "test":
-        return <Award className="w-4 h-4 text-amber-600" />;
-    }
-  };
-
-  const getBg = (type: RecentActivityItem["type"]) => {
-    switch (type) {
-      case "fee":
-        return "bg-emerald-50 border-emerald-100 text-emerald-600";
-      case "attendance":
-        return "bg-blue-50 border-blue-100 text-blue-600";
-      case "enquiry":
-        return "bg-purple-50 border-purple-100 text-purple-600";
-      case "test":
-        return "bg-amber-50 border-amber-100 text-amber-600";
-    }
-  };
-
   return (
     <div className="rounded-3xl border border-slate-100 bg-white p-4.5 shadow-sm">
       <div className="flex items-center justify-between mb-3">
@@ -88,3 +91,5 @@ export default function RecentActivityCard({
     </div>
   );
 }
+
+export default memo(RecentActivityCardComponent);

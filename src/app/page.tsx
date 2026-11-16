@@ -209,7 +209,7 @@ export default function DashboardPage() {
   }, [fetchDashboardData]);
 
   // Handle Bulk WhatsApp Fee Reminders (The Orange Action)
-  const handleSendFeeReminders = async () => {
+  const handleSendFeeReminders = useCallback(async () => {
     setIsSendingReminders(true);
     try {
       const res = await apiClient<{
@@ -252,7 +252,11 @@ export default function DashboardPage() {
     } finally {
       setIsSendingReminders(false);
     }
-  };
+  }, [fetchDashboardData]);
+
+  const handleManualRefresh = useCallback(() => {
+    fetchDashboardData(true);
+  }, [fetchDashboardData]);
 
   return (
     <div className="flex flex-col min-h-full">
@@ -273,7 +277,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => fetchDashboardData(true)}
+              onClick={handleManualRefresh}
               disabled={loading || refreshing}
               className="tap-bounce flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors shadow-2xs disabled:opacity-50"
               title="Refresh live data"

@@ -1,3 +1,6 @@
+"use client";
+
+import { memo, useMemo } from "react";
 import Link from "next/link";
 import { AlertCircle, ArrowUpRight, TrendingUp } from "lucide-react";
 import { DashboardMetrics } from "@/types";
@@ -6,17 +9,18 @@ interface PendingFeesHeroCardProps {
   metrics: DashboardMetrics;
 }
 
-export default function PendingFeesHeroCard({
+const formatINR = (val: number) => (val || 0).toLocaleString("en-IN");
+
+function PendingFeesHeroCardComponent({
   metrics,
 }: PendingFeesHeroCardProps) {
-  const formatINR = (val: number) => val.toLocaleString("en-IN");
-
-  const totalFeeDemand =
-    (metrics.collectedFeesThisMonth || 0) + (metrics.pendingFeesTotal || 0);
-  const collectedPercentage =
-    totalFeeDemand > 0
-      ? Math.round(((metrics.collectedFeesThisMonth || 0) / totalFeeDemand) * 100)
+  const { totalFeeDemand, collectedPercentage } = useMemo(() => {
+    const demand = (metrics.collectedFeesThisMonth || 0) + (metrics.pendingFeesTotal || 0);
+    const pct = demand > 0
+      ? Math.round(((metrics.collectedFeesThisMonth || 0) / demand) * 100)
       : 0;
+    return { totalFeeDemand: demand, collectedPercentage: pct };
+  }, [metrics.collectedFeesThisMonth, metrics.pendingFeesTotal]);
 
   return (
     <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-blue-600 via-blue-500 to-blue-400 p-5 text-white shadow-lg shadow-blue-500/25">
@@ -88,3 +92,5 @@ export default function PendingFeesHeroCard({
     </div>
   );
 }
+
+export default memo(PendingFeesHeroCardComponent);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
 import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -20,7 +20,7 @@ interface WhatsAppStatusBannerProps {
   className?: string;
 }
 
-export default function WhatsAppStatusBanner({
+function WhatsAppStatusBanner({
   onStatusChange,
   className = "",
 }: WhatsAppStatusBannerProps) {
@@ -497,3 +497,5 @@ export default function WhatsAppStatusBanner({
     </>
   );
 }
+
+export default memo(WhatsAppStatusBanner);

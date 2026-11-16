@@ -287,10 +287,18 @@ export async function POST(request: NextRequest) {
     const previewId = `prev_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     const rowsHash = computeRowsHash(validRows);
 
+    const effectiveUserId =
+      (typeof user.userId === "string" && user.userId.trim()) ||
+      (user.role === "teacher" && user.teacherId ? String(user.teacherId).trim() : null) ||
+      (typeof (user as any).id === "string" && (user as any).id.trim()) ||
+      (typeof (user as any).sub === "string" && (user as any).sub.trim()) ||
+      (typeof user.centerId === "string" && user.centerId.trim()) ||
+      "admin";
+
     const previewToken = await signPreviewToken({
       previewId,
       centerId: user.centerId,
-      userId: user.userId,
+      userId: effectiveUserId,
       role: user.role,
       teacherId: user.teacherId || null,
       validCount: validRows.length,

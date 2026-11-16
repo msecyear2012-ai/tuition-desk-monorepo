@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import {
@@ -76,7 +76,7 @@ function computeInitials(name: string): string {
   return "TD";
 }
 
-export default function TopHeader(props: TopHeaderProps) {
+function TopHeader(props: TopHeaderProps) {
   const router = useRouter();
   const pathname = usePathname() || "";
   const headerContext = useHeader();
@@ -454,3 +454,5 @@ export default function TopHeader(props: TopHeaderProps) {
     </header>
   );
 }
+
+export default memo(TopHeader);
