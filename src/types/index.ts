@@ -319,6 +319,7 @@ export interface StudentRecord {
   monthlyFee: number;
   billingCycleDate: number;
   assignedTeacherId?: string | null;
+  advanceBalance?: number;
   createdAt?: string;
   updatedAt?: string;
 }

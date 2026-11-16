@@ -43,6 +43,7 @@ interface FeeActionCardProps {
   onAdvancePaymentSuccess?: () => void;
   onProofSubmitted?: (proofData: any) => void;
   isPaid?: boolean;
+  advanceBalance?: number;
 }
 
 const QUICK_ADVANCE_AMOUNTS = [1000, 2000, 3000, 5000];
@@ -64,6 +65,7 @@ export default function FeeActionCard({
   onAdvancePaymentSuccess,
   onProofSubmitted,
   isPaid = false,
+  advanceBalance = 0,
 }: FeeActionCardProps) {
   // Regular Payment Modal States
   const [showUpiModal, setShowUpiModal] = useState(false);
@@ -908,6 +910,32 @@ export default function FeeActionCard({
 
   return (
     <>
+      {/* Advance Wallet Balance Banner */}
+      {advanceBalance > 0 && (
+        <div className="rounded-3xl border border-amber-200/90 bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/5 p-4.5 shadow-2xs space-y-2 mb-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+              <Sparkles className="h-4 w-4 text-amber-600" />
+              Smart Advance Wallet
+            </span>
+            <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-extrabold text-amber-800 border border-amber-200">
+              Active Credit
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <div className="text-2xl font-black font-mono text-amber-950">
+              ₹{advanceBalance.toLocaleString("en-IN")}
+            </div>
+            <span className="text-[11px] font-semibold text-amber-700 bg-amber-100/60 px-2 py-0.5 rounded-lg border border-amber-200/60">
+              Auto-deducts on next bill
+            </span>
+          </div>
+          <p className="text-[11px] text-amber-800/90 leading-relaxed font-medium">
+            Your wallet credit will be automatically applied to your next monthly tuition fee. No manual action needed.
+          </p>
+        </div>
+      )}
+
       {/* 1. PAID STATE */}
       {currentStatus === "Paid" ? (
         <div className="rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm space-y-3.5">

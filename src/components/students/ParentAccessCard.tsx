@@ -19,6 +19,7 @@ import {
   Plus,
   Trash2,
   X,
+  Sparkles,
 } from "lucide-react";
 
 interface LinkedStudent {
@@ -79,6 +80,7 @@ export default function ParentAccessCard({
   studentName,
   parentPhone,
   centerName = "Tuition Center",
+  advanceBalance = 0,
   onLinkGenerated,
 }: {
   studentId: string;
@@ -86,6 +88,7 @@ export default function ParentAccessCard({
   parentPhone: string;
   centerId?: string;
   centerName?: string;
+  advanceBalance?: number;
   onLinkGenerated?: () => void;
 }) {
   const [loading, setLoading] = useState(true);
@@ -538,6 +541,19 @@ export default function ParentAccessCard({
         </div>
       ) : (
         <div className="space-y-3.5 w-full max-w-full min-w-0 overflow-hidden">
+          {/* Smart Advance Wallet Balance Indicator */}
+          {advanceBalance > 0 && (
+            <div className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 shadow-2xs">
+              <span className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                Advance Wallet Balance:
+              </span>
+              <span className="font-mono font-black text-amber-950 text-sm">
+                ₹{advanceBalance.toLocaleString("en-IN")}
+              </span>
+            </div>
+          )}
+
           {/* Active URL Card / Token Info */}
           <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2 w-full max-w-full min-w-0 overflow-hidden">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] w-full max-w-full min-w-0 overflow-hidden">

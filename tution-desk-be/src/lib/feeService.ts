@@ -1,7 +1,7 @@
 import { Types } from "mongoose";
 import crypto from "crypto";
 import connectDB from "./db.ts";
-import Fee, { type IFeeDocument } from "../models/Fee.ts";
+import Fee, { type IFeeDocument, type IPaymentEntry } from "../models/Fee.ts";
 import Student, { type IStudentDocument } from "../models/Student.ts";
 import Center from "../models/Center.ts";
 import FeeCreationLock, { verifyLockIndexIntegrity } from "../models/FeeCreationLock.ts";
@@ -433,6 +433,80 @@ export async function generateOrGetMonthlyFee(
     const dueDate = options.dueDate || calculateDueDate(referenceDate, offsetDays);
     const displayMonth = dateComp.shortMonthLabel;
 
+    // Smart Advance Wallet: Check available balance
+    // Re-fetch freshest student state under lock to prevent race conditions
+    const currentStudent = (await StudentModel.findById(student._id)) as IStudentDocument | null;
+    const availableWallet = Math.max(0, Number(currentStudent?.advanceBalance) || 0);
+
+    let finalStatus: "Pending" | "Paid" | "Partial Paid" = "Pending";
+    let finalAmountDue = feeAmount;
+    let finalPaidAmount = 0;
+    let finalPaidDate: Date | null = null;
+    let finalPaymentMode: string | undefined = undefined;
+    let walletDeductedAmount = 0;
+    const paymentHistory: IPaymentEntry[] = [];
+    const nowTimestamp = new Date();
+
+    if (availableWallet >= feeAmount) {
+      // Full deduction from wallet
+      finalStatus = "Paid";
+      finalAmountDue = 0;
+      finalPaidAmount = feeAmount;
+      finalPaidDate = nowTimestamp;
+      finalPaymentMode = "Auto-Deducted from Wallet";
+      walletDeductedAmount = feeAmount;
+
+      const receiptNum = `RCPT-WAL-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      paymentHistory.push({
+        _id: new Types.ObjectId(),
+        paymentId: new Types.ObjectId(),
+        amount: feeAmount,
+        paymentDate: nowTimestamp,
+        paymentMode: "Auto-Deducted from Wallet",
+        receiptNumber: receiptNum,
+        isProvisional: false,
+        receivedBy: new Types.ObjectId(student._id),
+        receivedByRole: "system",
+        recordedBy: new Types.ObjectId(student._id),
+        recordedByRole: "system",
+        recordedAt: nowTimestamp,
+        assignedTeacherAtPayment: student.assignedTeacherId || null,
+        batchAtPayment: student.batch || "",
+        custodyStatus: "owner_verified",
+        allocations: [],
+        notes: "Auto-deducted in full from student advance wallet",
+      });
+    } else if (availableWallet > 0) {
+      // Partial deduction from wallet
+      finalStatus = "Partial Paid";
+      finalAmountDue = feeAmount - availableWallet;
+      finalPaidAmount = availableWallet;
+      finalPaidDate = nowTimestamp;
+      finalPaymentMode = "Auto-Deducted from Wallet";
+      walletDeductedAmount = availableWallet;
+
+      const receiptNum = `RCPT-WAL-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      paymentHistory.push({
+        _id: new Types.ObjectId(),
+        paymentId: new Types.ObjectId(),
+        amount: availableWallet,
+        paymentDate: nowTimestamp,
+        paymentMode: "Auto-Deducted from Wallet",
+        receiptNumber: receiptNum,
+        isProvisional: false,
+        receivedBy: new Types.ObjectId(student._id),
+        receivedByRole: "system",
+        recordedBy: new Types.ObjectId(student._id),
+        recordedByRole: "system",
+        recordedAt: nowTimestamp,
+        assignedTeacherAtPayment: student.assignedTeacherId || null,
+        batchAtPayment: student.batch || "",
+        custodyStatus: "owner_verified",
+        allocations: [],
+        notes: "Partially auto-deducted from student advance wallet",
+      });
+    }
+
     try {
       const newFee = (await FeeModel.create({
         centerId: options.centerId,
@@ -443,15 +517,36 @@ export async function generateOrGetMonthlyFee(
         month: displayMonth,
         title: `${displayMonth} Tuition Fee`,
         originalAmountDue: feeAmount,
-        amountDue: feeAmount,
-        paidAmount: 0,
-        paymentHistory: [],
+        amountDue: finalAmountDue,
+        paidAmount: finalPaidAmount,
+        paymentHistory,
+        paymentMode: finalPaymentMode || "Manual/Cash",
+        paymentDate: finalPaidDate,
+        paidDate: finalPaidDate,
+        paidAt: finalPaidDate,
+        receiptNumber: paymentHistory.length > 0 ? paymentHistory[0].receiptNumber : "",
+        walletDeductedAmount,
         dueDate,
-        status: "Pending",
+        status: finalStatus,
         feeType: "monthly_recurring",
         reminderCount: 0,
         reminderPaused: false,
       })) as IFeeDocument;
+
+      // Decrement the student's advance wallet balance atomically
+      if (walletDeductedAmount > 0) {
+        if (finalStatus === "Paid") {
+          await StudentModel.updateOne(
+            { _id: student._id, advanceBalance: { $gte: walletDeductedAmount } },
+            { $inc: { advanceBalance: -walletDeductedAmount } }
+          );
+        } else {
+          await StudentModel.updateOne(
+            { _id: student._id },
+            { $set: { advanceBalance: 0 } }
+          );
+        }
+      }
 
       return {
         success: true,

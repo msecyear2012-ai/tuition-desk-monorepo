@@ -395,6 +395,7 @@ export async function GET(
           monthlyFee: targetStudent.monthlyFee,
           billingCycleDate: targetStudent.billingCycleDate,
           joiningDate: targetStudent.joiningDate,
+          advanceBalance: targetStudent.advanceBalance || 0,
         },
         center,
         attendanceStats,

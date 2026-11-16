@@ -14,6 +14,7 @@ import { getAuthenticatedUser } from "../../../../lib/auth.ts";
 import { getCorsHeaders, handleCorsPreflight } from "../../../../lib/cors.ts";
 import { getISTDateComponents } from "../../../../lib/dateUtils.ts";
 import { sendPaymentReceipt } from "../../../../lib/whatsappService.ts";
+import { creditAdvanceToStudentWallet } from "../../../../lib/walletService.ts";
 import { sanitizePopulatedStudentDoc } from "../../../../lib/privacyUtils.ts";
 
 function formatFeeResponse(fee: unknown, role: string) {
@@ -697,6 +698,20 @@ export async function POST(request: NextRequest) {
           recordedAt: now,
           paymentHistory: [newPaymentEntry],
         })) as unknown as IFeeDocument;
+
+        if (isAdvance && parsedAmount > 0) {
+          try {
+            await creditAdvanceToStudentWallet({
+              centerId: targetCenterId,
+              studentId: String(studentId),
+              amount: parsedAmount,
+              feeId: String(manualNonRecurringFee._id),
+            });
+            manualNonRecurringFee.walletRechargeCredited = true;
+          } catch (walletErr) {
+            console.error("[MANUAL COLLECTION] Error crediting advance wallet:", walletErr);
+          }
+        }
       } catch (createErr: unknown) {
         if (
           clientKey &&
@@ -1153,6 +1168,25 @@ export async function POST(request: NextRequest) {
       }
 
       const custodyBreakdown = resolveCustody(updatedFee);
+
+      // Smart Advance Wallet: If targeted fee was an advance fee, credit the student's wallet
+      if (
+        updatedFee &&
+        (updatedFee.isAdvance || updatedFee.feeType === "advance") &&
+        !updatedFee.walletRechargeCredited
+      ) {
+        try {
+          await creditAdvanceToStudentWallet({
+            centerId: targetCenterId,
+            studentId: String(studentDoc._id || studentId),
+            amount: parsedAmount,
+            feeId: String(updatedFee._id),
+          });
+          updatedFee.walletRechargeCredited = true;
+        } catch (walletErr) {
+          console.error("[MANUAL COLLECTION] Error crediting advance wallet on targeted fee:", walletErr);
+        }
+      }
 
       await createCollectionNotifications({
         centerId: targetCenterId,

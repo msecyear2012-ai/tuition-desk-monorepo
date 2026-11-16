@@ -16,6 +16,7 @@ import {
 } from "../../../../lib/parentAccessService.ts";
 import { getCorsHeaders, handleCorsPreflight } from "../../../../lib/cors.ts";
 import { sendPaymentReceipt } from "../../../../lib/whatsappService.ts";
+import { creditAdvanceToStudentWallet } from "../../../../lib/walletService.ts";
 import {
   maskContactNumber,
   sanitizeStudentForRole,
@@ -306,6 +307,35 @@ export async function PUT(
       }
       existingFee.rejectionReason = null;
       existingFee.proofUploadLockUntil = null;
+
+      // Smart Advance Wallet: If this is an advance fee and owner verified/settled it, credit the student's wallet
+      if (
+        (existingFee.isAdvance || existingFee.feeType === "advance") &&
+        !existingFee.walletRechargeCredited &&
+        existingFee.status === "Paid"
+      ) {
+        const studentObjId =
+          (existingFee.studentId as unknown as { _id?: unknown })?._id ||
+          existingFee.studentId;
+        const creditAmt =
+          settledAmount > 0
+            ? settledAmount
+            : Number(existingFee.paidAmount) || Number(existingFee.amountDue) || 0;
+
+        if (creditAmt > 0 && studentObjId) {
+          try {
+            await creditAdvanceToStudentWallet({
+              centerId: existingFee.centerId,
+              studentId: String(studentObjId),
+              amount: creditAmt,
+              feeId: String(existingFee._id),
+            });
+            existingFee.walletRechargeCredited = true;
+          } catch (walletErr) {
+            console.error("[FEE UPDATE] Error crediting advance wallet:", walletErr);
+          }
+        }
+      }
     } else if (
       (body.status === "Pending" && (body.rejectionReason !== undefined || existingFee.status === "Verification Pending")) ||
       body.proofAction === "reject"

@@ -5,6 +5,7 @@ import connectDB from "@/lib/db";
 import Fee from "@/models/Fee";
 import "@/models/Student"; // Register student model
 import { sendPaymentReceipt } from "@/lib/whatsappService";
+import { creditAdvanceToStudentWallet } from "@/lib/walletService";
 
 export async function OPTIONS() {
   return new NextResponse(null, {
@@ -439,6 +440,29 @@ export async function POST(request: NextRequest) {
         },
         { status: 409 }
       );
+    }
+
+    // Smart Advance Wallet: If this was an advance fee, credit the student's wallet
+    if (
+      updatedFee &&
+      (updatedFee.isAdvance || updatedFee.feeType === "advance") &&
+      !updatedFee.walletRechargeCredited
+    ) {
+      const studentObjId =
+        (updatedFee.studentId as any)?._id || updatedFee.studentId;
+      if (studentObjId) {
+        try {
+          await creditAdvanceToStudentWallet({
+            centerId: updatedFee.centerId,
+            studentId: String(studentObjId),
+            amount: receivedAmount,
+            feeId: String(updatedFee._id),
+          });
+          updatedFee.walletRechargeCredited = true;
+        } catch (walletErr) {
+          console.error("[YOUPI WEBHOOK] Error crediting advance wallet:", walletErr);
+        }
+      }
     }
 
     // 6. Return Structured Success Response

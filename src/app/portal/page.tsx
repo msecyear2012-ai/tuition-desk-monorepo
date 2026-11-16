@@ -39,6 +39,7 @@ interface ApiStudent {
   isActive: boolean;
   monthlyFee?: number;
   billingCycleDate?: number;
+  advanceBalance?: number;
 }
 
 interface ApiCenter {
@@ -702,6 +703,7 @@ export default function StaticParentPortalPage() {
                 centerName={center?.name || "Tuition Center"}
                 status={fees.status}
                 utrNumber={fees.utrNumber}
+                advanceBalance={student.advanceBalance}
                 rejectionReason={fees.rejectionReason}
                 onPaymentSuccess={() => {
                   handlePaymentSuccess();

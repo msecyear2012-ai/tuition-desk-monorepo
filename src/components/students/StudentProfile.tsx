@@ -46,6 +46,7 @@ import {
   AlertCircle,
   RefreshCw,
   User,
+  Wallet,
 } from "lucide-react";
 
 export interface StudentFeeItem {
@@ -65,6 +66,7 @@ export interface StudentFeeItem {
   paymentMode?: string;
   receiptNumber?: string;
   isAdvance?: boolean;
+  walletDeductedAmount?: number;
   notes?: string;
   paidDate?: string;
   paidAt?: string;
@@ -503,7 +505,7 @@ export default function StudentProfile({
             </div>
 
             {/* 2. Top Metric Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               {/* Metric 1: Total Invoiced */}
               <div className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-2xs">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
@@ -555,6 +557,20 @@ export default function StudentProfile({
                   Due {getCycleOrdinal(student.billingCycleDate || 5)} monthly
                 </span>
               </div>
+
+              {/* Metric 5: Smart Advance Wallet */}
+              <div className="rounded-2xl border border-amber-200 bg-linear-to-br from-amber-50/60 to-orange-50/40 p-3.5 shadow-2xs col-span-2 sm:col-span-1">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700 block flex items-center gap-1">
+                  <Wallet className="w-3 h-3 text-amber-600 inline shrink-0" />
+                  Advance Wallet
+                </span>
+                <div className="text-xl sm:text-2xl font-black font-mono text-amber-900 mt-0.5">
+                  {formatCurrency(student.advanceBalance || 0)}
+                </div>
+                <span className="text-[10px] font-semibold text-amber-700 block mt-0.5">
+                  {(student.advanceBalance || 0) > 0 ? "Available for Auto-Deduction" : "Zero Balance"}
+                </span>
+              </div>
             </div>
 
             {/* 2.5 Parent VIP Portal Access Management */}
@@ -564,6 +580,7 @@ export default function StudentProfile({
                 studentName={student.name}
                 parentPhone={student.parentWhatsApp}
                 centerId={student.centerId}
+                advanceBalance={student.advanceBalance}
                 onLinkGenerated={handleManualRefresh}
               />
             )}
@@ -703,7 +720,12 @@ export default function StudentProfile({
                               )}
 
                               {/* Payment Mode Badge */}
-                              {isCash ? (
+                              {fee.paymentMode && /wallet/i.test(fee.paymentMode) ? (
+                                <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                                  <Wallet className="w-3 h-3 text-amber-700" />
+                                  Auto-Deducted (Wallet)
+                                </span>
+                              ) : isCash ? (
                                 <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300">
                                   <Banknote className="w-3 h-3 text-emerald-700" />
                                   Cash

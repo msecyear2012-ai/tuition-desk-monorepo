@@ -12,6 +12,7 @@ export interface IStudent {
   assignedTeacherId?: Types.ObjectId | null;
   importedBatchId?: string;
   rollNumber?: string;
+  advanceBalance?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -79,6 +80,12 @@ const StudentSchema = new Schema<IStudentDocument>(
       type: String,
       trim: true,
     },
+    advanceBalance: {
+      type: Number,
+      required: true,
+      min: [0, "Advance balance cannot be negative"],
+      default: 0,
+    },
   },
   {
     timestamps: true,
@@ -95,7 +102,8 @@ StudentSchema.index({ centerId: 1, name: "text" });
 if (
   process.env.NODE_ENV !== "production" &&
   mongoose.models.Student &&
-  !mongoose.models.Student.schema.path("assignedTeacherId")
+  (!mongoose.models.Student.schema.path("assignedTeacherId") ||
+    !mongoose.models.Student.schema.path("advanceBalance"))
 ) {
   delete (mongoose.models as Record<string, unknown>).Student;
 }

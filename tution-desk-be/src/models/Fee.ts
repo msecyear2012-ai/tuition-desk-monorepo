@@ -125,6 +125,8 @@ export interface IFee {
   paymentMode?: string;
   receiptNumber?: string;
   isAdvance?: boolean;
+  walletDeductedAmount?: number;
+  walletRechargeCredited?: boolean;
   notes?: string;
   assignedTeacherId?: Types.ObjectId | null;
   assignedTeacherAtPayment?: Types.ObjectId | null;
@@ -299,7 +301,7 @@ export const PaymentEntrySchema = new Schema<IPaymentEntry>(
       required: [true, "receivedByRole is required"],
       immutable: true,
       enum: {
-        values: ["owner", "teacher", "gateway_direct"],
+        values: ["owner", "teacher", "gateway_direct", "system"],
         message: "{VALUE} is not a valid receivedByRole",
       },
     },
@@ -579,6 +581,16 @@ const FeeSchema = new Schema<IFeeDocument>(
     isAdvance: {
       type: Boolean,
       default: false,
+    },
+    walletDeductedAmount: {
+      type: Number,
+      min: [0, "Wallet deducted amount cannot be negative"],
+      default: 0,
+    },
+    walletRechargeCredited: {
+      type: Boolean,
+      default: false,
+      index: true,
     },
     notes: {
       type: String,
