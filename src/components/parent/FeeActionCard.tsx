@@ -911,7 +911,7 @@ export default function FeeActionCard({
   return (
     <>
       {/* Advance Wallet Balance Banner */}
-      {advanceBalance > 0 && (
+      {Number(advanceBalance) > 0 && (
         <div className="rounded-3xl border border-amber-200/90 bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/5 p-4.5 shadow-2xs space-y-2 mb-3">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
@@ -924,7 +924,7 @@ export default function FeeActionCard({
           </div>
           <div className="flex items-baseline justify-between">
             <div className="text-2xl font-black font-mono text-amber-950">
-              ₹{advanceBalance.toLocaleString("en-IN")}
+              ₹{Number(advanceBalance).toLocaleString("en-IN")}
             </div>
             <span className="text-[11px] font-semibold text-amber-700 bg-amber-100/60 px-2 py-0.5 rounded-lg border border-amber-200/60">
               Auto-deducts on next bill

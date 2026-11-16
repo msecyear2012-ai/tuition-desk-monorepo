@@ -373,6 +373,7 @@ export async function POST(request: NextRequest) {
           monthlyFee: targetStudent.monthlyFee,
           billingCycleDate: targetStudent.billingCycleDate,
           joiningDate: targetStudent.joiningDate,
+          advanceBalance: targetStudent.advanceBalance || 0,
         },
         center,
         attendanceStats,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { getParentPortalAuthHeaders } from "@/lib/parentPortalLink";
 import {
   Bell,
   BellOff,
@@ -59,18 +60,26 @@ export default function ParentInbox({
 
       try {
         const queryParams = new URLSearchParams();
-        if (rawToken) {
-          queryParams.set("token", rawToken);
+        const effectiveRawToken =
+          rawToken ||
+          (typeof window !== "undefined"
+            ? sessionStorage.getItem("parent_portal_raw_token") ||
+              localStorage.getItem("parent_portal_raw_token")
+            : "");
+        if (effectiveRawToken) {
+          queryParams.set("token", effectiveRawToken);
         }
 
         const url = `${backendUrl}/parent/notifications${
           queryParams.toString() ? `?${queryParams.toString()}` : ""
         }`;
 
+        const authHeaders = getParentPortalAuthHeaders();
+
         const res = await fetch(url, {
           method: "GET",
           headers: {
-            "Content-Type": "application/json",
+            ...authHeaders,
           },
           credentials: "include",
         });

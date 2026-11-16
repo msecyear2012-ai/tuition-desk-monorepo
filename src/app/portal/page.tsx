@@ -691,7 +691,7 @@ export default function StaticParentPortalPage() {
         {/* Tab: FEES */}
         {(activePortalTab === "overview" || activePortalTab === "fees") && (
           <>
-            {fees && (
+            {fees ? (
               <FeeActionCard
                 feeId={fees.feeId}
                 studentId={student._id}
@@ -703,7 +703,7 @@ export default function StaticParentPortalPage() {
                 centerName={center?.name || "Tuition Center"}
                 status={fees.status}
                 utrNumber={fees.utrNumber}
-                advanceBalance={student.advanceBalance}
+                advanceBalance={student.advanceBalance !== undefined ? Number(student.advanceBalance) : 0}
                 rejectionReason={fees.rejectionReason}
                 onPaymentSuccess={() => {
                   handlePaymentSuccess();
@@ -729,6 +729,27 @@ export default function StaticParentPortalPage() {
                   executeExchange(undefined, selectedStudentId);
                 }}
                 isPaid={isPaid || fees.status === "Paid"}
+              />
+            ) : (
+              <FeeActionCard
+                feeId={null}
+                studentId={student._id}
+                centerId={student.centerId}
+                amount={0}
+                dueDate="Immediate"
+                daysLate={0}
+                upiId={center?.upiId || upiId}
+                centerName={center?.name || "Tuition Center"}
+                status="Paid"
+                advanceBalance={student.advanceBalance !== undefined ? Number(student.advanceBalance) : 0}
+                onAdvancePaymentSuccess={() => {
+                  setToastMessage(
+                    "Advance payment submitted successfully! Awaiting center verification."
+                  );
+                  setTimeout(() => setToastMessage(null), 4500);
+                  executeExchange(undefined, selectedStudentId);
+                }}
+                isPaid={true}
               />
             )}
 

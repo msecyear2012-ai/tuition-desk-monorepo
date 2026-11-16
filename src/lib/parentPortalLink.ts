@@ -59,3 +59,29 @@ export async function openParentPortalForStudent(
     };
   }
 }
+
+/**
+ * Retrieves valid authentication headers for Parent Portal API requests.
+ * Extracts active session token from sessionStorage or localStorage and sets Bearer Authorization header.
+ */
+export function getParentPortalAuthHeaders(): Record<string, string> {
+  if (typeof window === "undefined") {
+    return { "Content-Type": "application/json", Accept: "application/json" };
+  }
+
+  const token =
+    sessionStorage.getItem("parent_portal_session_token") ||
+    localStorage.getItem("parent_portal_session_token") ||
+    localStorage.getItem("auth_token");
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  return headers;
+}
