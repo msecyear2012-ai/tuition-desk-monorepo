@@ -9,6 +9,7 @@ import Fee, {
   getFeePaymentEntries,
 } from "../../../../models/Fee.ts";
 import PaymentProof from "../../../../models/PaymentProof.ts";
+import Student from "../../../../models/Student.ts";
 import { getAuthenticatedUser } from "../../../../lib/auth.ts";
 import {
   validateParentSession,
@@ -415,26 +416,40 @@ export async function PUT(
     ) as IFeeDocument;
 
     // Dispatch receipt in background if Paid
-    if (
-      existingFee.status === "Paid" &&
-      populatedFee.studentId &&
-      (populatedFee.studentId as unknown as { parentWhatsApp?: string }).parentWhatsApp
-    ) {
-      const sDoc = populatedFee.studentId as unknown as {
-        parentWhatsApp?: string;
-        name?: string;
-        _id?: unknown;
-      };
-      sendPaymentReceipt(
-        existingFee.centerId || targetCenterId || "",
-        sDoc.parentWhatsApp!,
-        sDoc.name || "Student",
-        existingFee.paidAmount || existingFee.amountDue,
-        existingFee.receiptNumber || "",
-        sDoc._id?.toString()
-      ).catch((dispatchErr) => {
-        console.warn("[FEES UPDATE] WhatsApp receipt dispatch warning:", dispatchErr.message);
-      });
+    if (existingFee.status === "Paid") {
+      try {
+        let sDoc: any = populatedFee.studentId;
+        const rawStudentId =
+          (sDoc as unknown as { _id?: unknown })?._id ||
+          (existingFee.studentId as unknown as { _id?: unknown })?._id ||
+          existingFee.studentId;
+
+        if (!sDoc || !sDoc.parentWhatsApp) {
+          if (rawStudentId && mongoose.Types.ObjectId.isValid(String(rawStudentId))) {
+            sDoc = await Student.findById(rawStudentId).lean();
+          }
+        }
+
+        if (sDoc && sDoc.parentWhatsApp) {
+          const receiptAmt =
+            Number(existingFee.paidAmount) ||
+            Number(existingFee.amountDue) ||
+            0;
+
+          sendPaymentReceipt(
+            existingFee.centerId || targetCenterId || "",
+            sDoc.parentWhatsApp,
+            sDoc.name || "Student",
+            receiptAmt,
+            existingFee.receiptNumber || `REC-${existingFee._id}`,
+            sDoc._id ? String(sDoc._id) : (rawStudentId ? String(rawStudentId) : undefined)
+          ).catch((dispatchErr) => {
+            console.warn("[FEES UPDATE] WhatsApp receipt dispatch warning:", dispatchErr?.message);
+          });
+        }
+      } catch (receiptErr) {
+        console.warn("[FEES UPDATE] Error resolving student for receipt dispatch:", receiptErr);
+      }
     }
 
     const custodyBreakdown = calculateFeeCustody(populatedFee);

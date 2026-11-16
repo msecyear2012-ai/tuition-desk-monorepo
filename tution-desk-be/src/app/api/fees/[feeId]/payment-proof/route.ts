@@ -18,6 +18,7 @@ import {
   generateSignedImageUrl,
 } from "../../../../../lib/imagekitService.ts";
 import { creditAdvanceToStudentWallet } from "../../../../../lib/walletService.ts";
+import { sendPaymentReceipt } from "../../../../../lib/whatsappService.ts";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCorsPreflight(request, "POST, GET, PUT, PATCH, OPTIONS");
@@ -1112,6 +1113,44 @@ export async function PUT(
           reviewedAt: now,
         },
       });
+
+      // Dispatch WhatsApp receipt in background if marked Paid
+      if (fee.status === "Paid") {
+        try {
+          const rawStudentId =
+            (fee.studentId as unknown as { _id?: unknown })?._id ||
+            fee.studentId;
+
+          let sDoc: any =
+            typeof fee.studentId === "object" && (fee.studentId as any)?.parentWhatsApp
+              ? fee.studentId
+              : null;
+
+          if (!sDoc && rawStudentId && mongoose.Types.ObjectId.isValid(String(rawStudentId))) {
+            sDoc = await Student.findById(rawStudentId).lean();
+          }
+
+          if (sDoc && sDoc.parentWhatsApp) {
+            const receiptAmt =
+              settledAmount > 0
+                ? settledAmount
+                : Number(fee.paidAmount) || Number(fee.amountDue) || 0;
+
+            sendPaymentReceipt(
+              fee.centerId || authCenterId || "",
+              sDoc.parentWhatsApp,
+              sDoc.name || "Student",
+              receiptAmt,
+              fee.receiptNumber || `REC-${fee._id}`,
+              sDoc._id ? String(sDoc._id) : (rawStudentId ? String(rawStudentId) : undefined)
+            ).catch((dispatchErr) => {
+              console.warn("[PAYMENT PROOF VERIFY] WhatsApp receipt dispatch warning:", dispatchErr?.message);
+            });
+          }
+        } catch (receiptErr) {
+          console.warn("[PAYMENT PROOF VERIFY] Error resolving student for receipt dispatch:", receiptErr);
+        }
+      }
 
       return NextResponse.json(
         {
