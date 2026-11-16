@@ -129,9 +129,9 @@ export interface IFee {
   assignedTeacherAtPayment?: Types.ObjectId | null;
   batchAtPayment?: string;
   receivedBy?: Types.ObjectId | null;
-  receivedByRole?: "owner" | "teacher" | null;
+  receivedByRole?: "owner" | "teacher" | "gateway_direct" | "system" | null;
   recordedBy?: Types.ObjectId;
-  recordedByRole?: "owner" | "teacher";
+  recordedByRole?: "owner" | "teacher" | "system";
   recordedAt?: Date;
   hasPaymentProof?: boolean;
   latestPaymentProofId?: Types.ObjectId | null;
@@ -608,7 +608,7 @@ const FeeSchema = new Schema<IFeeDocument>(
     },
     receivedByRole: {
       type: String,
-      enum: ["owner", "teacher"],
+      enum: ["owner", "teacher", "gateway_direct", "system"],
     },
     recordedBy: {
       type: Schema.Types.ObjectId,
@@ -616,7 +616,7 @@ const FeeSchema = new Schema<IFeeDocument>(
     },
     recordedByRole: {
       type: String,
-      enum: ["owner", "teacher"],
+      enum: ["owner", "teacher", "system"],
     },
     recordedAt: {
       type: Date,
@@ -897,7 +897,10 @@ if (
     !(
       ((mongoose.models.Fee.schema.path("paymentHistory") as any)?.schema
         ?.path("custodyStatus") as any)?.enumValues || []
-    ).includes("owner_pending"))
+    ).includes("owner_pending") ||
+    !(
+      (mongoose.models.Fee.schema.path("recordedByRole") as any)?.enumValues || []
+    ).includes("system"))
 ) {
   delete (mongoose.models as Record<string, unknown>).Fee;
 }
