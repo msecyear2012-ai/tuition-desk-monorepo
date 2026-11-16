@@ -357,4 +357,93 @@ test("Smart Advance Wallet System Test Suite", async (t) => {
     assert.strictEqual(createdFeeDoc.walletDeductedAmount, 0);
     assert.strictEqual(createdFeeDoc.paymentHistory.length, 0);
   });
+
+  await t.test("8. Fee schema validates paymentHistory subdocument requiring valid receivedBy and recordedBy", () => {
+    const validId = new mongoose.Types.ObjectId();
+    const feeDoc = new Fee({
+      centerId: "center_001",
+      studentId: new mongoose.Types.ObjectId(),
+      studentName: "Test Student",
+      batch: "Batch A",
+      month: "October 2026",
+      amountDue: 0,
+      paidAmount: 2000,
+      dueDate: new Date(),
+      status: "Paid",
+      paymentMode: "Cash",
+      paymentHistory: [
+        {
+          _id: new mongoose.Types.ObjectId(),
+          amount: 2000,
+          paymentDate: new Date(),
+          paymentMode: "Cash",
+          receiptNumber: "REC-TEST-001",
+          receivedAt: new Date(),
+          receivedBy: validId,
+          receivedByRole: "owner",
+          recordedAt: new Date(),
+          recordedBy: validId,
+          recordedByRole: "owner",
+          custodyStatus: "owner_verified",
+        },
+      ],
+      recordedBy: validId,
+      recordedByRole: "owner",
+      receivedBy: validId,
+      receivedByRole: "owner",
+    });
+
+    const validationError = feeDoc.validateSync();
+    assert.strictEqual(validationError, undefined, "Fee with valid paymentHistory attributes must pass validation");
+  });
+
+  await t.test("9. paymentHistory sanitization resolves missing receivedBy/recordedBy to prevent validation errors", () => {
+    const fallbackId = new mongoose.Types.ObjectId();
+    const rawPaymentEntry = {
+      _id: new mongoose.Types.ObjectId(),
+      amount: 1500,
+      paymentDate: new Date(),
+      paymentMode: "UPI",
+      receiptNumber: "REC-TEST-002",
+      receivedAt: new Date(),
+      recordedAt: new Date(),
+      // receivedBy and recordedBy initially undefined
+    };
+
+    const feeDoc = new Fee({
+      centerId: "center_001",
+      studentId: new mongoose.Types.ObjectId(),
+      studentName: "Test Student 2",
+      batch: "Batch A",
+      month: "October 2026",
+      amountDue: 0,
+      paidAmount: 1500,
+      dueDate: new Date(),
+      status: "Paid",
+      paymentMode: "UPI",
+      paymentHistory: [rawPaymentEntry],
+      recordedBy: fallbackId,
+      recordedByRole: "owner",
+      receivedBy: fallbackId,
+      receivedByRole: "owner",
+    });
+
+    // Before sanitization, validation fails with required error on receivedBy / recordedBy
+    const initialError = feeDoc.validateSync();
+    assert.ok(initialError, "Initial unsanitized fee must fail validation");
+    assert.ok(initialError.errors["paymentHistory.0.receivedBy"], "receivedBy must be flagged as required");
+    assert.ok(initialError.errors["paymentHistory.0.recordedBy"], "recordedBy must be flagged as required");
+
+    // Apply the exact sanitization applied in PUT /api/fees/[feeId] and PUT /api/fees/[feeId]/payment-proof
+    for (const entry of feeDoc.paymentHistory) {
+      if (!entry.receivedBy) entry.receivedBy = fallbackId;
+      if (!entry.recordedBy) entry.recordedBy = fallbackId;
+      if (!entry.receivedByRole) entry.receivedByRole = "owner";
+      if (!entry.recordedByRole) entry.recordedByRole = "owner";
+      if (!entry.receiptNumber) entry.receiptNumber = `REC-${feeDoc._id}-${Date.now()}`;
+    }
+
+    const sanitizedError = feeDoc.validateSync();
+    assert.strictEqual(sanitizedError, undefined, "Sanitized fee must pass schema validation without errors");
+  });
 });

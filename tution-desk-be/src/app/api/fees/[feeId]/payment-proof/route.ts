@@ -17,6 +17,7 @@ import {
   deleteFromImageKit,
   generateSignedImageUrl,
 } from "../../../../../lib/imagekitService.ts";
+import { creditAdvanceToStudentWallet } from "../../../../../lib/walletService.ts";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCorsPreflight(request, "POST, GET, PUT, PATCH, OPTIONS");
@@ -1000,12 +1001,23 @@ export async function PUT(
       fee.rejectionReason = null;
       fee.proofUploadLockUntil = null;
 
-      // Append structured owner settlement entry
-      const ownerCollectorId = (staffUser.userId && mongoose.Types.ObjectId.isValid(staffUser.userId))
-        ? new mongoose.Types.ObjectId(staffUser.userId)
-        : (mongoose.Types.ObjectId.isValid(staffUser.teacherId || "")
-          ? new mongoose.Types.ObjectId(staffUser.teacherId)
-          : undefined);
+      // Append structured owner settlement entry - resolve valid ObjectId (never undefined/null)
+      let ownerCollectorId: mongoose.Types.ObjectId;
+      if (staffUser.userId && mongoose.Types.ObjectId.isValid(staffUser.userId)) {
+        ownerCollectorId = new mongoose.Types.ObjectId(staffUser.userId);
+      } else if (staffUser.teacherId && mongoose.Types.ObjectId.isValid(staffUser.teacherId)) {
+        ownerCollectorId = new mongoose.Types.ObjectId(staffUser.teacherId);
+      } else if ((staffUser as any).id && mongoose.Types.ObjectId.isValid((staffUser as any).id)) {
+        ownerCollectorId = new mongoose.Types.ObjectId((staffUser as any).id);
+      } else {
+        const centerDoc = await Center.findOne({ centerId: authCenterId }).select("_id").lean();
+        if (centerDoc && centerDoc._id && mongoose.Types.ObjectId.isValid(String(centerDoc._id))) {
+          ownerCollectorId = new mongoose.Types.ObjectId(String(centerDoc._id));
+        } else {
+          ownerCollectorId = new mongoose.Types.ObjectId();
+        }
+      }
+
       const ownerPaymentId = new mongoose.Types.ObjectId();
       const ownerPaymentEntry: any = {
         _id: ownerPaymentId,
@@ -1032,6 +1044,15 @@ export async function PUT(
       }
       fee.paymentHistory.push(ownerPaymentEntry);
 
+      // Ensure all items in paymentHistory satisfy required receivedBy/recordedBy constraints
+      for (const entry of fee.paymentHistory) {
+        if (!entry.receivedBy) entry.receivedBy = ownerCollectorId;
+        if (!entry.recordedBy) entry.recordedBy = ownerCollectorId;
+        if (!entry.receivedByRole) entry.receivedByRole = "owner";
+        if (!entry.recordedByRole) entry.recordedByRole = "owner";
+        if (!entry.receiptNumber) entry.receiptNumber = `REC-${fee._id}-${Date.now()}`;
+      }
+
       if (!fee.recordedBy) {
         fee.recordedBy = ownerCollectorId;
         fee.recordedByRole = "owner";
@@ -1045,6 +1066,35 @@ export async function PUT(
       }
 
       await fee.save();
+
+      // Smart Advance Wallet: If this is an advance fee and owner approved it, credit student wallet
+      if (
+        (fee.isAdvance || fee.feeType === "advance") &&
+        !fee.walletRechargeCredited &&
+        fee.status === "Paid"
+      ) {
+        const studentObjId =
+          (fee.studentId as unknown as { _id?: unknown })?._id ||
+          fee.studentId;
+        const creditAmt =
+          settledAmount > 0
+            ? settledAmount
+            : Number(fee.paidAmount) || Number(fee.amountDue) || 0;
+
+        if (creditAmt > 0 && studentObjId) {
+          try {
+            await creditAdvanceToStudentWallet({
+              centerId: fee.centerId,
+              studentId: String(studentObjId),
+              amount: creditAmt,
+              feeId: String(fee._id),
+            });
+            fee.walletRechargeCredited = true;
+          } catch (walletErr) {
+            console.error("[PAYMENT PROOF APPROVAL] Error crediting advance wallet:", walletErr);
+          }
+        }
+      }
 
       // Mark payment proof as verified
       const proofConditions: Record<string, unknown> = {

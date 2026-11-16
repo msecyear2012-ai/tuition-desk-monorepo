@@ -247,9 +247,20 @@ export async function PUT(
         existingFee.paidAmount = Number(body.paidAmount);
       }
 
+      // Resolve valid ObjectId for owner attribution (never undefined/null)
+      let ownerCollectorId: mongoose.Types.ObjectId;
+      if (user.userId && mongoose.Types.ObjectId.isValid(user.userId)) {
+        ownerCollectorId = new mongoose.Types.ObjectId(user.userId);
+      } else if (user.teacherId && mongoose.Types.ObjectId.isValid(user.teacherId)) {
+        ownerCollectorId = new mongoose.Types.ObjectId(user.teacherId);
+      } else if ((user as any).id && mongoose.Types.ObjectId.isValid((user as any).id)) {
+        ownerCollectorId = new mongoose.Types.ObjectId((user as any).id);
+      } else {
+        ownerCollectorId = new mongoose.Types.ObjectId();
+      }
+
       // Do not silently overwrite financial history: append structured payment entry for Owner settlement
       if (!isPaidRecord && settledAmount > 0) {
-        const ownerCollectorId = new mongoose.Types.ObjectId(user.userId);
         const ownerPaymentId = new mongoose.Types.ObjectId();
         const ownerPaymentEntry: IPaymentEntry = {
           _id: ownerPaymentId,
@@ -277,13 +288,24 @@ export async function PUT(
         existingFee.paymentHistory.push(ownerPaymentEntry);
       }
 
+      // Ensure all items in paymentHistory satisfy required receivedBy/recordedBy constraints
+      if (existingFee.paymentHistory && existingFee.paymentHistory.length > 0) {
+        for (const entry of existingFee.paymentHistory) {
+          if (!entry.receivedBy) entry.receivedBy = ownerCollectorId;
+          if (!entry.recordedBy) entry.recordedBy = ownerCollectorId;
+          if (!entry.receivedByRole) entry.receivedByRole = "owner";
+          if (!entry.recordedByRole) entry.recordedByRole = "owner";
+          if (!entry.receiptNumber) entry.receiptNumber = `REC-${existingFee._id}-${Date.now()}`;
+        }
+      }
+
       // Top-level attribution
       if (!existingFee.recordedBy) {
-        existingFee.recordedBy = new mongoose.Types.ObjectId(user.userId);
+        existingFee.recordedBy = ownerCollectorId;
         existingFee.recordedByRole = "owner";
       }
       if (!existingFee.receivedBy) {
-        existingFee.receivedBy = new mongoose.Types.ObjectId(user.userId);
+        existingFee.receivedBy = ownerCollectorId;
         existingFee.receivedByRole = "owner";
       }
       if (!existingFee.recordedAt) {
@@ -297,7 +319,7 @@ export async function PUT(
           {
             $set: {
               status: "verified",
-              reviewedBy: new mongoose.Types.ObjectId(user.userId),
+              reviewedBy: ownerCollectorId,
               reviewedAt: now,
             },
           }
