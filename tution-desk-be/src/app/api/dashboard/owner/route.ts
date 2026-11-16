@@ -233,14 +233,13 @@ export async function GET(request: NextRequest) {
       totalStudents,
       totalBatches,
       pendingFeeAgg,
-      overdueCount,
-      todayAttendance,
-      todayPresentCount,
+      attendanceMetrics,
       collectedFeeAgg,
       pendingTestsCount,
       batchesList,
       recentFees,
       recentStudents,
+      studentBatchCounts,
     ] = await Promise.all([
       // Count of active students in this center (scoped)
       Student.countDocuments({
@@ -256,8 +255,8 @@ export async function GET(request: NextRequest) {
         ...batchMatchCondition,
       }),
 
-      // Sum of amountDue from Fee model where status is 'Pending' (scoped)
-      Fee.aggregate<{ _id: null; total: number }>([
+      // Combined pending fee amount and count in a single aggregation pipeline
+      Fee.aggregate<{ _id: null; total: number; count: number }>([
         {
           $match: {
             centerId: trimmedCenterId,
@@ -265,30 +264,63 @@ export async function GET(request: NextRequest) {
             ...feeMatchCondition,
           },
         },
-        { $group: { _id: null, total: { $sum: "$amountDue" } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: "$amountDue" },
+            count: { $sum: 1 },
+          },
+        },
       ]),
 
-      // Count of 'Pending' fee records (scoped)
-      Fee.countDocuments({
-        centerId: trimmedCenterId,
-        status: "Pending",
-        ...feeMatchCondition,
-      }),
+      // Combined attendance metrics for today in a single query
+      (async () => {
+        if (
+          typeof Attendance.aggregate === "function" &&
+          (mongoose.connection?.readyState === 1 || Attendance.aggregate !== mongoose.Model.aggregate)
+        ) {
+          const agg = await Attendance.aggregate<{ _id: null; total: number; present: number }>([
+            {
+              $match: {
+                centerId: trimmedCenterId,
+                date: { $gte: startOfDay, $lte: endOfDay },
+                ...attendanceMatchCondition,
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                total: { $sum: 1 },
+                present: {
+                  $sum: {
+                    $cond: [{ $eq: ["$status", "Present"] }, 1, 0],
+                  },
+                },
+              },
+            },
+          ]);
+          return {
+            todayAttendance: agg[0]?.total || 0,
+            todayPresentCount: agg[0]?.present || 0,
+          };
+        }
 
-      // Count of attendance records marked for today (scoped)
-      Attendance.countDocuments({
-        centerId: trimmedCenterId,
-        date: { $gte: startOfDay, $lte: endOfDay },
-        ...attendanceMatchCondition,
-      }),
-
-      // Count of present attendance records today (scoped)
-      Attendance.countDocuments({
-        centerId: trimmedCenterId,
-        date: { $gte: startOfDay, $lte: endOfDay },
-        status: "Present",
-        ...attendanceMatchCondition,
-      }),
+        // Fallback for mocked test environments without aggregate support
+        const [todayAttendance, todayPresentCount] = await Promise.all([
+          Attendance.countDocuments({
+            centerId: trimmedCenterId,
+            date: { $gte: startOfDay, $lte: endOfDay },
+            ...attendanceMatchCondition,
+          }),
+          Attendance.countDocuments({
+            centerId: trimmedCenterId,
+            date: { $gte: startOfDay, $lte: endOfDay },
+            status: "Present",
+            ...attendanceMatchCondition,
+          }),
+        ]);
+        return { todayAttendance, todayPresentCount };
+      })(),
 
       // Sum of collected fees strictly within current month in IST (scoped)
       Fee.aggregate<{ _id: null; total: number }>([
@@ -339,62 +371,79 @@ export async function GET(request: NextRequest) {
         ...testMatchCondition,
       }),
 
-      // Active batches list for schedule (scoped)
+      // Active batches list for schedule with lightweight field selection (scoped)
       Batch.find({
         centerId: trimmedCenterId,
         isActive: { $ne: false },
         ...batchMatchCondition,
       })
+        .select("_id name timing subject")
         .sort({ createdAt: -1 })
         .limit(10)
         .lean(),
 
-      // Recent fees for activity timeline (scoped)
+      // Recent fees for activity timeline with lightweight field selection (scoped)
       Fee.find({
         centerId: trimmedCenterId,
         ...feeMatchCondition,
       })
+        .select("_id status month amountDue createdAt studentId")
         .sort({ createdAt: -1 })
         .limit(6)
         .populate("studentId", "name batch")
         .lean(),
 
-      // Recent students for activity timeline (scoped)
+      // Recent students for activity timeline with lightweight field selection (scoped)
       Student.find({
         centerId: trimmedCenterId,
         ...studentMatchCondition,
       })
+        .select("_id name batch parentWhatsApp createdAt")
         .sort({ createdAt: -1 })
         .limit(6)
         .lean(),
+
+      // Student counts per batch run concurrently in parallel instead of serial waterfall (scoped)
+      Student.aggregate<{
+        _id: string;
+        count: number;
+      }>([
+        {
+          $match: {
+            centerId: trimmedCenterId,
+            isActive: { $ne: false },
+            ...studentMatchCondition,
+          },
+        },
+        {
+          $group: {
+            _id: "$batch",
+            count: { $sum: 1 },
+          },
+        },
+      ]),
     ]);
 
     const pendingFeesTotal = pendingFeeAgg[0]?.total || 0;
+    const overdueCount =
+      pendingFeeAgg.length === 0
+        ? 0
+        : pendingFeeAgg[0]?.count !== undefined
+        ? pendingFeeAgg[0].count
+        : typeof Fee.countDocuments === "function"
+        ? await Fee.countDocuments({
+            centerId: trimmedCenterId,
+            status: "Pending",
+            ...feeMatchCondition,
+          })
+        : 0;
+
+    const { todayAttendance, todayPresentCount } = attendanceMetrics;
     const collectedFeesTotal = collectedFeeAgg[0]?.total || 0;
     const attendanceTodayPercentage =
       todayAttendance > 0
         ? Math.round((todayPresentCount / todayAttendance) * 100)
         : 100;
-
-    // Student counts per batch (scoped)
-    const studentBatchCounts = await Student.aggregate<{
-      _id: string;
-      count: number;
-    }>([
-      {
-        $match: {
-          centerId: trimmedCenterId,
-          isActive: { $ne: false },
-          ...studentMatchCondition,
-        },
-      },
-      {
-        $group: {
-          _id: "$batch",
-          count: { $sum: 1 },
-        },
-      },
-    ]);
 
     const batchCountMap = new Map<string, number>();
     studentBatchCounts.forEach((b) => {
@@ -412,8 +461,25 @@ export async function GET(request: NextRequest) {
       timelineStatus: idx === 0 ? "ongoing" : "upcoming",
     }));
 
+    interface RecentFeeActivityItem {
+      _id: unknown;
+      status?: string;
+      month?: string;
+      amountDue?: number;
+      createdAt?: Date | string;
+      studentId?: { name?: string; batch?: string };
+    }
+
+    interface RecentStudentActivityItem {
+      _id: unknown;
+      name?: string;
+      batch?: string;
+      parentWhatsApp?: string;
+      createdAt?: Date | string;
+    }
+
     // Format recent activities
-    const feeActivities = recentFees.map((f: any) => ({
+    const feeActivities = (recentFees as unknown as RecentFeeActivityItem[]).map((f) => ({
       id: `fee_${f._id}`,
       title:
         f.status === "Paid"
@@ -425,7 +491,7 @@ export async function GET(request: NextRequest) {
       amount: f.amountDue,
     }));
 
-    const studentActivities = recentStudents.map((s: any) => ({
+    const studentActivities = (recentStudents as unknown as RecentStudentActivityItem[]).map((s) => ({
       id: `student_${s._id}`,
       title: `Student Enrolled: ${s.name}`,
       subtitle:

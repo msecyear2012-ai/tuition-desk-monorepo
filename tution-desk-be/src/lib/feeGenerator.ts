@@ -13,8 +13,15 @@ export interface FeeGenerationOptions {
   overrideDay?: number;
   centerId?: string;
   studentId?: string;
+  studentIds?: string[];
   forceAllStudents?: boolean;
   referenceDate?: Date;
+  models?: {
+    Student?: unknown;
+    Fee?: unknown;
+    Center?: unknown;
+    FeeCreationLock?: unknown;
+  };
 }
 
 export interface SkippedFeeRecord {
@@ -45,7 +52,9 @@ export interface FeeGenerationResult {
 export async function generateMonthlyFees(
   options: FeeGenerationOptions = {}
 ): Promise<FeeGenerationResult> {
-  await connectDB();
+  if (!options.models) {
+    await connectDB();
+  }
 
   const now = options.referenceDate || new Date();
   const dateComp = getISTDateComponents(now);
@@ -81,7 +90,26 @@ export async function generateMonthlyFees(
     studentQuery._id = options.studentId.trim();
   }
 
-  const eligibleStudents = (await Student.find(studentQuery)) as IStudentDocument[];
+  if (options.studentIds && Array.isArray(options.studentIds) && options.studentIds.length > 0) {
+    const cleanIds = options.studentIds.map((id) => String(id).trim()).filter(Boolean);
+    if (cleanIds.length === 1) {
+      studentQuery._id = cleanIds[0];
+    } else if (cleanIds.length > 1) {
+      studentQuery._id = { $in: cleanIds };
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const StudentModel = (options.models?.Student as any) || Student;
+  const eligibleStudents = (await StudentModel.find(studentQuery)) as IStudentDocument[];
+
+  // Build in-memory Map keyed by student ID for O(1) batch lookup
+  const studentMap = new Map<string, IStudentDocument>();
+  for (const student of eligibleStudents) {
+    if (student && student._id) {
+      studentMap.set(student._id.toString(), student);
+    }
+  }
 
   let generatedCount = 0;
   let skippedCount = 0;
@@ -89,11 +117,15 @@ export async function generateMonthlyFees(
   const skippedRecords: SkippedFeeRecord[] = [];
 
   for (const student of eligibleStudents) {
+    const studentDoc = studentMap.get(student._id.toString()) || student;
     const res = await generateOrGetMonthlyFee({
       centerId: student.centerId,
       studentId: student._id,
+      student: studentDoc,
+      studentMap,
       referenceDate: now,
       isManual: false,
+      models: options.models,
     });
 
     if (res.wasCreated && res.fee) {

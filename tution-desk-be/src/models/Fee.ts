@@ -686,6 +686,19 @@ FeeSchema.pre("validate", function () {
 FeeSchema.index({ centerId: 1, studentId: 1, month: 1 });
 FeeSchema.index({ centerId: 1, status: 1 });
 FeeSchema.index(
+  { centerId: 1, status: 1, createdAt: -1 },
+  { name: "centerId_1_status_1_createdAt_-1" }
+);
+FeeSchema.index(
+  { centerId: 1, studentId: 1, billingMonth: 1 },
+  {
+    name: "centerId_1_studentId_1_billingMonth_1_partial",
+    partialFilterExpression: {
+      billingMonth: { $type: "string" },
+    },
+  }
+);
+FeeSchema.index(
   { centerId: 1, utrNumber: 1 },
   {
     unique: true,

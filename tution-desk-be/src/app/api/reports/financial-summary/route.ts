@@ -162,6 +162,9 @@ export async function GET(request: NextRequest) {
     if (statusParam && statusParam !== "all") {
       feeFilter.status = statusParam;
     }
+    if (studentQueryParam && studentQueryParam.trim() && mongoose.Types.ObjectId.isValid(studentQueryParam.trim())) {
+      feeFilter.studentId = new mongoose.Types.ObjectId(studentQueryParam.trim());
+    }
 
     let teacherQuery: any = Teacher.find({ centerId, isActive: { $ne: false } });
     if (teacherQuery && typeof teacherQuery.select === "function") {
@@ -171,7 +174,8 @@ export async function GET(request: NextRequest) {
       teacherQuery = teacherQuery.lean();
     }
 
-    let studentQuery: any = Student.find({ centerId, isActive: { $ne: false } });
+    // Load active and inactive students for this center to resolve historical fees without duplicate populate queries
+    let studentQuery: any = Student.find({ centerId });
     if (studentQuery && typeof studentQuery.select === "function") {
       studentQuery = studentQuery.select("_id name batch parentName parentWhatsApp phone");
     }
@@ -195,11 +199,8 @@ export async function GET(request: NextRequest) {
     let feeQuery: any = Fee.find(feeFilter);
     if (feeQuery && typeof feeQuery.select === "function") {
       feeQuery = feeQuery.select(
-        "centerId studentId batchAtPayment originalAmountDue amountDue paidAmount status month title paymentHistory createdAt"
+        "centerId studentId batchAtPayment originalAmountDue amountDue paidAmount status month title paymentHistory paymentDate paidDate paidAt createdAt"
       );
-    }
-    if (feeQuery && typeof feeQuery.populate === "function") {
-      feeQuery = feeQuery.populate("studentId", "name batch assignedTeacherId phone parentName parentWhatsApp");
     }
     if (feeQuery && typeof feeQuery.sort === "function") {
       feeQuery = feeQuery.sort({ createdAt: -1 });
@@ -646,7 +647,6 @@ export async function GET(request: NextRequest) {
           summary: summaryKPIs,
           teacherReports,
           batchReports,
-          studentLedger: studentLedgerRows,
           handoverReports,
           metadata: {
             centerId,

@@ -15,6 +15,8 @@ import {
 export interface GenerateFeeOptions {
   centerId: string;
   studentId: string | Types.ObjectId;
+  student?: IStudentDocument | null;
+  studentMap?: Map<string, IStudentDocument>;
   billingMonth?: string; // Canonical "YYYY-MM"
   amountDue?: number;
   dueDate?: Date;
@@ -80,7 +82,14 @@ export async function generateOrGetMonthlyFee(
   }
 
   // 1. Validate student
-  const student = (await StudentModel.findById(options.studentId)) as IStudentDocument | null;
+  let student: IStudentDocument | null = null;
+  if (options.student !== undefined) {
+    student = options.student;
+  } else if (options.studentMap) {
+    student = options.studentMap.get(String(options.studentId)) || null;
+  } else {
+    student = (await StudentModel.findById(options.studentId)) as IStudentDocument | null;
+  }
   if (!student) {
     return {
       success: false,
@@ -434,8 +443,11 @@ export async function generateOrGetMonthlyFee(
     const displayMonth = dateComp.shortMonthLabel;
 
     // Smart Advance Wallet: Check available balance
-    // Re-fetch freshest student state under lock to prevent race conditions
-    const currentStudent = (await StudentModel.findById(student._id)) as IStudentDocument | null;
+    // Re-fetch freshest student state under lock if student has advance balance, or reuse preloaded student when zero
+    const currentStudent =
+      student.advanceBalance !== undefined && Number(student.advanceBalance) === 0
+        ? student
+        : ((await StudentModel.findById(student._id)) as IStudentDocument | null);
     const availableWallet = Math.max(0, Number(currentStudent?.advanceBalance) || 0);
 
     let finalStatus: "Pending" | "Paid" | "Partial Paid" = "Pending";

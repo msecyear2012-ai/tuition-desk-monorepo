@@ -96,6 +96,10 @@ const StudentSchema = new Schema<IStudentDocument>(
 StudentSchema.index({ centerId: 1, batch: 1 });
 StudentSchema.index({ centerId: 1, assignedTeacherId: 1 });
 StudentSchema.index({ centerId: 1, assignedTeacherId: 1, isActive: 1 });
+StudentSchema.index(
+  { centerId: 1, isActive: 1 },
+  { name: "centerId_1_isActive_1" }
+);
 StudentSchema.index({ centerId: 1, name: "text" });
 
 // In development, ensure Mongoose reloads new schema properties

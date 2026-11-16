@@ -64,6 +64,10 @@ const AttendanceSchema = new Schema<IAttendanceDocument>(
 AttendanceSchema.index({ centerId: 1, studentId: 1, date: 1 });
 AttendanceSchema.index({ centerId: 1, batch: 1, date: 1 });
 AttendanceSchema.index({ centerId: 1, assignedTeacherId: 1, date: -1 });
+AttendanceSchema.index(
+  { centerId: 1, date: -1, status: 1 },
+  { name: "centerId_1_date_-1_status_1" }
+);
 
 // Ensure schema path exists during Next.js hot-reloading
 if (

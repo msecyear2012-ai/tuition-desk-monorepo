@@ -1,14 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server.js";
 import mongoose from "mongoose";
-import connectDB from "@/lib/db";
-import Attendance from "@/models/Attendance";
-import Center from "@/models/Center";
-import MessageCampaign from "@/models/MessageCampaign";
-import { sendPushToStudentParents } from "@/lib/pushService";
-import Student from "@/models/Student";
-import { getAuthenticatedUser } from "@/lib/auth";
-import { getCorsHeaders, handleCorsPreflight } from "@/lib/cors";
-import { getISTDayRange } from "@/lib/dateUtils";
+import connectDB from "../../../../lib/db.ts";
+import Attendance from "../../../../models/Attendance.ts";
+import Center from "../../../../models/Center.ts";
+import MessageCampaign from "../../../../models/MessageCampaign.ts";
+import { sendPushToStudentParents } from "../../../../lib/pushService.ts";
+import Student from "../../../../models/Student.ts";
+import { getAuthenticatedUser } from "../../../../lib/auth.ts";
+import { getCorsHeaders, handleCorsPreflight } from "../../../../lib/cors.ts";
+import { getISTDayRange } from "../../../../lib/dateUtils.ts";
 
 export async function OPTIONS(request: NextRequest) {
   return handleCorsPreflight(request, "POST, OPTIONS");
@@ -126,8 +126,40 @@ export async function POST(request: NextRequest) {
 
     const studentMap = new Map(validStudents.map((s) => [String(s._id), s]));
 
-    // Process attendance records (update existing record for same student & day if present, else create)
-    const savedRecords = [];
+    // Process attendance records in bulk (update existing record for same student & day if present, else create)
+    // 1. Gather all unique student IDs and overall date range for the batch
+    const studentObjectIds = studentIds.map((id) => new mongoose.Types.ObjectId(id));
+    let minDate = new Date(8640000000000000);
+    let maxDate = new Date(-8640000000000000);
+
+    for (const item of items) {
+      const d =
+        item.date && !isNaN(new Date(String(item.date)).getTime())
+          ? new Date(String(item.date))
+          : new Date();
+      const { startOfDay, endOfDay } = getISTDayRange(d);
+      if (startOfDay < minDate) minDate = startOfDay;
+      if (endOfDay > maxDate) maxDate = endOfDay;
+    }
+
+    // 2. Fetch existing records for all students in the batch in a single indexed query
+    const existingRecords = await Attendance.find({
+      centerId: user.centerId,
+      studentId: { $in: studentObjectIds },
+      date: { $gte: minDate, $lte: maxDate },
+    });
+
+    const existingMap = new Map<string, any>();
+    for (const doc of (existingRecords as any[])) {
+      const { startOfDay } = getISTDayRange(doc.date);
+      const key = `${String(doc.studentId)}:::${startOfDay.toISOString()}`;
+      existingMap.set(key, doc);
+    }
+
+    const savedRecords: any[] = [];
+    const bulkOps: any[] = [];
+
+    // 3. Construct bulk operations in memory with strict duplicate handling
     for (const item of items) {
       const student = studentMap.get(String(item.studentId));
       const assignedTeacherId =
@@ -142,30 +174,69 @@ export async function POST(request: NextRequest) {
           ? new Date(String(item.date))
           : new Date();
 
-      const { startOfDay, endOfDay } = getISTDayRange(recordDate);
-
-      let existing = await Attendance.findOne({
-        centerId: user.centerId,
-        studentId: new mongoose.Types.ObjectId(String(item.studentId)),
-        date: { $gte: startOfDay, $lte: endOfDay },
-      });
+      const { startOfDay } = getISTDayRange(recordDate);
+      const itemKey = `${String(item.studentId)}:::${startOfDay.toISOString()}`;
+      const existing = existingMap.get(itemKey);
 
       if (existing) {
+        bulkOps.push({
+          updateOne: {
+            filter: { _id: existing._id },
+            update: {
+              $set: {
+                status: normalizedStatus,
+                batch: String(item.batch).trim(),
+                assignedTeacherId,
+              },
+            },
+          },
+        });
+
+        // Update in-memory record to preserve response contract
         existing.status = normalizedStatus;
         existing.batch = String(item.batch).trim();
         existing.assignedTeacherId = assignedTeacherId;
-        await existing.save();
+        existing.updatedAt = new Date();
         savedRecords.push(existing);
       } else {
-        const created = await Attendance.create({
+        const newId = new mongoose.Types.ObjectId();
+        const created = {
+          _id: newId,
           centerId: user.centerId,
           studentId: new mongoose.Types.ObjectId(String(item.studentId)),
           assignedTeacherId,
           batch: String(item.batch).trim(),
           date: recordDate,
           status: normalizedStatus,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        bulkOps.push({
+          insertOne: {
+            document: created,
+          },
         });
+
+        // Register in existingMap so subsequent duplicate entries for the same student/day in this request update it
+        existingMap.set(itemKey, created);
         savedRecords.push(created);
+      }
+    }
+
+    // 4. Execute atomic bulk write in a single database round-trip
+    if (bulkOps.length > 0) {
+      if (typeof Attendance.bulkWrite === "function") {
+        await Attendance.bulkWrite(bulkOps, { ordered: true });
+      } else {
+        // Fallback for mocked test environments without bulkWrite
+        for (const op of bulkOps) {
+          if ("updateOne" in op) {
+            await Attendance.updateOne(op.updateOne.filter, op.updateOne.update);
+          } else if ("insertOne" in op) {
+            await Attendance.create(op.insertOne.document);
+          }
+        }
       }
     }
 

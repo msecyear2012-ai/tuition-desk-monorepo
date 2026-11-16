@@ -91,6 +91,10 @@ const TestSchema = new Schema<ITestDocument>(
 // Compound indexes for multi-tenant querying
 TestSchema.index({ centerId: 1, date: -1 });
 TestSchema.index({ centerId: 1, assignedTeacherId: 1, date: -1 });
+TestSchema.index(
+  { centerId: 1, "results.studentId": 1, date: -1 },
+  { name: "centerId_1_results.studentId_1_date_-1" }
+);
 
 // In development, reset cached model to support hot reloads if schema path changed
 if (

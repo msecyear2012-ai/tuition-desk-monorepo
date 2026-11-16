@@ -30,6 +30,47 @@ export interface RecentCollectionItem {
   custodyStatus: string;
 }
 
+interface QueryWithSelectLean<T> {
+  select?: (fields: string) => { lean?: () => Promise<T> } | unknown;
+  lean?: () => Promise<T>;
+}
+
+function safeSelectLean<T>(query: unknown, selectFields: string): Promise<T> {
+  if (query && typeof query === "object") {
+    const q = query as QueryWithSelectLean<T>;
+    if (typeof q.select === "function") {
+      const projected = q.select(selectFields);
+      if (projected && typeof projected === "object" && "lean" in projected && typeof (projected as { lean?: unknown }).lean === "function") {
+        return ((projected as { lean: () => Promise<T> }).lean)();
+      }
+      return Promise.resolve(projected as T);
+    }
+    if (typeof q.lean === "function") {
+      return q.lean();
+    }
+  }
+  return Promise.resolve(query as T);
+}
+
+function insertBoundedTop<T>(
+  list: T[],
+  item: T,
+  getTime: (x: T) => number,
+  maxItems: number
+) {
+  const itemTime = getTime(item);
+  if (list.length < maxItems) {
+    list.push(item);
+    list.sort((a, b) => getTime(b) - getTime(a));
+    return;
+  }
+  const lowestTime = getTime(list[list.length - 1]);
+  if (itemTime > lowestTime) {
+    list[list.length - 1] = item;
+    list.sort((a, b) => getTime(b) - getTime(a));
+  }
+}
+
 function extractPaymentDate(entry: IPaymentEntry, rawFee: IFeeDocument): Date | null {
   if (entry.paymentDate && !isNaN(new Date(entry.paymentDate).getTime())) {
     return new Date(entry.paymentDate);
@@ -212,6 +253,14 @@ export async function GET(request: NextRequest) {
         ],
       };
 
+      const handoverFilter: Record<string, unknown> = {
+        centerId: trimmedCenterId,
+        $or: [
+          { status: { $in: ["pending_approval", "pending_verification", "disputed"] } },
+          { discrepancyStatus: { $in: ["disputed", "shortage_confirmed"] } },
+        ],
+      };
+
       const [feesRaw, teachersRaw, handoversRaw] = await Promise.all([
         Fee.find(paymentFeeFilter)
           .select(
@@ -219,7 +268,10 @@ export async function GET(request: NextRequest) {
           )
           .lean(),
         Teacher.find({ centerId: trimmedCenterId }).select("_id name loginId").lean(),
-        CashHandover.find({ centerId: trimmedCenterId }).lean(),
+        safeSelectLean<ICashHandoverDocument[]>(
+          CashHandover.find(handoverFilter),
+          "status discrepancyStatus discrepancyAmount submittedAmount incrementalSettlements.amountReceived"
+        ),
       ]);
 
       const teacherMap = new Map<string, { name: string; loginId?: string }>();
@@ -231,10 +283,29 @@ export async function GET(request: NextRequest) {
       let verifiedCashReceived = 0;
       let teacherHeldCash = 0;
       let pendingVerificationCash = 0;
-      const recentCollections: RecentCollectionItem[] = [];
+      const top10Recent: RecentCollectionItem[] = [];
 
       for (const rawFee of ((feesRaw || []) as unknown as IFeeDocument[])) {
         const entries = getFeePaymentEntries(rawFee);
+
+        // Resolve student identification (preserving populated object names or resolving raw ObjectId)
+        let studentIdStr = "";
+        let studentNameDirect = "";
+        const rawStudent = (rawFee as { studentId?: unknown }).studentId;
+        if (rawStudent) {
+          if (typeof rawStudent === "object" && rawStudent !== null) {
+            if ("name" in rawStudent && typeof (rawStudent as { name: unknown }).name === "string") {
+              studentNameDirect = (rawStudent as { name: string }).name;
+            }
+            if ("_id" in rawStudent) {
+              studentIdStr = String((rawStudent as { _id: unknown })._id);
+            } else {
+              studentIdStr = String(rawStudent);
+            }
+          } else {
+            studentIdStr = String(rawStudent);
+          }
+        }
 
         for (const entry of entries) {
           const amt = Number(entry.amount) || 0;
@@ -286,28 +357,28 @@ export async function GET(request: NextRequest) {
 
           const genuinePaymentDate = extractPaymentDate(entry, rawFee);
 
-          recentCollections.push({
+          const collectionItem: RecentCollectionItem = {
             feeId: String((rawFee as { _id: unknown })._id),
             paymentId: String(entry.paymentId || (entry as unknown as { _id?: unknown })._id || ""),
             amount: amt,
             paymentDate: genuinePaymentDate,
             receiptNumber: entry.receiptNumber || "",
-            studentName: String((rawFee as { studentId?: unknown }).studentId || ""),
+            studentName: studentNameDirect || studentIdStr,
             collectorName,
             collectorRole: entry.receivedByRole || "teacher",
             custodyStatus: custodyLabel,
-          });
+          };
+
+          insertBoundedTop(
+            top10Recent,
+            collectionItem,
+            (x) => (x.paymentDate ? new Date(x.paymentDate).getTime() : 0),
+            10
+          );
         }
       }
 
-      recentCollections.sort((a, b) => {
-        const timeB = b.paymentDate ? new Date(b.paymentDate).getTime() : 0;
-        const timeA = a.paymentDate ? new Date(a.paymentDate).getTime() : 0;
-        return timeB - timeA;
-      });
-      const top10Recent = recentCollections.slice(0, 10);
-
-      // Hydrate student names for ONLY the top 10 recent collections (avoids full-collection populates)
+      // Hydrate student names for ONLY the top 10 recent collections that need hydration
       const top10StudentIds = Array.from(
         new Set(
           top10Recent
@@ -317,19 +388,21 @@ export async function GET(request: NextRequest) {
       );
 
       if (top10StudentIds.length > 0) {
-        const students = await Student.find({ _id: { $in: top10StudentIds } })
-          .select("_id name")
-          .lean();
+        const studentQuery = Student.find({ _id: { $in: top10StudentIds } });
+        const students = await safeSelectLean<Array<{ _id: unknown; name?: string }>>(
+          studentQuery,
+          "_id name"
+        );
         const studentNameMap = new Map<string, string>();
-        for (const s of (students as unknown as Array<{ _id: unknown; name?: string }>)) {
+        for (const s of (students || [])) {
           studentNameMap.set(String(s._id), s.name || "Student");
         }
         for (const item of top10Recent) {
-          item.studentName = studentNameMap.get(item.studentName) || "Student";
-        }
-      } else {
-        for (const item of top10Recent) {
-          item.studentName = "Student";
+          if (studentNameMap.has(item.studentName)) {
+            item.studentName = studentNameMap.get(item.studentName) || "Student";
+          } else if (mongoose.Types.ObjectId.isValid(item.studentName)) {
+            item.studentName = "Student";
+          }
         }
       }
 
@@ -400,13 +473,16 @@ export async function GET(request: NextRequest) {
       : null;
 
     const [teacherHandoversRaw, teacherStudentsFull] = await Promise.all([
-      CashHandover.find({
-        centerId: trimmedCenterId,
-        $or: [
-          ...(teacherObjectId ? [{ teacherId: teacherObjectId }] : []),
-          { teacherId: user.userId },
-        ],
-      }).lean(),
+      safeSelectLean<ICashHandoverDocument[]>(
+        CashHandover.find({
+          centerId: trimmedCenterId,
+          $or: [
+            ...(teacherObjectId ? [{ teacherId: teacherObjectId }] : []),
+            { teacherId: user.userId },
+          ],
+        }),
+        "_id status discrepancyStatus"
+      ),
       teacherObjectId
         ? Student.find({
             centerId: trimmedCenterId,
@@ -455,7 +531,7 @@ export async function GET(request: NextRequest) {
     let ownCashInHand = 0;
     let ownSubmittedHandovers = 0;
     let ownVerifiedHandovers = 0;
-    const teacherRecentCollections: RecentCollectionItem[] = [];
+    const top10TeacherRecent: RecentCollectionItem[] = [];
 
     for (const rawFee of ((feesRaw || []) as unknown as IFeeDocument[])) {
       const entries = getFeePaymentEntries(rawFee);
@@ -493,7 +569,7 @@ export async function GET(request: NextRequest) {
 
         const genuinePaymentDate = extractPaymentDate(entry, rawFee);
 
-        teacherRecentCollections.push({
+        const collectionItem: RecentCollectionItem = {
           feeId: String((rawFee as { _id: unknown })._id),
           paymentId: String(entry.paymentId || (entry as unknown as { _id?: unknown })._id || ""),
           amount: amt,
@@ -503,16 +579,16 @@ export async function GET(request: NextRequest) {
           collectorName: "You",
           collectorRole: "teacher",
           custodyStatus: custodyLabel,
-        });
+        };
+
+        insertBoundedTop(
+          top10TeacherRecent,
+          collectionItem,
+          (x) => (x.paymentDate ? new Date(x.paymentDate).getTime() : 0),
+          10
+        );
       }
     }
-
-    teacherRecentCollections.sort((a, b) => {
-      const timeB = b.paymentDate ? new Date(b.paymentDate).getTime() : 0;
-      const timeA = a.paymentDate ? new Date(a.paymentDate).getTime() : 0;
-      return timeB - timeA;
-    });
-    const top10TeacherRecent = teacherRecentCollections.slice(0, 10);
 
     // Resolve student names for top 10 items
     const missingStudentIds: string[] = [];
@@ -527,11 +603,13 @@ export async function GET(request: NextRequest) {
     }
 
     if (missingStudentIds.length > 0) {
-      const extraStudents = await Student.find({ _id: { $in: missingStudentIds } })
-        .select("_id name")
-        .lean();
+      const extraStudentsQuery = Student.find({ _id: { $in: missingStudentIds } });
+      const extraStudents = await safeSelectLean<Array<{ _id: unknown; name?: string }>>(
+        extraStudentsQuery,
+        "_id name"
+      );
       const extraMap = new Map<string, string>();
-      for (const s of (extraStudents as unknown as Array<{ _id: unknown; name?: string }>)) {
+      for (const s of (extraStudents || [])) {
         extraMap.set(String(s._id), s.name || "Student");
       }
       for (const item of top10TeacherRecent) {
@@ -591,13 +669,17 @@ export async function GET(request: NextRequest) {
     const studentsFullyPaid = Math.max(0, totalAssignedStudents - studentsWithDues);
 
     // Recent activity on assigned students' fees (strictly zero contact phone numbers)
-    const sortedAssignedFees = [...assignedFees].sort((a, b) => {
-      const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
-      const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
-      return timeB - timeA;
-    });
+    const sortedAssignedFees: IFeeDocument[] = [];
+    for (const f of assignedFees) {
+      insertBoundedTop(
+        sortedAssignedFees,
+        f,
+        (x) => new Date(x.updatedAt || x.createdAt || 0).getTime(),
+        8
+      );
+    }
 
-    const recentStudentActivity = sortedAssignedFees.slice(0, 8).map((f) => {
+    const recentStudentActivity = sortedAssignedFees.map((f) => {
       const sId = typeof f.studentId === "object" && f.studentId !== null && "_id" in f.studentId
         ? String((f.studentId as { _id: unknown })._id)
         : String(f.studentId);
