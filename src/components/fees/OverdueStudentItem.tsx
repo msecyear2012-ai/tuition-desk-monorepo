@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Check, Clock, CheckCircle2, Loader2, ShieldCheck, Sparkles, Trash2, Banknote, Receipt, UserCheck, GraduationCap, Camera, FileText, AlertTriangle } from "lucide-react";
 import { OverdueFeeStudent } from "@/types";
 
@@ -32,7 +33,7 @@ function WhatsAppIcon({ className = "w-5 h-5" }: { className?: string }) {
   );
 }
 
-export default function OverdueStudentItem({
+function OverdueStudentItem({
   student,
   tabType,
   userRole = "owner",
@@ -491,3 +492,5 @@ export default function OverdueStudentItem({
     </div>
   );
 }
+
+export default memo(OverdueStudentItem);

@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   Suspense,
+  memo,
 } from "react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -118,6 +119,173 @@ function getCycleOrdinal(day: number): string {
   }
 }
 
+interface StudentRowItemProps {
+  student: StudentRecord;
+  assignedTeacherName?: string;
+  userRole?: string;
+  onEdit: (student: StudentRecord) => void;
+  onDelete: (student: StudentRecord) => void;
+  onOpenPortal: (studentId: string) => void;
+  onTransfer?: (student: StudentRecord) => void;
+}
+
+const StudentRowItem = memo(function StudentRowItem({
+  student,
+  assignedTeacherName,
+  userRole,
+  onEdit,
+  onDelete,
+  onOpenPortal,
+  onTransfer,
+}: StudentRowItemProps) {
+  const avatarClass = getAvatarColor(student.name);
+  const initials = getInitials(student.name);
+  const isStudentActive = student.isActive !== false;
+
+  return (
+    <div className="p-3.5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 w-full hover:bg-slate-50/60 transition-colors">
+      {/* Student Info Left */}
+      <div className="flex items-start gap-3 min-w-0">
+        {/* Avatar */}
+        <div
+          className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-xs border flex-shrink-0 shadow-xs ${avatarClass}`}
+        >
+          {initials}
+        </div>
+
+        {/* Details */}
+        <div className="space-y-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link
+              href={`/admissions/${student._id}`}
+              className="text-sm font-bold text-slate-900 leading-tight hover:text-blue-600 hover:underline"
+              title="View 360° Profile & Fee Ledger"
+            >
+              {student.name}
+            </Link>
+
+            {student.assignedTeacherId ? (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200/60"
+                title={`Assigned to ${
+                  assignedTeacherName || "Teacher"
+                }`}
+              >
+                <GraduationCap className="w-3 h-3 text-indigo-500" />
+                <span>
+                  {assignedTeacherName || "Teacher"}
+                </span>
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200/80"
+                title="Assigned to Institute Owner"
+              >
+                <User className="w-3 h-3 text-slate-400" />
+                <span>Owner</span>
+              </span>
+            )}
+
+            {!isStudentActive && (
+              <span className="px-1.5 py-0.2 rounded-md bg-slate-100 text-slate-500 text-[10px] font-semibold">
+                Inactive
+              </span>
+            )}
+          </div>
+
+          {/* WhatsApp Contact with Quick Actions */}
+          <StudentPhoneMasked
+            phone={student.parentWhatsApp}
+            userRole={userRole}
+            showQuickActions={true}
+            textClassName="font-mono text-[11px] text-slate-600"
+            className="flex items-center gap-2 text-xs text-slate-500"
+          />
+
+          {/* Badges: Joining Date + Fee Cycle */}
+          <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[10px] font-medium">
+              <Calendar className="w-3 h-3 text-slate-400" />
+              <span>{formatJoiningDate(student.joiningDate)}</span>
+            </span>
+
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 text-[10px] font-semibold border border-blue-100">
+              <IndianRupee className="w-3 h-3 text-blue-500" />
+              <span>
+                {formatCurrency(student.monthlyFee || 0)} / mo
+              </span>
+            </span>
+
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 text-[10px] font-medium border border-indigo-100">
+              <span>
+                Due: {getCycleOrdinal(student.billingCycleDate || 5)}
+              </span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Student Row Actions Right */}
+      <div className="flex flex-wrap gap-2 w-full md:w-auto justify-start md:justify-end mt-2 md:mt-0">
+        {/* 360° Fee Ledger */}
+        <Link
+          href={`/admissions/${student._id}`}
+          className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold flex items-center gap-1.5 transition-colors"
+          title="View 360° Fee Ledger & Record Cash"
+        >
+          <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Ledger</span>
+        </Link>
+
+        {/* Parent Portal (canonical token link) */}
+        <button
+          type="button"
+          onClick={() => onOpenPortal(String(student._id))}
+          className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-semibold flex items-center gap-1.5 transition-colors"
+          title="Open the Parent Portal using the canonical portal link"
+        >
+          <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+          <span>Portal</span>
+        </button>
+
+        {/* Edit Button */}
+        <button
+          type="button"
+          onClick={() => onEdit(student)}
+          className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold flex items-center gap-1.5 border border-blue-200/80 transition-colors"
+        >
+          <Pencil className="w-3.5 h-3.5" />
+          <span>Edit</span>
+        </button>
+
+        {/* Request Batch Reassignment for Teachers */}
+        {userRole === "teacher" && onTransfer && (
+          <button
+            type="button"
+            onClick={() => onTransfer(student)}
+            className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold flex items-center gap-1.5 border border-indigo-200/80 transition-colors"
+            title="Request batch reassignment"
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Transfer</span>
+          </button>
+        )}
+
+        {/* Delete Student Button */}
+        <button
+          type="button"
+          onClick={() => onDelete(student)}
+          aria-label={`Delete student ${student.name}`}
+          title={`Delete ${student.name}`}
+          className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-bold flex items-center gap-1 border border-rose-200/80 transition-colors"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+});
+
 function AdmissionsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -187,12 +355,12 @@ function AdmissionsContent() {
   // Success Feedback Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const showToast = (message: string) => {
+  const showToast = useCallback((message: string) => {
     setToastMessage(message);
     setTimeout(() => {
       setToastMessage(null);
     }, 4000);
-  };
+  }, []);
 
   // Fetch real students from MongoDB backend
   const fetchStudents = useCallback(async (isRefresh = false) => {
@@ -504,10 +672,22 @@ function AdmissionsContent() {
     setIsModalOpen(true);
   };
 
-  const handleOpenEdit = (student: StudentRecord) => {
+  const handleOpenEdit = useCallback((student: StudentRecord) => {
     setStudentToEdit(student);
     setIsModalOpen(true);
-  };
+  }, []);
+
+  const handleOpenPortal = useCallback(async (studentId: string) => {
+    const result = await openParentPortalForStudent(studentId);
+    if (!result.opened && result.message) {
+      window.alert(result.message);
+    }
+  }, []);
+
+  const handleOpenTransfer = useCallback((student: StudentRecord) => {
+    setRequestStudentTarget(student);
+    setIsStudentRequestOpen(true);
+  }, []);
 
   const handleModalSuccess = (savedStudent: StudentRecord) => {
     fetchStudents(true);
@@ -525,27 +705,30 @@ function AdmissionsContent() {
     showToast(`Batch "${newBatch.name}" created successfully!`);
   };
 
-  const handleDeleteStudent = async (student: StudentRecord) => {
-    if (
-      !window.confirm(
-        `Are you sure you want to delete ${student.name}? This action cannot be undone.`
-      )
-    ) {
-      return;
-    }
+  const handleDeleteStudent = useCallback(
+    async (student: StudentRecord) => {
+      if (
+        !window.confirm(
+          `Are you sure you want to delete ${student.name}? This action cannot be undone.`
+        )
+      ) {
+        return;
+      }
 
-    try {
-      await apiClient(`/students/${student._id}`, {
-        method: "DELETE",
-      });
-      showToast(`Student "${student.name}" deleted successfully.`);
-      fetchStudents(true);
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "Failed to delete student.";
-      showToast(`Error: ${msg}`);
-    }
-  };
+      try {
+        await apiClient(`/students/${student._id}`, {
+          method: "DELETE",
+        });
+        showToast(`Student "${student.name}" deleted successfully.`);
+        fetchStudents(true);
+      } catch (err: unknown) {
+        const msg =
+          err instanceof Error ? err.message : "Failed to delete student.";
+        showToast(`Error: ${msg}`);
+      }
+    },
+    [fetchStudents, showToast]
+  );
 
   const handleDeleteBatch = async (batch: BatchRecord) => {
     if (
@@ -1170,167 +1353,22 @@ function AdmissionsContent() {
               </div>
             ) : (
               <div className="rounded-3xl border border-slate-200/90 bg-white shadow-xs overflow-hidden divide-y divide-slate-100">
-                {currentBatchStudents.map((student) => {
-                  const avatarClass = getAvatarColor(student.name);
-                  const initials = getInitials(student.name);
-                  const isStudentActive = student.isActive !== false;
-
-                  return (
-                    <div
-                      key={student._id}
-                      className="p-3.5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 w-full hover:bg-slate-50/60 transition-colors"
-                    >
-                      {/* Student Info Left */}
-                      <div className="flex items-start gap-3 min-w-0">
-                        {/* Avatar */}
-                        <div
-                          className={`w-10 h-10 rounded-2xl flex items-center justify-center font-bold text-xs border flex-shrink-0 shadow-xs ${avatarClass}`}
-                        >
-                          {initials}
-                        </div>
-
-                        {/* Details */}
-                        <div className="space-y-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <Link
-                              href={`/admissions/${student._id}`}
-                              className="text-sm font-bold text-slate-900 leading-tight hover:text-blue-600 hover:underline"
-                              title="View 360° Profile & Fee Ledger"
-                            >
-                              {student.name}
-                            </Link>
-
-                            {student.assignedTeacherId ? (
-                              <span
-                                className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-200/60"
-                                title={`Assigned to ${
-                                  teacherMap[student.assignedTeacherId] || "Teacher"
-                                }`}
-                              >
-                                <GraduationCap className="w-3 h-3 text-indigo-500" />
-                                <span>
-                                  {teacherMap[student.assignedTeacherId] || "Teacher"}
-                                </span>
-                              </span>
-                            ) : (
-                              <span
-                                className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200/80"
-                                title="Assigned to Institute Owner"
-                              >
-                                <User className="w-3 h-3 text-slate-400" />
-                                <span>Owner</span>
-                              </span>
-                            )}
-
-                            {!isStudentActive && (
-                              <span className="px-1.5 py-0.2 rounded-md bg-slate-100 text-slate-500 text-[10px] font-semibold">
-                                Inactive
-                              </span>
-                            )}
-                          </div>
-
-                          {/* WhatsApp Contact with Quick Actions */}
-                          <StudentPhoneMasked
-                            phone={student.parentWhatsApp}
-                            userRole={userProfile?.role}
-                            showQuickActions={true}
-                            textClassName="font-mono text-[11px] text-slate-600"
-                            className="flex items-center gap-2 text-xs text-slate-500"
-                          />
-
-                          {/* Badges: Joining Date + Fee Cycle */}
-                          <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[10px] font-medium">
-                              <Calendar className="w-3 h-3 text-slate-400" />
-                              <span>{formatJoiningDate(student.joiningDate)}</span>
-                            </span>
-
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 text-[10px] font-semibold border border-blue-100">
-                              <IndianRupee className="w-3 h-3 text-blue-500" />
-                              <span>
-                                {formatCurrency(student.monthlyFee || 0)} / mo
-                              </span>
-                            </span>
-
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-700 text-[10px] font-medium border border-indigo-100">
-                              <span>
-                                Due: {getCycleOrdinal(student.billingCycleDate || 5)}
-                              </span>
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Student Row Actions Right */}
-                      <div className="flex flex-wrap gap-2 w-full md:w-auto justify-start md:justify-end mt-2 md:mt-0">
-                        {/* 360° Fee Ledger */}
-                        <Link
-                          href={`/admissions/${student._id}`}
-                          className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold flex items-center gap-1.5 transition-colors"
-                          title="View 360° Fee Ledger & Record Cash"
-                        >
-                          <Receipt className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Ledger</span>
-                        </Link>
-
-                        {/* Parent Portal (canonical token link) */}
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const result = await openParentPortalForStudent(
-                              String(student._id)
-                            );
-                            if (!result.opened && result.message) {
-                              window.alert(result.message);
-                            }
-                          }}
-                          className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-semibold flex items-center gap-1.5 transition-colors"
-                          title="Open the Parent Portal using the canonical portal link"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Portal</span>
-                        </button>
-
-                        {/* Edit Button */}
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEdit(student)}
-                          className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold flex items-center gap-1.5 border border-blue-200/80 transition-colors"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                          <span>Edit</span>
-                        </button>
-
-                        {/* Request Batch Reassignment for Teachers */}
-                        {userProfile?.role === "teacher" && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRequestStudentTarget(student);
-                              setIsStudentRequestOpen(true);
-                            }}
-                            className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold flex items-center gap-1.5 border border-indigo-200/80 transition-colors"
-                            title="Request batch reassignment"
-                          >
-                            <Layers className="w-3.5 h-3.5" />
-                            <span>Transfer</span>
-                          </button>
-                        )}
-
-                        {/* Delete Student Button */}
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteStudent(student)}
-                          aria-label={`Delete student ${student.name}`}
-                          title={`Delete ${student.name}`}
-                          className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-bold flex items-center gap-1 border border-rose-200/80 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                {currentBatchStudents.map((student) => (
+                  <StudentRowItem
+                    key={student._id}
+                    student={student}
+                    assignedTeacherName={
+                      student.assignedTeacherId
+                        ? teacherMap[student.assignedTeacherId]
+                        : undefined
+                    }
+                    userRole={userProfile?.role}
+                    onEdit={handleOpenEdit}
+                    onDelete={handleDeleteStudent}
+                    onOpenPortal={handleOpenPortal}
+                    onTransfer={handleOpenTransfer}
+                  />
+                ))}
               </div>
             )}
           </div>

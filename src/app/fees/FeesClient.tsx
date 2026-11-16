@@ -795,7 +795,7 @@ export default function FeesClient({
   }, [pendingStudents, pendingFilter]);
 
   // Actions
-  const handleMarkPaid = (student: OverdueFeeStudent) => {
+  const handleMarkPaid = useCallback((student: OverdueFeeStudent) => {
     setSelectedStudentForPayment({
       _id: student.studentId || student.id || "",
       name: student.name,
@@ -811,7 +811,7 @@ export default function FeesClient({
       totalAmount: student.totalAmount,
     });
     setIsPaymentModalOpen(true);
-  };
+  }, [activeCenterId]);
 
   const handlePaymentSuccess = (
     feeData: unknown,
@@ -849,11 +849,11 @@ export default function FeesClient({
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  const handleViewDetails = (student: OverdueFeeStudent) => {
+  const handleViewDetails = useCallback((student: OverdueFeeStudent) => {
     setSelectedDetailFeeId(student.feeId || student.id);
-  };
+  }, []);
 
-  const handleViewReceipt = (student: OverdueFeeStudent) => {
+  const handleViewReceipt = useCallback((student: OverdueFeeStudent) => {
     const rawPaidDate = student.paidDate || student.paymentDate || student.paidAt || "";
     const receiptData: ReceiptSlipData = {
       receiptNumber: student.receiptNumber || `RCPT-${(student.studentId || student.id).slice(-6).toUpperCase()}`,
@@ -869,12 +869,12 @@ export default function FeesClient({
       remainingBalance: student.pendingAmount || 0,
     };
     setActiveReceiptData(receiptData);
-  };
+  }, []);
 
   // =========================================================================
   // PAYMENT PROOF REVIEW WORKFLOW (PHASE 3)
   // =========================================================================
-  const handleViewProof = async (student: OverdueFeeStudent) => {
+  const handleViewProof = useCallback(async (student: OverdueFeeStudent) => {
     const feeId = student.feeId || student.id;
     setActiveProofStudent(student);
     setProofModalOpen(true);
@@ -911,12 +911,12 @@ export default function FeesClient({
     } finally {
       setProofLoading(false);
     }
-  };
+  }, []);
 
-  const handleOpenApproveModal = (student: OverdueFeeStudent) => {
+  const handleOpenApproveModal = useCallback((student: OverdueFeeStudent) => {
     setApproveTargetStudent(student);
     setShowApproveModal(true);
-  };
+  }, []);
 
   const handleConfirmApprove = async () => {
     if (!approveTargetStudent) return;
@@ -949,12 +949,12 @@ export default function FeesClient({
     }
   };
 
-  const handleOpenRejectModal = (student: OverdueFeeStudent) => {
+  const handleOpenRejectModal = useCallback((student: OverdueFeeStudent) => {
     setRejectTargetStudent(student);
     setRejectionReasonInput("");
     setRejectionError(null);
     setShowRejectModal(true);
-  };
+  }, []);
 
   const handleConfirmReject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1007,45 +1007,48 @@ export default function FeesClient({
     handleOpenRejectModal(student);
   };
 
-  const handleSendIndividual = async (
-    student: OverdueFeeStudent,
-    confirmedOverride = false,
-    reason?: string
-  ) => {
-    const feeId = student.feeId || student.id;
-    setSendingReminderId(feeId);
-    try {
-      const res = await apiClient<{ message?: string; code?: string }>(
-        `/fees/${feeId}/remind`,
-        {
-          method: "POST",
-          body: {
-            confirmedOverride,
-            reason: reason || "Manual reminder trigger via UI",
-          },
+  const handleSendIndividual = useCallback(
+    async (
+      student: OverdueFeeStudent,
+      confirmedOverride = false,
+      reason?: string
+    ) => {
+      const feeId = student.feeId || student.id;
+      setSendingReminderId(feeId);
+      try {
+        const res = await apiClient<{ message?: string; code?: string }>(
+          `/fees/${feeId}/remind`,
+          {
+            method: "POST",
+            body: {
+              confirmedOverride,
+              reason: reason || "Manual reminder trigger via UI",
+            },
+          }
+        );
+        if (res.success) {
+          setSentReminders((prev) => ({ ...prev, [feeId]: true }));
+          setCooldownConfirmFee(null);
+          setToastMessage(`Fee reminder dispatched to ${student.name}`);
+          setTimeout(() => setToastMessage(null), 3000);
+        } else if (res.code === "COOLDOWN_ACTIVE") {
+          setCooldownConfirmFee({
+            feeId,
+            student,
+            message: res.error || "A reminder was already sent within the last 24 hours.",
+          });
+        } else {
+          alert(res.error || "Failed to send reminder");
         }
-      );
-      if (res.success) {
-        setSentReminders((prev) => ({ ...prev, [feeId]: true }));
-        setCooldownConfirmFee(null);
-        setToastMessage(`Fee reminder dispatched to ${student.name}`);
-        setTimeout(() => setToastMessage(null), 3000);
-      } else if (res.code === "COOLDOWN_ACTIVE") {
-        setCooldownConfirmFee({
-          feeId,
-          student,
-          message: res.error || "A reminder was already sent within the last 24 hours.",
-        });
-      } else {
-        alert(res.error || "Failed to send reminder");
+      } catch {
+        alert("Network error sending reminder. Please try again.");
+      } finally {
+        setSendingReminderId(null);
+        setIsOverriding(false);
       }
-    } catch {
-      alert("Network error sending reminder. Please try again.");
-    } finally {
-      setSendingReminderId(null);
-      setIsOverriding(false);
-    }
-  };
+    },
+    []
+  );
 
   const handleSendAll = async () => {
     if (pendingStudents.length === 0) return;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -26,7 +27,11 @@ import {
 import { apiClient } from "@/lib/apiClient";
 import { getAuthenticatedCenter } from "@/lib/centerProfile";
 import { TeacherRecord } from "@/types";
-import TeacherFormModal from "@/components/modals/TeacherFormModal";
+
+const TeacherFormModal = dynamic(
+  () => import("@/components/modals/TeacherFormModal"),
+  { ssr: false }
+);
 
 // Deterministic pastel avatar background colors
 const AVATAR_COLORS = [

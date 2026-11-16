@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -175,6 +175,29 @@ export default function CollectionReportsPage() {
   const [selectedStatus, setSelectedStatus] = useState<string>("");
   const [selectedHandoverStatus, setSelectedHandoverStatus] = useState<string>("");
   const [searchStudent, setSearchStudent] = useState<string>("");
+  const [debouncedSearchStudent, setDebouncedSearchStudent] = useState<string>("");
+  const searchAbortControllerRef = useRef<AbortController | null>(null);
+  const requestEpochRef = useRef<number>(0);
+
+  // 350ms Debounced Student Search to prevent per-keystroke API storms
+  useEffect(() => {
+    const delay = searchStudent.trim() ? 350 : 0;
+    const timer = setTimeout(() => {
+      setDebouncedSearchStudent(searchStudent);
+    }, delay);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [searchStudent]);
+
+  // Abort in-flight requests on component unmount
+  useEffect(() => {
+    return () => {
+      if (searchAbortControllerRef.current) {
+        searchAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   // Metadata dropdown options
   const [teachersList, setTeachersList] = useState<TeacherRecord[]>([]);
@@ -233,6 +256,14 @@ export default function CollectionReportsPage() {
         return;
       }
 
+      // Abort any prior in-flight report query
+      if (searchAbortControllerRef.current) {
+        searchAbortControllerRef.current.abort();
+      }
+      const controller = new AbortController();
+      searchAbortControllerRef.current = controller;
+      const currentEpoch = ++requestEpochRef.current;
+
       if (isManualRefresh) {
         setRefreshing(true);
       } else {
@@ -261,12 +292,18 @@ export default function CollectionReportsPage() {
         if (selectedBatch) queryParams.batch = selectedBatch;
         if (selectedStatus) queryParams.status = selectedStatus;
         if (selectedHandoverStatus) queryParams.handoverStatus = selectedHandoverStatus;
-        if (searchStudent.trim()) queryParams.student = searchStudent.trim();
+        if (debouncedSearchStudent.trim()) queryParams.student = debouncedSearchStudent.trim();
 
         const res = await apiClient<FinancialSummaryResponse>("/reports/financial-summary", {
           params: queryParams,
+          signal: controller.signal,
           skipCache: true,
         });
+
+        // Stale response guard: discard if a newer request epoch was initiated
+        if (currentEpoch !== requestEpochRef.current) {
+          return;
+        }
 
         // Backend response resolution
         const raw = res as unknown as Record<string, unknown>;
@@ -368,11 +405,19 @@ export default function CollectionReportsPage() {
           setError(resolved?.error || "Failed to retrieve financial summary");
         }
       } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") {
+          return; // Ignore intentional abort
+        }
+        if (currentEpoch !== requestEpochRef.current) {
+          return;
+        }
         const msg = err instanceof Error ? err.message : "Failed to load financial reports";
         setError(msg);
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (currentEpoch === requestEpochRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [
@@ -385,7 +430,7 @@ export default function CollectionReportsPage() {
       selectedBatch,
       selectedStatus,
       selectedHandoverStatus,
-      searchStudent,
+      debouncedSearchStudent,
     ]
   );
 
@@ -418,6 +463,7 @@ export default function CollectionReportsPage() {
     setSelectedStatus("");
     setSelectedHandoverStatus("");
     setSearchStudent("");
+    setDebouncedSearchStudent("");
   };
 
   // Export CSV handler for the active tab

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { getAuthenticatedCenter } from "@/lib/centerProfile";
@@ -34,9 +35,22 @@ import {
   BarChart3,
   ChevronRight,
   X,
+  Loader2,
 } from "lucide-react";
 import { getCurrentCenterId } from "@/lib/apiClient";
-import MessagingQueueList from "@/components/settings/MessagingQueueList";
+
+const MessagingQueueList = dynamic(
+  () => import("@/components/settings/MessagingQueueList"),
+  {
+    loading: () => (
+      <div className="p-12 text-center text-slate-400 flex flex-col items-center justify-center gap-2">
+        <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+        <span className="text-xs font-semibold">Loading message queue...</span>
+      </div>
+    ),
+    ssr: false,
+  }
+);
 
 interface MicroserviceStatus {
   status:
@@ -99,6 +113,37 @@ function QrFreshnessBadge({ qrGeneratedAt }: { qrGeneratedAt?: number | null }) 
   );
 }
 
+/**
+ * Isolated live status indicator for microservice polling.
+ * Encapsulates polled timestamp state so the 2,200-line SettingsPage
+ * does not re-render every 2.5s–15s when remote status is unchanged.
+ */
+function LastPolledStatus() {
+  const [polledAt, setPolledAt] = useState<Date | null>(null);
+
+  useEffect(() => {
+    const handlePolled = (e: Event) => {
+      const customEvt = e as CustomEvent<Date>;
+      if (customEvt.detail instanceof Date) {
+        setPolledAt(customEvt.detail);
+      }
+    };
+    window.addEventListener("msec:whatsapp-status-polled", handlePolled);
+    return () => {
+      window.removeEventListener("msec:whatsapp-status-polled", handlePolled);
+    };
+  }, []);
+
+  return (
+    <span className="flex items-center gap-1 truncate">
+      <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+      {polledAt
+        ? `Polled at ${polledAt.toLocaleTimeString("en-IN")}`
+        : "Connecting to microservice..."}
+    </span>
+  );
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const [centerId, setCenterId] = useState<string>("");
@@ -149,7 +194,6 @@ export default function SettingsPage() {
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const [lastPolled, setLastPolled] = useState<Date | null>(null);
   const lastQrTimestampRef = useRef<number>(0);
   const isFetchingRef = useRef<boolean>(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -471,7 +515,11 @@ export default function SettingsPage() {
           setStatusData(newStatus);
         }
         setIsOffline((p) => (p !== false ? false : p));
-        setLastPolled(new Date());
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("msec:whatsapp-status-polled", { detail: new Date() })
+          );
+        }
         return newStatus;
       } catch (err: unknown) {
         if (!isMountedRef.current) return null;
@@ -494,7 +542,11 @@ export default function SettingsPage() {
               : "WhatsApp service is currently unreachable",
         };
         setStatusData(errStatus);
-        setLastPolled(new Date());
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("msec:whatsapp-status-polled", { detail: new Date() })
+          );
+        }
         return errStatus;
       } finally {
         isFetchingRef.current = false;
@@ -1141,12 +1193,7 @@ export default function SettingsPage() {
                     </span>
                   </div>
                   <p className="text-[11px] sm:text-xs text-slate-500 mt-1 flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                    <span className="flex items-center gap-1 truncate">
-                      <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                      {lastPolled
-                        ? `Polled at ${lastPolled.toLocaleTimeString("en-IN")}`
-                        : "Connecting to microservice..."}
-                    </span>
+                    <LastPolledStatus />
                     <span className="text-slate-300 hidden xs:inline">•</span>
                     <span className="flex items-center gap-1 font-mono text-[10px] sm:text-[11px] truncate">
                       <Server className="w-3 h-3 text-slate-400 flex-shrink-0" />

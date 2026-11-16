@@ -35,6 +35,9 @@ export interface HeaderContextType {
   refreshAlerts: () => Promise<void>;
 }
 
+export type HeaderDispatchType = React.Dispatch<React.SetStateAction<HeaderConfig>>;
+
+export const HeaderDispatchContext = createContext<HeaderDispatchType | undefined>(undefined);
 const HeaderContext = createContext<HeaderContextType | undefined>(undefined);
 
 export function HeaderProvider({ children }: { children: React.ReactNode }) {
@@ -170,9 +173,11 @@ export function HeaderProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <HeaderContext.Provider value={contextValue}>
-      {children}
-    </HeaderContext.Provider>
+    <HeaderDispatchContext.Provider value={updateHeaderConfig}>
+      <HeaderContext.Provider value={contextValue}>
+        {children}
+      </HeaderContext.Provider>
+    </HeaderDispatchContext.Provider>
   );
 }
 
@@ -184,8 +189,7 @@ export function useHeader() {
  * Hook enabling any page or view to dynamically customize the persistent TopHeader.
  */
 export function useSetHeader(config: HeaderConfig) {
-  const context = useContext(HeaderContext);
-  const setHeaderConfig = context?.setHeaderConfig;
+  const setHeaderConfig = useContext(HeaderDispatchContext);
 
   useEffect(() => {
     if (!setHeaderConfig) return;

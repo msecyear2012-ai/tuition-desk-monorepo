@@ -58,6 +58,45 @@ interface CacheEntry<T> {
 const apiCache = new Map<string, CacheEntry<unknown>>();
 const inFlightRequests = new Map<string, Promise<ApiResponse<unknown>>>();
 
+// Conservative endpoint-to-cache dependency mapping
+const DOMAIN_DEPENDENCY_MAP: Record<string, string[]> = {
+  "/attendance": ["/attendance", "/dashboard"],
+  "/teachers": ["/teachers"],
+  "/tests": ["/tests"],
+  "/parent": ["/parent"],
+  "/handovers": ["/handovers", "/fees"],
+  "/fees": ["/fees", "/dashboard", "/reports", "/handovers"],
+  "/students": ["/students", "/dashboard", "/reports", "/batches"],
+  "/batches": ["/batches", "/dashboard", "/attendance"],
+  "/batch-requests": ["/batch-requests", "/students", "/batches"],
+};
+
+// Generation tracking for stale in-flight response protection
+let globalCacheGeneration = 0;
+const domainGenerations = new Map<string, number>();
+
+function getDomainFromEndpoint(endpoint: string): string {
+  const norm = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  const firstSegment = norm.split("/").filter(Boolean)[0];
+  return firstSegment ? `/${firstSegment}` : norm;
+}
+
+function getEndpointGeneration(endpoint: string): number {
+  const domain = getDomainFromEndpoint(endpoint);
+  return (domainGenerations.get(domain) || 0) + globalCacheGeneration;
+}
+
+function bumpGeneration(patterns?: string[]): void {
+  if (!patterns || patterns.length === 0) {
+    globalCacheGeneration++;
+  } else {
+    for (const p of patterns) {
+      const domain = getDomainFromEndpoint(p);
+      domainGenerations.set(domain, (domainGenerations.get(domain) || 0) + 1);
+    }
+  }
+}
+
 /**
  * Builds a deterministic cache key scoped by active center ID and sorted query parameters.
  */
@@ -99,7 +138,9 @@ export function clearApiCache(centerIdOnly?: string): void {
     }
   } else {
     apiCache.clear();
+    domainGenerations.clear();
   }
+  globalCacheGeneration++;
   inFlightRequests.clear();
 }
 
@@ -108,16 +149,67 @@ export function clearApiCache(centerIdOnly?: string): void {
  */
 export function invalidateApiCache(pattern?: string | RegExp): void {
   const activeCenterId = getCurrentCenterId();
-  for (const [key, entry] of apiCache.entries()) {
-    if (activeCenterId && entry.centerId !== activeCenterId) continue;
-    if (!pattern) {
-      apiCache.delete(key);
-    } else if (typeof pattern === "string") {
-      if (key.includes(pattern)) {
+
+  // Case A: No pattern provided -> Global invalidation for active center
+  if (!pattern) {
+    bumpGeneration();
+    for (const [key, entry] of apiCache.entries()) {
+      if (!activeCenterId || entry.centerId === activeCenterId) {
         apiCache.delete(key);
       }
-    } else if (pattern.test(key)) {
-      apiCache.delete(key);
+    }
+    inFlightRequests.clear();
+    return;
+  }
+
+  // Case B: String pattern (either mutating endpoint or explicit pattern)
+  if (typeof pattern === "string") {
+    const domain = getDomainFromEndpoint(pattern);
+    const mappedPatterns = DOMAIN_DEPENDENCY_MAP[domain];
+
+    // If endpoint starts with "/" and is unrecognized in dependency map, fall back to safe global invalidation
+    if (pattern.startsWith("/") && !mappedPatterns) {
+      bumpGeneration();
+      for (const [key, entry] of apiCache.entries()) {
+        if (!activeCenterId || entry.centerId === activeCenterId) {
+          apiCache.delete(key);
+        }
+      }
+      inFlightRequests.clear();
+      return;
+    }
+
+    const targetPatterns = mappedPatterns || [pattern];
+    bumpGeneration(targetPatterns);
+
+    for (const [key, entry] of apiCache.entries()) {
+      if (activeCenterId && entry.centerId !== activeCenterId) continue;
+      if (targetPatterns.some((target) => key.includes(target))) {
+        apiCache.delete(key);
+      }
+    }
+
+    for (const key of inFlightRequests.keys()) {
+      if (targetPatterns.some((target) => key.includes(target))) {
+        inFlightRequests.delete(key);
+      }
+    }
+    return;
+  }
+
+  // Case C: RegExp pattern
+  if (pattern instanceof RegExp) {
+    bumpGeneration();
+    for (const [key, entry] of apiCache.entries()) {
+      if (activeCenterId && entry.centerId !== activeCenterId) continue;
+      if (pattern.test(key)) {
+        apiCache.delete(key);
+      }
+    }
+    for (const key of inFlightRequests.keys()) {
+      if (pattern.test(key)) {
+        inFlightRequests.delete(key);
+      }
     }
   }
 }
@@ -223,6 +315,8 @@ export async function apiClient<T = unknown>(
     }
   }
 
+  const requestGeneration = isEligibleForCache ? getEndpointGeneration(endpoint) : 0;
+
   // 3. Construct and execute the fetch
   const executeFetch = async (): Promise<ApiResponse<T>> => {
     try {
@@ -256,18 +350,22 @@ export async function apiClient<T = unknown>(
       }
 
       // If GET was successful and cacheable, update client cache with fresh authoritative response
+      // Version guard: only write to cache if no invalidation for this endpoint occurred while in-flight
       if (isEligibleForCache && cacheKey) {
-        const ttl = cacheTtlMs ?? 60000; // 60s default
-        apiCache.set(cacheKey, {
-          data: json,
-          expiresAt: Date.now() + ttl,
-          centerId: activeCenterId,
-        });
+        const currentGeneration = getEndpointGeneration(endpoint);
+        if (requestGeneration === currentGeneration) {
+          const ttl = cacheTtlMs ?? 60000; // 60s default
+          apiCache.set(cacheKey, {
+            data: json,
+            expiresAt: Date.now() + ttl,
+            centerId: activeCenterId,
+          });
+        }
       }
 
       // If mutation (POST/PUT/PATCH/DELETE), invalidate cache for active center
       if (!isGet) {
-        invalidateApiCache();
+        invalidateApiCache(endpoint);
       }
 
       return json;
