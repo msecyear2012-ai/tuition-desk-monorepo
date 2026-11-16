@@ -90,12 +90,13 @@ export interface IPaymentCustodyBreakdown {
   ownerVerifiedAmount: number;
   disputedDiscrepancyAmount: number;
   custodyLabel:
-    | "owner_verified"
-    | "owner_pending"
-    | "teacher_in_hand"
-    | "shortage_deficit"
-    | "split_custody";
+  | "owner_verified"
+  | "owner_pending"
+  | "teacher_in_hand"
+  | "shortage_deficit"
+  | "split_custody";
 }
+
 
 export interface IFee {
   centerId: string;
@@ -141,7 +142,7 @@ export interface IFee {
   updatedAt?: Date;
 }
 
-export interface IFeeDocument extends IFee, Document {}
+export interface IFeeDocument extends IFee, Document { }
 
 export const PaymentAllocationSchema = new Schema<IPaymentAllocation>(
   {
