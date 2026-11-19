@@ -812,6 +812,16 @@ export async function POST(request: NextRequest) {
 
       const custodyBreakdown = resolveCustody(populatedFee);
 
+      const allocationBreakdown = {
+        totalReceived: parsedAmount,
+        clearedDuesAmount: isAdvance ? 0 : parsedAmount,
+        advanceSavedAmount: isAdvance ? parsedAmount : 0,
+        clearedFeeIds: isAdvance ? [] : [String(manualNonRecurringFee._id)],
+        summaryText: isAdvance
+          ? `₹${parsedAmount.toLocaleString("en-IN")} saved as advance`
+          : `₹${parsedAmount.toLocaleString("en-IN")} due cleared`,
+      };
+
       await createCollectionNotifications({
         centerId: targetCenterId,
         amount: parsedAmount,
@@ -831,8 +841,9 @@ export async function POST(request: NextRequest) {
           success: true,
           settledExisting: false,
           idempotentReplay: false,
-          message: `Offline cash payment of ₹${parsedAmount} recorded successfully (Receipt: ${receiptNumber})`,
+          message: allocationBreakdown.summaryText,
           data: formatFeeResponse(populatedFee, collectorRole),
+          allocationBreakdown,
           ...(custodyBreakdown ? { custodyBreakdown } : {}),
         },
         { status: 201, headers: corsHeaders }
@@ -968,25 +979,17 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Validate payment amount against outstanding balance
-      if (parsedAmount > currentRemainingDue) {
-        return NextResponse.json(
-          {
-            success: false,
-            code: "EXCESSIVE_PAYMENT_AMOUNT",
-            error: `Payment amount of ₹${parsedAmount} exceeds the remaining balance of ₹${currentRemainingDue} for billing cycle ${targetBillingMonth}.`,
-          },
-          { status: 400, headers: corsHeaders }
-        );
-      }
-
-      const isFullPayment = parsedAmount === currentRemainingDue;
-      const totalPaidSoFar = priorPaidAmount + parsedAmount;
-      const newRemainingDue = isFullPayment ? 0 : currentRemainingDue - parsedAmount;
+      // -----------------------------------------------------------------------
+      // FIFO Auto-Allocation & Surplus Advance
+      // -----------------------------------------------------------------------
+      const amountToApply = Math.min(parsedAmount, currentRemainingDue);
+      const isFullPayment = amountToApply === currentRemainingDue;
+      const totalPaidSoFar = priorPaidAmount + amountToApply;
+      const newRemainingDue = isFullPayment ? 0 : currentRemainingDue - amountToApply;
       const baselineOriginalAmount =
         candidate.originalAmountDue || (currentRemainingDue + priorPaidAmount);
 
-      const auditEntry = `[${now.toISOString()}] Cash collected: ₹${parsedAmount} (Receipt: ${receiptNumber})${
+      const auditEntry = `[${now.toISOString()}] Cash collected: ₹${amountToApply} (Receipt: ${receiptNumber})${
         noteText ? ` - ${noteText}` : ""
       }`;
       const updatedNotes = candidate.notes
@@ -1015,6 +1018,9 @@ export async function POST(request: NextRequest) {
         attributionSet.recordedAt = now;
       }
 
+      // Update payment entry amount for candidate
+      newPaymentEntry.amount = amountToApply;
+
       // -----------------------------------------------------------------------
       // One Conditional Atomic Update on Fee Document (Single-Document Atomicity)
       // -----------------------------------------------------------------------
@@ -1034,7 +1040,7 @@ export async function POST(request: NextRequest) {
         {
           $set: {
             status: isFullPayment ? "Paid" : "Partial Paid",
-            amountDue: isFullPayment ? 0 : newRemainingDue,
+            amountDue: newRemainingDue,
             paidAmount: totalPaidSoFar,
             originalAmountDue: baselineOriginalAmount,
             receiptNumber: receiptNumber,
@@ -1169,7 +1175,12 @@ export async function POST(request: NextRequest) {
 
       const custodyBreakdown = resolveCustody(updatedFee);
 
-      // Smart Advance Wallet: If targeted fee was an advance fee, credit the student's wallet
+      let clearedDuesAmount = amountToApply;
+      let advanceSavedAmount = 0;
+      const clearedFeeIds: string[] = isFullPayment ? [String(candidate._id)] : [];
+      let remainingToAllocate = parsedAmount - amountToApply;
+
+      // Smart Advance Wallet: If targeted fee was already an advance fee, credit the student's wallet
       if (
         updatedFee &&
         (updatedFee.isAdvance || updatedFee.feeType === "advance") &&
@@ -1179,14 +1190,191 @@ export async function POST(request: NextRequest) {
           await creditAdvanceToStudentWallet({
             centerId: targetCenterId,
             studentId: String(studentDoc._id || studentId),
-            amount: parsedAmount,
+            amount: amountToApply,
             feeId: String(updatedFee._id),
           });
           updatedFee.walletRechargeCredited = true;
+          advanceSavedAmount = amountToApply;
+          clearedDuesAmount = 0;
         } catch (walletErr) {
           console.error("[MANUAL COLLECTION] Error crediting advance wallet on targeted fee:", walletErr);
         }
       }
+
+      // FIFO Allocation across other pending fees if surplus remains
+      if (remainingToAllocate > 0) {
+        const otherPendingQuery = Fee.find({
+          centerId: targetCenterId,
+          studentId: new mongoose.Types.ObjectId(studentId),
+          _id: { $ne: candidate._id },
+          status: { $in: ["Pending", "Partial Paid"] },
+          feeType: { $ne: "advance" },
+          isAdvance: { $ne: true },
+        });
+        const otherPendingFees = (
+          typeof (otherPendingQuery as unknown as { sort?: (s: unknown) => Promise<unknown> })?.sort === "function"
+            ? await (otherPendingQuery as unknown as { sort: (s: unknown) => Promise<unknown> }).sort({ dueDate: 1, createdAt: 1 })
+            : await otherPendingQuery
+        ) as unknown as IFeeDocument[];
+
+        for (const otherFee of otherPendingFees) {
+          if (remainingToAllocate <= 0) break;
+          const otherDue = Number(otherFee.amountDue) || 0;
+          const otherPriorPaid = Number(otherFee.paidAmount) || 0;
+          if (otherDue <= 0) continue;
+
+          const otherApply = Math.min(remainingToAllocate, otherDue);
+          const otherFull = otherApply === otherDue;
+          const otherNewDue = otherFull ? 0 : otherDue - otherApply;
+          const otherTotalPaid = otherPriorPaid + otherApply;
+          const otherBaseline = otherFee.originalAmountDue || (otherDue + otherPriorPaid);
+
+          const otherPaymentEntryId = new mongoose.Types.ObjectId();
+          const otherPaymentEntry: IPaymentEntry = {
+            _id: otherPaymentEntryId,
+            paymentId: otherPaymentEntryId,
+            amount: otherApply,
+            paymentDate: resolvedPaymentDate,
+            paymentMode: resolvedPaymentMode,
+            receiptNumber: receiptNumber,
+            isProvisional: collectorRole === "teacher",
+            receivedBy: collectorId,
+            receivedByRole: collectorRole,
+            recordedBy: collectorId,
+            recordedByRole: collectorRole,
+            recordedAt: now,
+            assignedTeacherAtPayment: responsibleTeacherId,
+            batchAtPayment: responsibleBatch,
+            custodyStatus: collectorRole === "teacher" ? "teacher_custody" : "owner_custody",
+            allocations: [],
+            notes: noteText ? `${noteText} (FIFO Auto-Allocation)` : "FIFO Auto-Allocation",
+          } as IPaymentEntry;
+
+          const otherAudit = `[${now.toISOString()}] Cash collected: ₹${otherApply} (Receipt: ${receiptNumber}) - FIFO auto-allocation`;
+          const otherNotes = otherFee.notes ? `${otherFee.notes}\n${otherAudit}` : otherAudit;
+
+          await Fee.findOneAndUpdate(
+            {
+              _id: otherFee._id,
+              centerId: targetCenterId,
+              status: { $in: ["Pending", "Partial Paid"] },
+            },
+            {
+              $set: {
+                status: otherFull ? "Paid" : "Partial Paid",
+                amountDue: otherNewDue,
+                paidAmount: otherTotalPaid,
+                originalAmountDue: otherBaseline,
+                notes: otherNotes,
+                paidDate: resolvedPaymentDate,
+                paidAt: now,
+                paymentDate: resolvedPaymentDate,
+              },
+              $push: {
+                paymentHistory: otherPaymentEntry,
+              },
+            }
+          );
+
+          clearedDuesAmount += otherApply;
+          remainingToAllocate -= otherApply;
+          if (otherFull) {
+            clearedFeeIds.push(String(otherFee._id));
+          }
+        }
+      }
+
+      // Auto-Save Surplus as Advance if any balance remains after all pending dues
+      if (remainingToAllocate > 0) {
+        advanceSavedAmount += remainingToAllocate;
+        const advancePaymentEntryId = new mongoose.Types.ObjectId();
+        const advancePaymentEntry: IPaymentEntry = {
+          _id: advancePaymentEntryId,
+          paymentId: advancePaymentEntryId,
+          amount: remainingToAllocate,
+          paymentDate: resolvedPaymentDate,
+          paymentMode: resolvedPaymentMode,
+          receiptNumber: receiptNumber,
+          isProvisional: collectorRole === "teacher",
+          receivedBy: collectorId,
+          receivedByRole: collectorRole,
+          recordedBy: collectorId,
+          recordedByRole: collectorRole,
+          recordedAt: now,
+          assignedTeacherAtPayment: responsibleTeacherId,
+          batchAtPayment: responsibleBatch,
+          custodyStatus: collectorRole === "teacher" ? "teacher_custody" : "owner_custody",
+          allocations: [],
+          notes: noteText ? `${noteText} (Surplus Advance)` : "Surplus payment saved as advance",
+        } as IPaymentEntry;
+
+        const currentMonthName = now.toLocaleString("en-IN", { month: "long", year: "numeric" });
+        const advanceFeeDoc = (await Fee.create({
+          centerId: targetCenterId,
+          studentId: new mongoose.Types.ObjectId(studentId),
+          month: `Advance - ${currentMonthName}`,
+          title: "Advance Fee Payment",
+          originalAmountDue: remainingToAllocate,
+          amountDue: remainingToAllocate,
+          paidAmount: remainingToAllocate,
+          dueDate: now,
+          status: "Paid",
+          paymentMode: resolvedPaymentMode,
+          feeType: "advance",
+          isAdvance: true,
+          walletRechargeCredited: false,
+          notes: noteText ? `${noteText} (Surplus)` : "Surplus payment saved as advance",
+          receiptNumber: receiptNumber,
+          paidDate: resolvedPaymentDate,
+          paidAt: now,
+          paymentDate: resolvedPaymentDate,
+          ...(cleanUtrNumber ? { utrNumber: cleanUtrNumber } : {}),
+          assignedTeacherId: responsibleTeacherId,
+          assignedTeacherAtPayment: responsibleTeacherId,
+          batchAtPayment: responsibleBatch,
+          recordedBy: collectorId,
+          recordedByRole: collectorRole,
+          receivedBy: collectorId,
+          receivedByRole: collectorRole,
+          recordedAt: now,
+          paymentHistory: [advancePaymentEntry],
+        })) as unknown as IFeeDocument;
+
+        try {
+          await creditAdvanceToStudentWallet({
+            centerId: targetCenterId,
+            studentId: String(studentId),
+            amount: remainingToAllocate,
+            feeId: String(advanceFeeDoc._id),
+          });
+          advanceFeeDoc.walletRechargeCredited = true;
+        } catch (walletErr) {
+          console.error("[MANUAL COLLECTION] Error crediting advance wallet:", walletErr);
+        }
+      }
+
+      let summaryText = "";
+      if (clearedDuesAmount > 0 && advanceSavedAmount > 0) {
+        summaryText = `₹${clearedDuesAmount.toLocaleString("en-IN")} due cleared, ₹${advanceSavedAmount.toLocaleString("en-IN")} saved as advance`;
+      } else if (clearedDuesAmount > 0 && advanceSavedAmount === 0) {
+        if (clearedFeeIds.length > 0) {
+          summaryText = `₹${clearedDuesAmount.toLocaleString("en-IN")} due cleared`;
+        } else {
+          summaryText = `₹${clearedDuesAmount.toLocaleString("en-IN")} applied to pending dues`;
+        }
+      } else if (advanceSavedAmount > 0) {
+        summaryText = `₹${advanceSavedAmount.toLocaleString("en-IN")} saved as advance`;
+      } else {
+        summaryText = `₹${parsedAmount.toLocaleString("en-IN")} payment recorded`;
+      }
+
+      const allocationBreakdown = {
+        totalReceived: parsedAmount,
+        clearedDuesAmount,
+        advanceSavedAmount,
+        clearedFeeIds,
+        summaryText,
+      };
 
       await createCollectionNotifications({
         centerId: targetCenterId,
@@ -1196,7 +1384,7 @@ export async function POST(request: NextRequest) {
         collectorId: String(collectorId),
         collectorName,
         collectorRole,
-        feeId: String(updatedFee._id),
+        feeId: String(updatedFee?._id || candidate._id),
         paymentId: String(newPaymentEntry.paymentId || (newPaymentEntry as unknown as { _id?: unknown })._id || ""),
         receiptNumber,
         idempotencyKey: clientKey || undefined,
@@ -1207,10 +1395,9 @@ export async function POST(request: NextRequest) {
           success: true,
           settledExisting: true,
           idempotentReplay: false,
-          message: isFullPayment
-            ? `Offline cash payment of ₹${parsedAmount} recorded successfully. Fee marked as Paid (Receipt: ${receiptNumber})`
-            : `Partial cash payment of ₹${parsedAmount} recorded successfully. Remaining balance: ₹${newRemainingDue} (Receipt: ${receiptNumber})`,
+          message: summaryText,
           data: formatFeeResponse(updatedFee, collectorRole),
+          allocationBreakdown,
           ...(custodyBreakdown ? { custodyBreakdown } : {}),
         },
         { status: 200, headers: corsHeaders }
@@ -1376,13 +1563,22 @@ export async function POST(request: NextRequest) {
       idempotencyKey: clientKey || undefined,
     });
 
+    const allocationBreakdown = {
+      totalReceived: parsedAmount,
+      clearedDuesAmount: parsedAmount,
+      advanceSavedAmount: 0,
+      clearedFeeIds: [String(newFee._id)],
+      summaryText: `₹${parsedAmount.toLocaleString("en-IN")} due cleared`,
+    };
+
     return NextResponse.json(
       {
         success: true,
         settledExisting: false,
         idempotentReplay: false,
-        message: `Offline cash payment of ₹${parsedAmount} recorded successfully (Receipt: ${receiptNumber})`,
+        message: allocationBreakdown.summaryText,
         data: formatFeeResponse(populatedFee, collectorRole),
+        allocationBreakdown,
         ...(custodyBreakdown ? { custodyBreakdown } : {}),
       },
       { status: 201, headers: corsHeaders }

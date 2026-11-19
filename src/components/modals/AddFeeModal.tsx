@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   X,
   IndianRupee,
@@ -46,6 +46,13 @@ export interface ManualCollectionResponse {
   settledExisting?: boolean;
   message?: string;
   data?: unknown;
+  allocationBreakdown?: {
+    totalReceived: number;
+    clearedDuesAmount: number;
+    advanceSavedAmount: number;
+    clearedFeeIds: string[];
+    summaryText: string;
+  };
   error?: string;
   code?: string;
 }
@@ -167,10 +174,13 @@ export default function AddFeeModal({
   // Sync initialMode on open
   useEffect(() => {
     if (isOpen) {
-      setModalMode(initialMode);
-      setPaymentDate(getTodayIST());
-      setError(null);
-      setUtrError(null);
+      const timer = setTimeout(() => {
+        setModalMode(initialMode);
+        setPaymentDate(getTodayIST());
+        setError(null);
+        setUtrError(null);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [isOpen, initialMode]);
 
@@ -184,10 +194,12 @@ export default function AddFeeModal({
 
     const trimmedQuery = searchQuery.trim();
     if (!trimmedQuery) {
-      setSearchResults([]);
-      setSearching(false);
-      setSearchError(null);
-      return;
+      const resetTimer = setTimeout(() => {
+        setSearchResults([]);
+        setSearching(false);
+        setSearchError(null);
+      }, 0);
+      return () => clearTimeout(resetTimer);
     }
 
     const timer = setTimeout(async () => {
@@ -306,8 +318,30 @@ export default function AddFeeModal({
         throw new Error(res.error || "Failed to record payment collection.");
       }
 
-      const successMsg = `Payment of ₹${numAmount.toLocaleString("en-IN")} recorded successfully for ${selectedStudent.name}!`;
+      const successMsg =
+        res.allocationBreakdown?.summaryText ||
+        `Payment of ₹${numAmount.toLocaleString("en-IN")} recorded successfully for ${selectedStudent.name}!`;
       setSuccessToast(successMsg);
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("msec:collection-recorded", {
+            detail: {
+              studentId: selectedStudent._id,
+              amount: numAmount,
+              allocationBreakdown: res.allocationBreakdown,
+            },
+          })
+        );
+        window.dispatchEvent(
+          new CustomEvent("msec:fee-summary-refresh", {
+            detail: {
+              studentId: selectedStudent._id,
+              allocationBreakdown: res.allocationBreakdown,
+            },
+          })
+        );
+      }
 
       setTimeout(() => {
         setSuccessToast(null);

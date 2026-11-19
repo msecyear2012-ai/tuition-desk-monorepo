@@ -27,6 +27,7 @@ import type { TargetFeeInfo } from "@/components/modals/FeePaymentModal";
 import type { ReceiptSlipData } from "@/components/modals/ReceiptSlipModal";
 import type { PaymentEntryItem, CustodyBreakdownItem } from "@/types";
 import ParentAccessCard from "./ParentAccessCard";
+import StudentFeeCalendar from "./StudentFeeCalendar";
 import { openParentPortalForStudent } from "@/lib/parentPortalLink";
 import StudentPhoneMasked from "@/components/common/StudentPhoneMasked";
 import { getAuthenticatedCenter, getCachedCenter } from "@/lib/centerProfile";
@@ -584,6 +585,9 @@ export default function StudentProfile({
                 onLinkGenerated={handleManualRefresh}
               />
             )}
+
+            {/* 2.6 Student 12-Month Fee Calendar */}
+            <StudentFeeCalendar studentId={student._id} />
 
             {/* 3. Task 1: 360-Degree Fee & Payment History Ledger */}
             <div className="rounded-3xl border border-slate-200/90 bg-white p-5 shadow-xs space-y-4">

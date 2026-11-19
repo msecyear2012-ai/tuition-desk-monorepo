@@ -9,6 +9,7 @@ import {
   Banknote,
   ShieldCheck,
   Clock,
+  Sparkles,
 } from "lucide-react";
 import { apiClient, getCurrentCenterId, invalidateApiCache } from "@/lib/apiClient";
 import { getAuthenticatedCenter, CenterInfo } from "@/lib/centerProfile";
@@ -129,13 +130,6 @@ function FeePaymentModalContent({
       return;
     }
 
-    if (fee && numAmount > outstandingBalance) {
-      setError(
-        `Payment amount of ₹${numAmount} exceeds the remaining balance of ₹${outstandingBalance}.`
-      );
-      return;
-    }
-
     if (!paymentDate) {
       setError("Please select a valid payment date.");
       return;
@@ -179,6 +173,13 @@ function FeePaymentModalContent({
         error?: string;
         code?: string;
         data?: Record<string, unknown>;
+        allocationBreakdown?: {
+          totalReceived: number;
+          clearedDuesAmount: number;
+          advanceSavedAmount: number;
+          clearedFeeIds: string[];
+          summaryText: string;
+        };
       }>("/fees/manual-collection", {
         method: "POST",
         headers: {
@@ -211,7 +212,9 @@ function FeePaymentModalContent({
         collectorName,
         collectorRole: isTeacher ? "teacher" : "owner",
         isProvisional: isTeacher,
-        notes: notesInput.trim(),
+        notes: res.allocationBreakdown?.summaryText
+          ? `${res.allocationBreakdown.summaryText}${notesInput.trim() ? ` • ${notesInput.trim()}` : ""}`
+          : notesInput.trim(),
         remainingBalance: calculatedRemaining,
       };
 
@@ -220,7 +223,17 @@ function FeePaymentModalContent({
           new CustomEvent("msec:collection-recorded", {
             detail: {
               feeId: String(feeData._id || fee?._id || ""),
+              studentId: student._id,
               amount: numAmount,
+              allocationBreakdown: res.allocationBreakdown,
+            },
+          })
+        );
+        window.dispatchEvent(
+          new CustomEvent("msec:fee-summary-refresh", {
+            detail: {
+              studentId: student._id,
+              allocationBreakdown: res.allocationBreakdown,
             },
           })
         );
@@ -376,7 +389,7 @@ function FeePaymentModalContent({
                 placeholder={fee ? `e.g. ${outstandingBalance}` : "e.g. 1500"}
                 className={`w-full pl-8 pr-3.5 py-2.5 rounded-xl border text-sm font-mono font-bold text-slate-900 focus:outline-hidden focus:ring-2 ${
                   isOverpaying
-                    ? "border-rose-300 bg-rose-50/50 focus:ring-rose-500"
+                    ? "border-sky-300 bg-sky-50/20 focus:ring-sky-500"
                     : "border-slate-200 focus:ring-emerald-500"
                 }`}
               />
@@ -386,9 +399,9 @@ function FeePaymentModalContent({
             {fee && isAmountValid && (
               <div className="pt-0.5">
                 {isOverpaying ? (
-                  <span className="text-[10.5px] font-bold text-rose-600 flex items-center gap-1">
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    Cannot exceed remaining balance of ₹{outstandingBalance.toLocaleString("en-IN")}
+                  <span className="text-[10.5px] font-bold text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg flex items-center gap-1.5 border border-sky-200">
+                    <Sparkles className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                    Full Settlement • Extra ₹{(numAmount - outstandingBalance).toLocaleString("en-IN")} will be saved as Advance
                   </span>
                 ) : isFullSettlement ? (
                   <span className="text-[10.5px] font-bold text-emerald-700 flex items-center gap-1">

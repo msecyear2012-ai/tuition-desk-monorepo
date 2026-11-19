@@ -32,6 +32,15 @@ export interface ApiResponse<T = unknown> {
   data: T;
   error?: string;
   code?: string;
+  message?: string;
+  allocationBreakdown?: {
+    totalReceived: number;
+    clearedDuesAmount: number;
+    advanceSavedAmount: number;
+    clearedFeeIds: string[];
+    summaryText: string;
+  };
+  [key: string]: unknown;
 }
 
 export interface RequestOptions extends Omit<RequestInit, "body"> {
