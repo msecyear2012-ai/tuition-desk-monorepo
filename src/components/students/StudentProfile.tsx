@@ -303,11 +303,11 @@ export default function StudentProfile({
     for (const f of fees) {
       const paid = Number(f.paidAmount) || 0;
       const due = Number(f.amountDue) || 0;
-      const orig = f.originalAmountDue ?? (paid + due);
+      const orig = Number(f.originalAmountDue) || (paid + due);
       totalInvoiced += orig;
 
       if (f.status === "Paid") {
-        totalPaid += paid > 0 ? paid : due;
+        totalPaid += paid > 0 ? paid : orig;
       } else if (f.status === "Partial Paid") {
         totalPaid += paid;
         pendingTotal += due;
@@ -857,18 +857,21 @@ export default function StudentProfile({
                             </button>
                           )}
 
-                          {/* Action 3: Record Payment if balance due */}
-                          {fee.amountDue > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenPayment(fee)}
-                              className="tap-bounce h-8 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold flex items-center gap-1 shadow-2xs cursor-pointer"
-                              title="Record cash payment against this fee"
-                            >
-                              <Banknote className="w-3.5 h-3.5 text-emerald-100" />
-                              <span>Record Payment</span>
-                            </button>
-                          )}
+                          {/* Action 3: Record Payment only for Pending or Partial Paid records with balance due */}
+                          {!isPaid &&
+                            fee.amountDue > 0 &&
+                            (fee.status === "Pending" ||
+                              fee.status === "Partial Paid") && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPayment(fee)}
+                                className="tap-bounce h-8 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold flex items-center gap-1 shadow-2xs cursor-pointer"
+                                title="Record cash payment against this fee"
+                              >
+                                <Banknote className="w-3.5 h-3.5 text-emerald-100" />
+                                <span>Record Payment</span>
+                              </button>
+                            )}
                         </div>
                       </div>
                     );

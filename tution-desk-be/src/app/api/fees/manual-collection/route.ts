@@ -919,26 +919,180 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Conflict Rule 3: Already Paid in Full
-    if (
-      eligibleCandidates.length === 1 &&
-      (eligibleCandidates[0].status === "Paid" || (Number(eligibleCandidates[0].amountDue) <= 0 && Number(eligibleCandidates[0].paidAmount) > 0))
-    ) {
-      const candidate = eligibleCandidates[0];
-      return NextResponse.json(
-        {
-          success: false,
-          code: "FEE_ALREADY_PAID",
-          error: `Monthly fee for billing cycle ${targetBillingMonth} is already Paid in full (Fee ID: ${candidate._id}, Receipt: ${candidate.receiptNumber || "N/A"}). Duplicate collection is blocked.`,
-          data: formatFeeResponse(candidate, authUser.role),
-        },
-        { status: 409, headers: corsHeaders }
-      );
+    // Resolve candidate to settle via Bulletproof FIFO Allocation Pipeline
+    let candidate: IFeeDocument | null = null;
+    let otherPendingFeesToSettle: IFeeDocument[] = [];
+
+    if (eligibleCandidates.length === 1) {
+      const targetCandidate = eligibleCandidates[0];
+      const isTargetCandidateUnpaid =
+        targetCandidate.status !== "Paid" &&
+        Number(targetCandidate.amountDue) > 0;
+
+      if (isTargetCandidateUnpaid) {
+        candidate = targetCandidate;
+      } else {
+        // Target candidate is already paid in full.
+        // Check if other billing cycles have pending dues to settle FIFO.
+        const otherPendingQuery = Fee.find({
+          centerId: targetCenterId,
+          studentId: new mongoose.Types.ObjectId(studentId),
+          _id: { $ne: targetCandidate._id },
+          status: { $in: ["Pending", "Partial Paid"] },
+          feeType: { $ne: "advance" },
+          isAdvance: { $ne: true },
+        });
+        const otherPending = (
+          typeof (otherPendingQuery as unknown as { sort?: (s: unknown) => Promise<unknown> })?.sort === "function"
+            ? await (otherPendingQuery as unknown as { sort: (s: unknown) => Promise<unknown> }).sort({ dueDate: 1, createdAt: 1 })
+            : await otherPendingQuery
+        ) as unknown as IFeeDocument[];
+
+        if (otherPending.length > 0) {
+          candidate = otherPending[0];
+          otherPendingFeesToSettle = otherPending.slice(1);
+        } else {
+          // Zero unpaid dues anywhere! Auto-route entire payment to Advance Wallet smoothly.
+          // (No 409 FEE_ALREADY_PAID blocker)
+          const advancePaymentEntryId = new mongoose.Types.ObjectId();
+          const advancePaymentEntry: IPaymentEntry = {
+            _id: advancePaymentEntryId,
+            paymentId: advancePaymentEntryId,
+            amount: parsedAmount,
+            paymentDate: resolvedPaymentDate,
+            paymentMode: resolvedPaymentMode,
+            receiptNumber: receiptNumber,
+            isProvisional: collectorRole === "teacher",
+            receivedBy: collectorId,
+            receivedByRole: collectorRole,
+            recordedBy: collectorId,
+            recordedByRole: collectorRole,
+            recordedAt: now,
+            assignedTeacherAtPayment: responsibleTeacherId,
+            batchAtPayment: responsibleBatch,
+            custodyStatus: collectorRole === "teacher" ? "teacher_custody" : "owner_custody",
+            allocations: [],
+            notes: noteText ? `${noteText} (Advance)` : "Advance payment",
+            ...(clientKey ? { idempotencyKey: clientKey } : {}),
+          } as IPaymentEntry;
+
+          const currentMonthName = now.toLocaleString("en-IN", { month: "long", year: "numeric" });
+          const advanceFeeDoc = (await Fee.create({
+            centerId: targetCenterId,
+            studentId: new mongoose.Types.ObjectId(studentId),
+            month: `Advance - ${currentMonthName}`,
+            title: "Advance Fee Payment",
+            originalAmountDue: parsedAmount,
+            amountDue: parsedAmount,
+            paidAmount: parsedAmount,
+            dueDate: now,
+            status: "Paid",
+            paymentMode: resolvedPaymentMode,
+            feeType: "advance",
+            isAdvance: true,
+            walletRechargeCredited: false,
+            notes: noteText ? `${noteText} (Advance)` : "Advance payment",
+            receiptNumber: receiptNumber,
+            paidDate: resolvedPaymentDate,
+            paidAt: now,
+            paymentDate: resolvedPaymentDate,
+            ...(cleanUtrNumber ? { utrNumber: cleanUtrNumber } : {}),
+            assignedTeacherId: responsibleTeacherId,
+            assignedTeacherAtPayment: responsibleTeacherId,
+            batchAtPayment: responsibleBatch,
+            recordedBy: collectorId,
+            recordedByRole: collectorRole,
+            receivedBy: collectorId,
+            receivedByRole: collectorRole,
+            recordedAt: now,
+            paymentHistory: [advancePaymentEntry],
+          })) as unknown as IFeeDocument;
+
+          try {
+            await creditAdvanceToStudentWallet({
+              centerId: targetCenterId,
+              studentId: String(studentId),
+              amount: parsedAmount,
+              feeId: String(advanceFeeDoc._id),
+            });
+            advanceFeeDoc.walletRechargeCredited = true;
+          } catch (walletErr) {
+            console.error("[MANUAL COLLECTION] Error crediting advance wallet:", walletErr);
+          }
+
+          if (studentDoc.parentWhatsApp) {
+            sendPaymentReceipt(
+              targetCenterId,
+              studentDoc.parentWhatsApp,
+              studentDoc.name || "Student",
+              parsedAmount,
+              receiptNumber,
+              String(studentDoc._id)
+            ).catch((dispatchErr) => {
+              console.warn("[MANUAL COLLECTION] WhatsApp receipt dispatch warning:", dispatchErr.message);
+            });
+          }
+
+          const custodyBreakdown = resolveCustody(advanceFeeDoc);
+          const summaryText = `₹${parsedAmount.toLocaleString("en-IN")} saved as advance`;
+
+          await createCollectionNotifications({
+            centerId: targetCenterId,
+            amount: parsedAmount,
+            studentId: String(studentDoc._id),
+            studentName: studentDoc.name || "Student",
+            collectorId: String(collectorId),
+            collectorName,
+            collectorRole,
+            feeId: String(advanceFeeDoc._id),
+            paymentId: String(advancePaymentEntryId),
+            receiptNumber,
+            idempotencyKey: clientKey || undefined,
+          });
+
+          return NextResponse.json(
+            {
+              success: true,
+              settledExisting: true,
+              idempotentReplay: false,
+              message: summaryText,
+              data: formatFeeResponse(advanceFeeDoc, collectorRole),
+              allocationBreakdown: {
+                totalReceived: parsedAmount,
+                clearedDuesAmount: 0,
+                advanceSavedAmount: parsedAmount,
+                clearedFeeIds: [],
+                summaryText,
+              },
+              ...(custodyBreakdown ? { custodyBreakdown } : {}),
+            },
+            { status: 200, headers: corsHeaders }
+          );
+        }
+      }
+    } else if (eligibleCandidates.length === 0) {
+      // Check if any pending fees exist in other cycles
+      const anyPendingQuery = Fee.find({
+        centerId: targetCenterId,
+        studentId: new mongoose.Types.ObjectId(studentId),
+        status: { $in: ["Pending", "Partial Paid"] },
+        feeType: { $ne: "advance" },
+        isAdvance: { $ne: true },
+      });
+      const anyPending = (
+        typeof (anyPendingQuery as unknown as { sort?: (s: unknown) => Promise<unknown> })?.sort === "function"
+          ? await (anyPendingQuery as unknown as { sort: (s: unknown) => Promise<unknown> }).sort({ dueDate: 1, createdAt: 1 })
+          : await anyPendingQuery
+      ) as unknown as IFeeDocument[];
+
+      if (anyPending.length > 0) {
+        candidate = anyPending[0];
+        otherPendingFeesToSettle = anyPending.slice(1);
+      }
     }
 
     // Eligible Candidate Exists with Status 'Pending' or 'Partial Paid' -> Settle / Update
-    if (eligibleCandidates.length === 1) {
-      const candidate = eligibleCandidates[0];
+    if (candidate) {
 
       const currentRemainingDue = Number(candidate.amountDue);
       const priorPaidAmount = Number(candidate.paidAmount) || 0;
@@ -1203,19 +1357,24 @@ export async function POST(request: NextRequest) {
 
       // FIFO Allocation across other pending fees if surplus remains
       if (remainingToAllocate > 0) {
-        const otherPendingQuery = Fee.find({
-          centerId: targetCenterId,
-          studentId: new mongoose.Types.ObjectId(studentId),
-          _id: { $ne: candidate._id },
-          status: { $in: ["Pending", "Partial Paid"] },
-          feeType: { $ne: "advance" },
-          isAdvance: { $ne: true },
-        });
-        const otherPendingFees = (
-          typeof (otherPendingQuery as unknown as { sort?: (s: unknown) => Promise<unknown> })?.sort === "function"
-            ? await (otherPendingQuery as unknown as { sort: (s: unknown) => Promise<unknown> }).sort({ dueDate: 1, createdAt: 1 })
-            : await otherPendingQuery
-        ) as unknown as IFeeDocument[];
+        let otherPendingFees: IFeeDocument[] = [];
+        if (otherPendingFeesToSettle.length > 0) {
+          otherPendingFees = otherPendingFeesToSettle;
+        } else {
+          const otherPendingQuery = Fee.find({
+            centerId: targetCenterId,
+            studentId: new mongoose.Types.ObjectId(studentId),
+            _id: { $ne: candidate._id },
+            status: { $in: ["Pending", "Partial Paid"] },
+            feeType: { $ne: "advance" },
+            isAdvance: { $ne: true },
+          });
+          otherPendingFees = (
+            typeof (otherPendingQuery as unknown as { sort?: (s: unknown) => Promise<unknown> })?.sort === "function"
+              ? await (otherPendingQuery as unknown as { sort: (s: unknown) => Promise<unknown> }).sort({ dueDate: 1, createdAt: 1 })
+              : await otherPendingQuery
+          ) as unknown as IFeeDocument[];
+        }
 
         for (const otherFee of otherPendingFees) {
           if (remainingToAllocate <= 0) break;

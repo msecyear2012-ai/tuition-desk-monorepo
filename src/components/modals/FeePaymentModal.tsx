@@ -11,7 +11,7 @@ import {
   Clock,
   Sparkles,
 } from "lucide-react";
-import { apiClient, getCurrentCenterId, invalidateApiCache } from "@/lib/apiClient";
+import { apiClient, getCurrentCenterId } from "@/lib/apiClient";
 import { getAuthenticatedCenter, CenterInfo } from "@/lib/centerProfile";
 import { ReceiptSlipData } from "./ReceiptSlipModal";
 
@@ -74,7 +74,7 @@ function FeePaymentModalContent({
   const [amountInput, setAmountInput] = useState<string>(() => {
     if (fee) {
       const outstanding = Number(fee.amountDue) || 0;
-      return outstanding > 0 ? String(outstanding) : "";
+      return outstanding > 0 ? String(outstanding) : (student.monthlyFee ? String(student.monthlyFee) : "1500");
     }
     if (student.monthlyFee) {
       return String(student.monthlyFee);
@@ -89,7 +89,6 @@ function FeePaymentModalContent({
   // Status states
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [isFeeAlreadyPaid, setIsFeeAlreadyPaid] = useState<boolean>(false);
 
   // Fetch logged-in user profile identity
   useEffect(() => {
@@ -244,35 +243,7 @@ function FeePaymentModalContent({
     } catch (err: unknown) {
       const errObj = err as { code?: string; message?: string; status?: number; data?: unknown };
       const msg = errObj?.message || "Failed to record payment collection.";
-      const isAlreadyPaid =
-        errObj?.code === "FEE_ALREADY_PAID" ||
-        errObj?.status === 409 ||
-        /already paid/i.test(msg);
-
-      if (isAlreadyPaid) {
-        setIsFeeAlreadyPaid(true);
-        const targetFeeId = String(fee?._id || "");
-        invalidateApiCache();
-
-        if (typeof window !== "undefined") {
-          window.dispatchEvent(
-            new CustomEvent("msec:fee-already-paid", {
-              detail: {
-                feeId: targetFeeId,
-                message: "This fee is already Paid in full. The pending dues list has been updated.",
-              },
-            })
-          );
-        }
-
-        setError("Monthly fee is already Paid in full. The pending dues list has been updated.");
-
-        setTimeout(() => {
-          onClose();
-        }, 1800);
-      } else {
-        setError(msg);
-      }
+      setError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -358,6 +329,14 @@ function FeePaymentModalContent({
             </div>
           )}
 
+          {/* Dues Cleared / Advance Wallet Info Banner */}
+          {outstandingBalance === 0 && (
+            <div className="p-3 rounded-2xl bg-sky-50 border border-sky-200 text-sky-800 text-xs flex items-center gap-2 font-medium">
+              <Sparkles className="w-4 h-4 text-sky-600 shrink-0" />
+              <span>Current dues are cleared. This payment will be added to the student&apos;s Advance Wallet.</span>
+            </div>
+          )}
+
           {/* Amount Input */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
@@ -401,7 +380,9 @@ function FeePaymentModalContent({
                 {isOverpaying ? (
                   <span className="text-[10.5px] font-bold text-sky-700 bg-sky-50 px-2.5 py-1 rounded-lg flex items-center gap-1.5 border border-sky-200">
                     <Sparkles className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-                    Full Settlement • Extra ₹{(numAmount - outstandingBalance).toLocaleString("en-IN")} will be saved as Advance
+                    {outstandingBalance > 0
+                      ? `Full Settlement • Extra ₹${(numAmount - outstandingBalance).toLocaleString("en-IN")} will be saved as Advance`
+                      : `₹${numAmount.toLocaleString("en-IN")} will be saved as Advance`}
                   </span>
                 ) : isFullSettlement ? (
                   <span className="text-[10.5px] font-bold text-emerald-700 flex items-center gap-1">
@@ -532,17 +513,15 @@ function FeePaymentModalContent({
 
             <button
               type="submit"
-              disabled={Boolean(submitting || !isAmountValid || isOverpaying || isFeeAlreadyPaid)}
+              disabled={Boolean(submitting || !isAmountValid)}
               className="tap-bounce flex-1 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/25 transition-all disabled:opacity-50 cursor-pointer"
             >
               {submitting ? (
                 <Loader2 className="w-4 h-4 animate-spin text-white" />
-              ) : isFeeAlreadyPaid ? (
-                <CheckCircle2 className="w-4 h-4 stroke-[2.2]" />
               ) : (
                 <CheckCircle2 className="w-4 h-4 stroke-[2.2]" />
               )}
-              <span>{isFeeAlreadyPaid ? "Already Paid • Refreshing..." : "Record & Issue Receipt"}</span>
+              <span>{submitting ? "Recording..." : "Record & Issue Receipt"}</span>
             </button>
           </div>
         </form>
