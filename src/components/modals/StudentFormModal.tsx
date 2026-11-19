@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   X,
   UserPlus,
@@ -160,10 +160,17 @@ export default function StudentFormModal({
         ]);
 
         if (batchRes.data && batchRes.data.length > 0) {
-          setFetchedBatches(batchRes.data.map((b) => b.name));
+          const names = batchRes.data.map((b) => b.name);
+          setFetchedBatches(names);
+          if (!studentToEdit) {
+            setBatch((prev) => prev || initialBatch || names[0] || "");
+          }
         }
 
         setUserProfile(profile);
+        if (!studentToEdit && profile?.role === "teacher" && profile.teacherId) {
+          setAssignedTeacherId((prev) => prev || profile.teacherId || "");
+        }
 
         // If user is Owner, fetch active teachers for assignment dropdown
         if (profile?.role === "owner") {
@@ -186,22 +193,45 @@ export default function StudentFormModal({
       }
     }
     loadInitialData();
-  }, [isOpen]);
+  }, [isOpen, initialBatch, studentToEdit]);
 
   // Combine fetched batches, passed available batches, student batch, and fallbacks
-  const batchOptions = Array.from(
-    new Set([
-      ...fetchedBatches,
-      ...availableBatches,
-      ...(studentToEdit?.batch ? [studentToEdit.batch] : []),
-      ...(fetchedBatches.length === 0 && availableBatches.length === 0
-        ? DEFAULT_FALLBACK_BATCHES
-        : []),
-    ])
+  const batchOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...fetchedBatches,
+          ...availableBatches,
+          ...(studentToEdit?.batch ? [studentToEdit.batch] : []),
+          ...(fetchedBatches.length === 0 && availableBatches.length === 0
+            ? DEFAULT_FALLBACK_BATCHES
+            : []),
+        ])
+      ),
+    [fetchedBatches, availableBatches, studentToEdit]
   );
 
-  // Initialize form fields when studentToEdit changes or modal opens
+  const prevIsOpenRef = useRef(false);
+  const prevStudentToEditIdRef = useRef<string | undefined>(undefined);
+
+  // Initialize form fields ONLY when modal freshly opens or studentToEdit changes
   useEffect(() => {
+    if (!isOpen) {
+      prevIsOpenRef.current = false;
+      return;
+    }
+
+    const isJustOpening = !prevIsOpenRef.current;
+    const currentStudentId = studentToEdit?._id;
+    const isStudentChanged = currentStudentId !== prevStudentToEditIdRef.current;
+
+    prevIsOpenRef.current = true;
+    prevStudentToEditIdRef.current = currentStudentId;
+
+    if (!isJustOpening && !isStudentChanged) {
+      return;
+    }
+
     const timer = setTimeout(() => {
       if (studentToEdit) {
         setName(studentToEdit.name || "");
@@ -246,7 +276,7 @@ export default function StudentFormModal({
     }, 0);
 
     return () => clearTimeout(timer);
-  }, [studentToEdit, isOpen, fetchedBatches.length, userProfile, initialBatch, batchOptions]);
+  }, [isOpen, studentToEdit, initialBatch, batchOptions, userProfile]);
 
   if (!isOpen) return null;
 
