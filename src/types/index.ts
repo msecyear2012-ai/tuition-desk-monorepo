@@ -346,6 +346,7 @@ export interface BatchRecord {
   name: string;
   timing?: string;
   subject?: string;
+  assignedTeacherId?: string | null;
   isActive?: boolean;
   createdAt?: string;
   updatedAt?: string;

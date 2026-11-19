@@ -22,7 +22,7 @@ import { getCorsHeaders, handleCorsPreflight } from "../../../../lib/cors.ts";
 export const dynamic = "force-dynamic";
 
 export async function OPTIONS(request: NextRequest) {
-  return handleCorsPreflight(request, "GET, DELETE, OPTIONS");
+  return handleCorsPreflight(request, "GET, PATCH, DELETE, OPTIONS");
 }
 
 export async function GET(
@@ -95,7 +95,12 @@ export async function GET(
         ...teacherStudents.map((s) => s.batch).filter(Boolean),
       ]);
 
-      if (!allowedBatchNames.has(batch.name)) {
+      const isAssigned =
+        allowedBatchNames.has(batch.name) ||
+        (batch.assignedTeacherId &&
+          batch.assignedTeacherId.toString() === teacherObjectId.toString());
+
+      if (!isAssigned) {
         return NextResponse.json(
           {
             success: false,
@@ -113,6 +118,279 @@ export async function GET(
   } catch (error: unknown) {
     const errorMessage =
       error instanceof Error ? error.message : "Failed to fetch batch";
+
+    return NextResponse.json(
+      { success: false, error: errorMessage },
+      { status: 500, headers: corsHeaders }
+    );
+  }
+}
+
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const corsHeaders = getCorsHeaders(request);
+
+  try {
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "Authentication required" },
+        { status: 401, headers: corsHeaders }
+      );
+    }
+
+    if (user.role !== "owner") {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Access denied: Only Institute Owners are authorized to edit batches.",
+        },
+        { status: 403, headers: corsHeaders }
+      );
+    }
+
+    const { id } = await context.params;
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json(
+        { success: false, error: "Valid Batch ID is required" },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+
+    await connectDB();
+
+    const centerId = user.centerId;
+    const batch = await Batch.findOne({ _id: id, centerId });
+
+    if (!batch) {
+      return NextResponse.json(
+        { success: false, error: "Batch not found" },
+        { status: 404, headers: corsHeaders }
+      );
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const { name, timing, subject, teacherId, assignedTeacherId } = body;
+
+    const oldBatchName = batch.name;
+    const oldTeacherId = batch.assignedTeacherId;
+
+    let targetTeacherObjectId: mongoose.Types.ObjectId | null = null;
+    const isTeacherChangeRequested =
+      assignedTeacherId !== undefined || teacherId !== undefined;
+    const rawTeacherId =
+      assignedTeacherId !== undefined ? assignedTeacherId : teacherId;
+
+    if (isTeacherChangeRequested) {
+      if (
+        rawTeacherId &&
+        rawTeacherId !== "owner" &&
+        rawTeacherId !== "null" &&
+        rawTeacherId !== ""
+      ) {
+        if (!mongoose.Types.ObjectId.isValid(rawTeacherId)) {
+          return NextResponse.json(
+            { success: false, error: "Invalid teacher ID provided" },
+            { status: 400, headers: corsHeaders }
+          );
+        }
+
+        const targetTeacher = await Teacher.findOne({
+          _id: rawTeacherId,
+          centerId,
+          isActive: { $ne: false },
+        });
+
+        if (!targetTeacher) {
+          return NextResponse.json(
+            { success: false, error: "Target teacher not found in this center" },
+            { status: 404, headers: corsHeaders }
+          );
+        }
+
+        targetTeacherObjectId = new mongoose.Types.ObjectId(rawTeacherId);
+      } else {
+        // Unassigned or owner direct management
+        targetTeacherObjectId = null;
+      }
+    }
+
+    let finalBatchName = oldBatchName;
+    let nameChanged = false;
+
+    if (name !== undefined) {
+      const trimmedName = String(name).trim();
+      if (!trimmedName) {
+        return NextResponse.json(
+          { success: false, error: "Batch name cannot be empty" },
+          { status: 400, headers: corsHeaders }
+        );
+      }
+
+      if (trimmedName !== oldBatchName) {
+        const existingBatch = await Batch.findOne({
+          centerId,
+          name: trimmedName,
+          _id: { $ne: batch._id },
+        });
+
+        if (existingBatch) {
+          return NextResponse.json(
+            { success: false, error: "A batch with this name already exists" },
+            { status: 409, headers: corsHeaders }
+          );
+        }
+
+        finalBatchName = trimmedName;
+        nameChanged = true;
+      }
+    }
+
+    // Coordinate atomic sequential updates
+    let session: mongoose.ClientSession | null = null;
+    let inTx = false;
+
+    try {
+      if (typeof mongoose.startSession === "function") {
+        session = await mongoose.startSession();
+        if (session && typeof session.startTransaction === "function") {
+          session.startTransaction();
+          inTx = true;
+        }
+      }
+    } catch {
+      session = null;
+      inTx = false;
+    }
+
+    try {
+      const sessionOpts = session && inTx ? { session } : {};
+
+      // 1. Update Batch document
+      if (nameChanged) {
+        batch.name = finalBatchName;
+      }
+      if (timing !== undefined) {
+        batch.timing = String(timing).trim();
+      }
+      if (subject !== undefined) {
+        batch.subject = String(subject).trim();
+      }
+      if (isTeacherChangeRequested) {
+        batch.assignedTeacherId = targetTeacherObjectId;
+      }
+
+      await batch.save(sessionOpts);
+
+      // 2. Synchronize Teacher assignments & Student references
+      if (isTeacherChangeRequested) {
+        // Cleanly remove oldBatchName from all teachers in this center
+        await Teacher.updateMany(
+          { centerId, assignedBatches: oldBatchName },
+          { $pull: { assignedBatches: oldBatchName } },
+          sessionOpts
+        );
+
+        // If batch was previously known by finalBatchName on another teacher, clean that too
+        if (nameChanged) {
+          await Teacher.updateMany(
+            { centerId, assignedBatches: finalBatchName },
+            { $pull: { assignedBatches: finalBatchName } },
+            sessionOpts
+          );
+        }
+
+        // Add finalBatchName to target teacher's assignedBatches
+        if (targetTeacherObjectId) {
+          await Teacher.updateOne(
+            { _id: targetTeacherObjectId, centerId },
+            { $addToSet: { assignedBatches: finalBatchName } },
+            sessionOpts
+          );
+        }
+
+        // Update all students in this batch: update assignedTeacherId and batch name if changed
+        await Student.updateMany(
+          {
+            centerId,
+            $or: [{ batch: oldBatchName }, { batch: String(batch._id) }],
+          },
+          {
+            $set: {
+              assignedTeacherId: targetTeacherObjectId,
+              ...(nameChanged ? { batch: finalBatchName } : {}),
+            },
+          },
+          sessionOpts
+        );
+      } else if (nameChanged) {
+        // Only batch name changed
+        await Teacher.updateMany(
+          { centerId, assignedBatches: oldBatchName },
+          { $pull: { assignedBatches: oldBatchName } },
+          sessionOpts
+        );
+
+        if (oldTeacherId) {
+          await Teacher.updateOne(
+            { _id: oldTeacherId, centerId },
+            { $addToSet: { assignedBatches: finalBatchName } },
+            sessionOpts
+          );
+        }
+
+        await Student.updateMany(
+          {
+            centerId,
+            $or: [{ batch: oldBatchName }, { batch: String(batch._id) }],
+          },
+          { $set: { batch: finalBatchName } },
+          sessionOpts
+        );
+      }
+
+      // 3. Propagate batch rename to related operational collections (Attendance & Test)
+      if (nameChanged) {
+        await Attendance.updateMany(
+          { centerId, batch: oldBatchName },
+          { $set: { batch: finalBatchName } },
+          sessionOpts
+        );
+        await Test.updateMany(
+          { centerId, batch: oldBatchName },
+          { $set: { batch: finalBatchName } },
+          sessionOpts
+        );
+      }
+
+      if (session && inTx) {
+        await session.commitTransaction();
+      }
+
+      return NextResponse.json(
+        {
+          success: true,
+          message: "Batch updated successfully",
+          data: batch,
+        },
+        { status: 200, headers: corsHeaders }
+      );
+    } catch (txError) {
+      if (session && inTx) {
+        await session.abortTransaction().catch(() => {});
+      }
+      throw txError;
+    } finally {
+      if (session) {
+        await session.endSession().catch(() => {});
+      }
+    }
+  } catch (error: unknown) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Failed to update batch";
 
     return NextResponse.json(
       { success: false, error: errorMessage },

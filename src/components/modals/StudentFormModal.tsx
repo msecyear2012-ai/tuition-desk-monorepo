@@ -10,10 +10,8 @@ import {
   Phone,
   Calendar,
   IndianRupee,
-  CalendarDays,
   Loader2,
   AlertCircle,
-  Sparkles,
   GraduationCap,
 } from "lucide-react";
 import { apiClient, getCurrentCenterId } from "@/lib/apiClient";
@@ -142,47 +140,51 @@ export default function StudentFormModal({
 
   // Initialize form fields when studentToEdit changes or modal opens
   useEffect(() => {
-    if (studentToEdit) {
-      setName(studentToEdit.name || "");
-      setBatch(studentToEdit.batch || (batchOptions[0] || "Class 10 - Science"));
-      setParentWhatsApp(studentToEdit.parentWhatsApp || "");
+    const timer = setTimeout(() => {
+      if (studentToEdit) {
+        setName(studentToEdit.name || "");
+        setBatch(studentToEdit.batch || (batchOptions[0] || "Class 10 - Science"));
+        setParentWhatsApp(studentToEdit.parentWhatsApp || "");
 
-      // Date format YYYY-MM-DD
-      if (studentToEdit.joiningDate) {
-        const d = new Date(studentToEdit.joiningDate);
-        if (!isNaN(d.getTime())) {
-          setJoiningDate(d.toISOString().split("T")[0]);
+        // Date format YYYY-MM-DD
+        if (studentToEdit.joiningDate) {
+          const d = new Date(studentToEdit.joiningDate);
+          if (!isNaN(d.getTime())) {
+            setJoiningDate(d.toISOString().split("T")[0]);
+          } else {
+            setJoiningDate(new Date().toISOString().split("T")[0]);
+          }
         } else {
           setJoiningDate(new Date().toISOString().split("T")[0]);
         }
-      } else {
-        setJoiningDate(new Date().toISOString().split("T")[0]);
-      }
 
-      setMonthlyFee(
-        studentToEdit.monthlyFee !== undefined ? studentToEdit.monthlyFee : 2500
-      );
-      setBillingCycleDate(studentToEdit.billingCycleDate || 5);
-      setIsActive(
-        studentToEdit.isActive !== undefined ? studentToEdit.isActive : true
-      );
-      setAssignedTeacherId(studentToEdit.assignedTeacherId || "");
-    } else {
-      // Defaults for new admission
-      setName("");
-      setBatch(initialBatch || batchOptions[0] || "Class 10 - Science");
-      setParentWhatsApp("");
-      setJoiningDate(new Date().toISOString().split("T")[0]);
-      setMonthlyFee(2500);
-      setBillingCycleDate(5);
-      setIsActive(true);
-      // For Teacher: locks to their own account; for Owner: defaults to "" (Myself/Owner)
-      setAssignedTeacherId(
-        userProfile?.role === "teacher" ? userProfile.teacherId || "" : ""
-      );
-    }
-    setError(null);
-  }, [studentToEdit, isOpen, fetchedBatches.length, userProfile, initialBatch]);
+        setMonthlyFee(
+          studentToEdit.monthlyFee !== undefined ? studentToEdit.monthlyFee : 2500
+        );
+        setBillingCycleDate(studentToEdit.billingCycleDate || 5);
+        setIsActive(
+          studentToEdit.isActive !== undefined ? studentToEdit.isActive : true
+        );
+        setAssignedTeacherId(studentToEdit.assignedTeacherId || "");
+      } else {
+        // Defaults for new admission
+        setName("");
+        setBatch(initialBatch || batchOptions[0] || "Class 10 - Science");
+        setParentWhatsApp("");
+        setJoiningDate(new Date().toISOString().split("T")[0]);
+        setMonthlyFee(2500);
+        setBillingCycleDate(5);
+        setIsActive(true);
+        // For Teacher: locks to their own account; for Owner: defaults to "" (Myself/Owner)
+        setAssignedTeacherId(
+          userProfile?.role === "teacher" ? userProfile.teacherId || "" : ""
+        );
+      }
+      setError(null);
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [studentToEdit, isOpen, fetchedBatches.length, userProfile, initialBatch, batchOptions]);
 
   if (!isOpen) return null;
 
@@ -567,7 +569,7 @@ export default function StudentFormModal({
                 <input
                   type="number"
                   min="0"
-                  step="100"
+                  step="1"
                   value={monthlyFee}
                   onChange={(e) => setMonthlyFee(e.target.value)}
                   placeholder="2500"

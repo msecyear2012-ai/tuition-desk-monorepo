@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     await connectDB();
 
     const body = await request.json().catch(() => ({}));
-    const { name, timing, subject } = body;
+    const { name, timing, subject, teacherId, assignedTeacherId } = body;
     const targetCenterId = user.centerId;
 
     if (!name || !String(name).trim()) {
@@ -58,13 +58,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const rawTeacherId =
+      assignedTeacherId !== undefined ? assignedTeacherId : teacherId;
+    let targetTeacherObjectId: mongoose.Types.ObjectId | null = null;
+
+    if (
+      rawTeacherId &&
+      rawTeacherId !== "owner" &&
+      rawTeacherId !== "null" &&
+      rawTeacherId !== "" &&
+      mongoose.Types.ObjectId.isValid(rawTeacherId)
+    ) {
+      const targetTeacher = await Teacher.findOne({
+        _id: rawTeacherId,
+        centerId: targetCenterId,
+        isActive: { $ne: false },
+      });
+      if (targetTeacher) {
+        targetTeacherObjectId = new mongoose.Types.ObjectId(rawTeacherId);
+      }
+    }
+
     const newBatch = await Batch.create({
       centerId: targetCenterId,
       name: trimmedName,
       timing: timing ? String(timing).trim() : undefined,
       subject: subject ? String(subject).trim() : undefined,
+      assignedTeacherId: targetTeacherObjectId,
       isActive: true,
     });
+
+    if (targetTeacherObjectId) {
+      await Teacher.updateOne(
+        { _id: targetTeacherObjectId, centerId: targetCenterId },
+        { $addToSet: { assignedBatches: trimmedName } }
+      );
+    }
 
 
     return NextResponse.json(
@@ -115,7 +144,7 @@ export async function GET(request: NextRequest) {
       }
 
       const teacherObjectId = new mongoose.Types.ObjectId(user.teacherId);
-      const [teacherStudents, teacherDoc] = await Promise.all([
+      const [teacherStudents, teacherDoc, teacherBatches] = await Promise.all([
         Student.find({
           centerId,
           assignedTeacherId: teacherObjectId,
@@ -125,12 +154,18 @@ export async function GET(request: NextRequest) {
           _id: teacherObjectId,
           centerId,
         }).select("assignedBatches"),
+        Batch.find({
+          centerId,
+          assignedTeacherId: teacherObjectId,
+          isActive: { $ne: false },
+        }).select("name"),
       ]);
 
       const allowedBatchNames = Array.from(
         new Set([
           ...(teacherDoc?.assignedBatches || []),
           ...teacherStudents.map((s) => s.batch).filter(Boolean),
+          ...teacherBatches.map((b) => b.name).filter(Boolean),
         ])
       );
 
@@ -141,18 +176,28 @@ export async function GET(request: NextRequest) {
 
       if (assignedTeacherParam) {
         if (assignedTeacherParam === "owner" || assignedTeacherParam === "null") {
-          const ownerStudents = await Student.find({
-            centerId,
-            $or: [{ assignedTeacherId: null }, { assignedTeacherId: { $exists: false } }],
-            isActive: { $ne: false },
-          }).select("batch");
+          const [ownerStudents, ownerBatches] = await Promise.all([
+            Student.find({
+              centerId,
+              $or: [{ assignedTeacherId: null }, { assignedTeacherId: { $exists: false } }],
+              isActive: { $ne: false },
+            }).select("batch"),
+            Batch.find({
+              centerId,
+              $or: [{ assignedTeacherId: null }, { assignedTeacherId: { $exists: false } }],
+              isActive: { $ne: false },
+            }).select("name"),
+          ]);
           const ownerBatchNames = Array.from(
-            new Set(ownerStudents.map((s) => s.batch).filter(Boolean))
+            new Set([
+              ...ownerStudents.map((s) => s.batch).filter(Boolean),
+              ...ownerBatches.map((b) => b.name).filter(Boolean),
+            ])
           );
           filter.name = { $in: ownerBatchNames };
         } else if (mongoose.Types.ObjectId.isValid(assignedTeacherParam)) {
           const teacherObjectId = new mongoose.Types.ObjectId(assignedTeacherParam);
-          const [teacherStudents, teacherDoc] = await Promise.all([
+          const [teacherStudents, teacherDoc, teacherBatches] = await Promise.all([
             Student.find({
               centerId,
               assignedTeacherId: teacherObjectId,
@@ -162,11 +207,17 @@ export async function GET(request: NextRequest) {
               _id: teacherObjectId,
               centerId,
             }).select("assignedBatches"),
+            Batch.find({
+              centerId,
+              assignedTeacherId: teacherObjectId,
+              isActive: { $ne: false },
+            }).select("name"),
           ]);
           const allowedBatchNames = Array.from(
             new Set([
               ...(teacherDoc?.assignedBatches || []),
               ...teacherStudents.map((s) => s.batch).filter(Boolean),
+              ...teacherBatches.map((b) => b.name).filter(Boolean),
             ])
           );
           filter.name = { $in: allowedBatchNames };

@@ -65,6 +65,10 @@ const StudentDeleteModal = dynamic(
   () => import("@/components/modals/StudentDeleteModal"),
   { ssr: false }
 );
+const EditBatchModal = dynamic(
+  () => import("@/components/modals/EditBatchModal"),
+  { ssr: false }
+);
 
 // Deterministic pastel avatar background colors
 const AVATAR_COLORS = [
@@ -338,6 +342,7 @@ function AdmissionsContent() {
   // Modal States
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [batchToEdit, setBatchToEdit] = useState<BatchRecord | null>(null);
   const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
   const [studentToEdit, setStudentToEdit] = useState<StudentRecord | null>(null);
   const [studentToDelete, setStudentToDelete] = useState<StudentRecord | null>(null);
@@ -457,24 +462,28 @@ function AdmissionsContent() {
     const currentBatchId = searchParams.get("batchId");
     const currentLegacyBatch = searchParams.get("batch");
 
-    if (currentBatchId) {
-      if (currentBatchId !== selectedBatchId) {
-        setSelectedBatchId(currentBatchId);
+    const timer = setTimeout(() => {
+      if (currentBatchId) {
+        if (currentBatchId !== selectedBatchId) {
+          setSelectedBatchId(currentBatchId);
+          setStudentSearchInput("");
+          setSearchedStudents(null);
+        }
+      } else if (currentLegacyBatch && displayBatches.length > 0) {
+        const match = displayBatches.find((b) => b.name === currentLegacyBatch);
+        if (match && match._id !== selectedBatchId) {
+          setSelectedBatchId(match._id);
+          setStudentSearchInput("");
+          setSearchedStudents(null);
+        }
+      } else if (!currentBatchId && !currentLegacyBatch && selectedBatchId !== null) {
+        setSelectedBatchId(null);
         setStudentSearchInput("");
         setSearchedStudents(null);
       }
-    } else if (currentLegacyBatch && displayBatches.length > 0) {
-      const match = displayBatches.find((b) => b.name === currentLegacyBatch);
-      if (match && match._id !== selectedBatchId) {
-        setSelectedBatchId(match._id);
-        setStudentSearchInput("");
-        setSearchedStudents(null);
-      }
-    } else if (!currentBatchId && !currentLegacyBatch && selectedBatchId !== null) {
-      setSelectedBatchId(null);
-      setStudentSearchInput("");
-      setSearchedStudents(null);
-    }
+    }, 0);
+
+    return () => clearTimeout(timer);
   }, [searchParams, displayBatches, selectedBatchId]);
 
   // Resolve the currently active batch object from selectedBatchId
@@ -503,26 +512,30 @@ function AdmissionsContent() {
   // 300ms Debounced Student Search inside selected batch with AbortController & epoch guard
   useEffect(() => {
     if (!selectedBatch) {
-      setSearchedStudents(null);
-      setIsSearchingStudents(false);
-      return;
+      const resetTimer = setTimeout(() => {
+        setSearchedStudents(null);
+        setIsSearchingStudents(false);
+      }, 0);
+      return () => clearTimeout(resetTimer);
     }
 
     const trimmed = studentSearchInput.trim();
     if (!trimmed) {
-      setSearchedStudents(null);
-      setIsSearchingStudents(false);
+      const resetTimer = setTimeout(() => {
+        setSearchedStudents(null);
+        setIsSearchingStudents(false);
+      }, 0);
       if (searchAbortControllerRef.current) {
         searchAbortControllerRef.current.abort();
         searchAbortControllerRef.current = null;
       }
-      return;
+      return () => clearTimeout(resetTimer);
     }
 
-    setIsSearchingStudents(true);
     const reqEpoch = ++searchReqEpochRef.current;
 
     const timer = setTimeout(async () => {
+      setIsSearchingStudents(true);
       if (searchAbortControllerRef.current) {
         searchAbortControllerRef.current.abort();
       }
@@ -570,7 +583,7 @@ function AdmissionsContent() {
     return () => {
       clearTimeout(timer);
     };
-  }, [studentSearchInput, selectedBatch, students]);
+  }, [studentSearchInput, selectedBatch, students, userProfile?.role]);
 
   // Overall metrics
   const totalStudentsCount = students.length;
@@ -1128,20 +1141,34 @@ function AdmissionsContent() {
                           </div>
                         </div>
 
-                        {/* Delete action for Owner / Admin */}
+                        {/* Actions for Owner / Admin */}
                         {batch._id && !batch._id.startsWith("orphan_") && userProfile?.role === "owner" && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteBatch(batch);
-                            }}
-                            title={`Delete batch "${batch.name}"`}
-                            aria-label={`Delete batch ${batch.name}`}
-                            className="w-7 h-7 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setBatchToEdit(batch);
+                              }}
+                              title={`Edit batch "${batch.name}"`}
+                              aria-label={`Edit batch ${batch.name}`}
+                              className="w-7 h-7 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 flex items-center justify-center transition-colors"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteBatch(batch);
+                              }}
+                              title={`Delete batch "${batch.name}"`}
+                              aria-label={`Delete batch ${batch.name}`}
+                              className="w-7 h-7 rounded-lg text-slate-300 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         )}
                       </div>
 
@@ -1227,9 +1254,22 @@ function AdmissionsContent() {
                         </span>
                       )}
                     </div>
-                    <h2 className="text-xl font-black tracking-tight truncate">
-                      {selectedBatch.name}
-                    </h2>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-xl font-black tracking-tight truncate">
+                        {selectedBatch.name}
+                      </h2>
+                      {userProfile?.role === "owner" && !selectedBatch._id.startsWith("orphan_") && (
+                        <button
+                          type="button"
+                          onClick={() => setBatchToEdit(selectedBatch)}
+                          title={`Edit batch "${selectedBatch.name}"`}
+                          aria-label={`Edit batch ${selectedBatch.name}`}
+                          className="w-7 h-7 rounded-lg text-white/70 hover:text-white hover:bg-white/10 flex items-center justify-center transition-colors flex-shrink-0"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                     {selectedBatch.timing && (
                       <p className="text-xs text-blue-200 flex items-center gap-1">
                         <Clock className="w-3.5 h-3.5 text-blue-300 flex-shrink-0" />
@@ -1424,6 +1464,23 @@ function AdmissionsContent() {
           showToast(`Bulk import successful! ${importedCount} students added.`);
         }}
       />
+
+      {/* Edit Batch Modal */}
+      {batchToEdit && (
+        <EditBatchModal
+          key={batchToEdit._id}
+          isOpen={!!batchToEdit}
+          batch={batchToEdit}
+          teachers={teachers}
+          onClose={() => setBatchToEdit(null)}
+          onSuccess={(updatedBatch) => {
+            showToast(`Batch "${updatedBatch.name}" updated successfully.`);
+            setBatchToEdit(null);
+            fetchBatches(true);
+            fetchStudents(true);
+          }}
+        />
+      )}
 
       {/* Student Delete & Fee Settlement Modal */}
       {studentToDelete && (

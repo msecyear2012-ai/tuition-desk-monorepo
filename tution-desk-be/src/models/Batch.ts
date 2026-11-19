@@ -5,6 +5,7 @@ export interface IBatch {
   name: string;
   timing?: string;
   subject?: string;
+  assignedTeacherId?: mongoose.Types.ObjectId | null;
   isActive?: boolean;
   createdAt?: Date;
   updatedAt?: Date;
@@ -33,6 +34,12 @@ const BatchSchema = new Schema<IBatchDocument>(
     subject: {
       type: String,
       trim: true,
+    },
+    assignedTeacherId: {
+      type: Schema.Types.ObjectId,
+      ref: "Teacher",
+      default: null,
+      index: true,
     },
     isActive: {
       type: Boolean,
