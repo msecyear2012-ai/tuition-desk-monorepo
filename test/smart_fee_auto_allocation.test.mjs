@@ -713,4 +713,61 @@ test("Smart Fee Auto-Allocation Suite (Phase 3)", async (t) => {
     const totalTeacherCashInHand = fee1Payment.amount + advancePayment.amount;
     assert.equal(totalTeacherCashInHand, 1500, "Every single rupee collected must remain in teacher custody");
   });
+
+  // =========================================================================
+  // Test 8: Fallback creation when no prior invoice exists (Respects student.monthlyFee)
+  // =========================================================================
+  await t.test("8. Student with monthlyFee: 2500 paying 1500 with no prior invoice creates Partial Paid fee (amount: 2500, amountPaid: 1500, amountDue: 1000)", async () => {
+    const studentWith2500 = {
+      ...mockStudent,
+      monthlyFee: 2500,
+    };
+    setupMocks(studentWith2500);
+
+    let createdFeeDoc = null;
+    FeeModel.find = async () => [];
+    FeeModel.findOne = async () => null;
+    FeeModel.create = async (doc) => {
+      createdFeeDoc = {
+        _id: new mongoose.Types.ObjectId("507f191e810c19729de860f5"),
+        ...doc,
+      };
+      return createdFeeDoc;
+    };
+    FeeModel.findById = () => ({
+      populate: async () => ({
+        ...createdFeeDoc,
+        studentId: studentWith2500,
+      }),
+    });
+
+    const req = createMockRequest({
+      token: ownerToken,
+      body: {
+        centerId,
+        studentId,
+        amount: 1500,
+        billingMonth: "2026-11",
+      },
+    });
+
+    const res = await manualCollectionRoute(req);
+    assert.equal(res.status, 201);
+    const json = await res.json();
+
+    assert.equal(json.success, true);
+    assert.equal(json.settledExisting, false);
+    assert.ok(createdFeeDoc);
+    assert.equal(createdFeeDoc.originalAmountDue, 2500, "originalAmountDue must be student.monthlyFee (2500)");
+    assert.equal(createdFeeDoc.paidAmount, 1500, "paidAmount must be 1500");
+    assert.equal(createdFeeDoc.amountDue, 1000, "amountDue must be 1000 (2500 - 1500)");
+    assert.equal(createdFeeDoc.status, "Partial Paid");
+
+    assert.ok(json.allocationBreakdown);
+    assert.equal(json.allocationBreakdown.totalReceived, 1500);
+    assert.equal(json.allocationBreakdown.clearedDuesAmount, 1500);
+    assert.equal(json.allocationBreakdown.advanceSavedAmount, 0);
+    assert.deepEqual(json.allocationBreakdown.clearedFeeIds, []);
+    assert.equal(json.allocationBreakdown.summaryText, "₹1,500 applied to pending dues");
+  });
 });

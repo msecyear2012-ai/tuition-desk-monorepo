@@ -1405,8 +1405,35 @@ export async function POST(request: NextRequest) {
     }
 
     // -------------------------------------------------------------------------
-    // Fallback: No candidate fee exists -> Create new Fee record set to 'Paid'
+    // Fallback: No candidate fee exists -> Create new Fee record based on student.monthlyFee
     // -------------------------------------------------------------------------
+    const expectedMonthlyFee = Number(studentDoc.monthlyFee) || 0;
+    const invoicedFeeAmount = expectedMonthlyFee > 0 ? expectedMonthlyFee : parsedAmount;
+
+    let feeStatus: "Paid" | "Partial Paid";
+    let feePaidAmount: number;
+    let feeAmountDue: number;
+    let fallbackSurplus = 0;
+
+    if (parsedAmount < invoicedFeeAmount) {
+      feeStatus = "Partial Paid";
+      feePaidAmount = parsedAmount;
+      feeAmountDue = invoicedFeeAmount - parsedAmount;
+      newPaymentEntry.amount = parsedAmount;
+    } else if (parsedAmount === invoicedFeeAmount) {
+      feeStatus = "Paid";
+      feePaidAmount = parsedAmount;
+      feeAmountDue = 0;
+      newPaymentEntry.amount = parsedAmount;
+    } else {
+      // parsedAmount > invoicedFeeAmount
+      feeStatus = "Paid";
+      feePaidAmount = invoicedFeeAmount;
+      feeAmountDue = 0;
+      fallbackSurplus = parsedAmount - invoicedFeeAmount;
+      newPaymentEntry.amount = invoicedFeeAmount;
+    }
+
     const feeTitle =
       noteText || `Regular Monthly Fee (${dateComp.monthLabel})`;
 
@@ -1418,11 +1445,11 @@ export async function POST(request: NextRequest) {
         billingMonth: targetBillingMonth,
         month: dateComp.monthLabel,
         title: feeTitle,
-        originalAmountDue: parsedAmount,
-        amountDue: parsedAmount,
-        paidAmount: parsedAmount,
+        originalAmountDue: invoicedFeeAmount,
+        amountDue: feeAmountDue,
+        paidAmount: feePaidAmount,
         dueDate: now,
-        status: "Paid",
+        status: feeStatus,
         paymentMode: resolvedPaymentMode,
         feeType: "monthly_recurring",
         isAdvance: false,
@@ -1563,12 +1590,97 @@ export async function POST(request: NextRequest) {
       idempotencyKey: clientKey || undefined,
     });
 
+    let advanceSavedAmount = 0;
+    if (fallbackSurplus > 0) {
+      advanceSavedAmount = fallbackSurplus;
+      const advancePaymentEntryId = new mongoose.Types.ObjectId();
+      const advancePaymentEntry: IPaymentEntry = {
+        _id: advancePaymentEntryId,
+        paymentId: advancePaymentEntryId,
+        amount: fallbackSurplus,
+        paymentDate: resolvedPaymentDate,
+        paymentMode: resolvedPaymentMode,
+        receiptNumber: receiptNumber,
+        isProvisional: collectorRole === "teacher",
+        receivedBy: collectorId,
+        receivedByRole: collectorRole,
+        recordedBy: collectorId,
+        recordedByRole: collectorRole,
+        recordedAt: now,
+        assignedTeacherAtPayment: responsibleTeacherId,
+        batchAtPayment: responsibleBatch,
+        custodyStatus: collectorRole === "teacher" ? "teacher_custody" : "owner_custody",
+        allocations: [],
+        notes: noteText ? `${noteText} (Surplus Advance)` : "Surplus payment saved as advance",
+      } as IPaymentEntry;
+
+      const currentMonthName = now.toLocaleString("en-IN", { month: "long", year: "numeric" });
+      const advanceFeeDoc = (await Fee.create({
+        centerId: targetCenterId,
+        studentId: new mongoose.Types.ObjectId(studentId),
+        month: `Advance - ${currentMonthName}`,
+        title: "Advance Fee Payment",
+        originalAmountDue: fallbackSurplus,
+        amountDue: fallbackSurplus,
+        paidAmount: fallbackSurplus,
+        dueDate: now,
+        status: "Paid",
+        paymentMode: resolvedPaymentMode,
+        feeType: "advance",
+        isAdvance: true,
+        walletRechargeCredited: false,
+        notes: noteText ? `${noteText} (Surplus)` : "Surplus payment saved as advance",
+        receiptNumber: receiptNumber,
+        paidDate: resolvedPaymentDate,
+        paidAt: now,
+        paymentDate: resolvedPaymentDate,
+        ...(cleanUtrNumber ? { utrNumber: cleanUtrNumber } : {}),
+        assignedTeacherId: responsibleTeacherId,
+        assignedTeacherAtPayment: responsibleTeacherId,
+        batchAtPayment: responsibleBatch,
+        recordedBy: collectorId,
+        recordedByRole: collectorRole,
+        receivedBy: collectorId,
+        receivedByRole: collectorRole,
+        recordedAt: now,
+        paymentHistory: [advancePaymentEntry],
+      })) as unknown as IFeeDocument;
+
+      try {
+        await creditAdvanceToStudentWallet({
+          centerId: targetCenterId,
+          studentId: String(studentId),
+          amount: fallbackSurplus,
+          feeId: String(advanceFeeDoc._id),
+        });
+        advanceFeeDoc.walletRechargeCredited = true;
+      } catch (walletErr) {
+        console.error("[MANUAL COLLECTION] Error crediting advance wallet in fallback:", walletErr);
+      }
+    }
+
+    const clearedDuesAmount = feePaidAmount;
+    let summaryText = "";
+    if (clearedDuesAmount > 0 && advanceSavedAmount > 0) {
+      summaryText = `₹${clearedDuesAmount.toLocaleString("en-IN")} due cleared, ₹${advanceSavedAmount.toLocaleString("en-IN")} saved as advance`;
+    } else if (clearedDuesAmount > 0 && advanceSavedAmount === 0) {
+      if (feeStatus === "Paid") {
+        summaryText = `₹${clearedDuesAmount.toLocaleString("en-IN")} due cleared`;
+      } else {
+        summaryText = `₹${clearedDuesAmount.toLocaleString("en-IN")} applied to pending dues`;
+      }
+    } else if (advanceSavedAmount > 0) {
+      summaryText = `₹${advanceSavedAmount.toLocaleString("en-IN")} saved as advance`;
+    } else {
+      summaryText = `₹${parsedAmount.toLocaleString("en-IN")} payment recorded`;
+    }
+
     const allocationBreakdown = {
       totalReceived: parsedAmount,
-      clearedDuesAmount: parsedAmount,
-      advanceSavedAmount: 0,
-      clearedFeeIds: [String(newFee._id)],
-      summaryText: `₹${parsedAmount.toLocaleString("en-IN")} due cleared`,
+      clearedDuesAmount,
+      advanceSavedAmount,
+      clearedFeeIds: feeStatus === "Paid" ? [String(newFee._id)] : [],
+      summaryText,
     };
 
     return NextResponse.json(
