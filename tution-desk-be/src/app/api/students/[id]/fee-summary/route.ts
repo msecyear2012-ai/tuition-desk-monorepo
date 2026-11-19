@@ -32,6 +32,19 @@ const MONTH_LABELS = [
   "Dec",
 ];
 
+function compareISTDates(
+  y1: number,
+  m1: number,
+  d1: number,
+  y2: number,
+  m2: number,
+  d2: number
+): number {
+  if (y1 !== y2) return y1 - y2;
+  if (m1 !== m2) return m1 - m2;
+  return d1 - d2;
+}
+
 function getFeeBillingMonth(fee: IFeeDocument): string | null {
   if (
     fee.billingMonth &&
@@ -209,6 +222,9 @@ export async function GET(
 
     // 8. Generate 12-Month Calendar Array (Jan to Dec for targetYear)
     const months = [];
+    const admComp = rawAdmission
+      ? getISTDateComponents(new Date(rawAdmission))
+      : null;
 
     for (let m = 1; m <= 12; m++) {
       const effectiveDay = getEffectiveBillingCycleDay(dueDay, targetYear, m);
@@ -216,10 +232,9 @@ export async function GET(
         Date.UTC(targetYear, m - 1, effectiveDay)
       ).toISOString();
 
-      // Check pre-admission: Months strictly before admissionDate
+      // Check pre-admission: Months strictly before admission month
       let isPreAdmission = false;
-      if (rawAdmission) {
-        const admComp = getISTDateComponents(new Date(rawAdmission));
+      if (admComp) {
         if (
           targetYear < admComp.year ||
           (targetYear === admComp.year && m < admComp.month)
@@ -228,10 +243,29 @@ export async function GET(
         }
       }
 
-      // Check future: Calendar month is after current month in IST
-      const isFuture =
-        targetYear > nowIST.year ||
-        (targetYear === nowIST.year && m > nowIST.month);
+      // Check if student enrolled after this month's billing day (e.g. joined 19 Nov, billingDay is 12 Nov)
+      const joinedAfterDueDate = Boolean(
+        admComp &&
+          compareISTDates(
+            admComp.year,
+            admComp.month,
+            admComp.day,
+            targetYear,
+            m,
+            effectiveDay
+          ) > 0
+      );
+
+      // Check if this month's due date is in the future relative to today in IST (e.g. today 19 Nov, billingDay 26 Nov)
+      const isDueDateInFuture =
+        compareISTDates(
+          targetYear,
+          m,
+          effectiveDay,
+          nowIST.year,
+          nowIST.month,
+          nowIST.day
+        ) > 0;
 
       // Locate fee matching this canonical YYYY-MM
       const targetMonthKey = `${targetYear}-${String(m).padStart(2, "0")}`;
@@ -284,12 +318,19 @@ export async function GET(
         } else if (isPartial) {
           status = "partial";
         } else {
-          // Unpaid / Pending record
-          status = isFuture ? "upcoming" : "due";
+          // Unpaid / Pending record in DB
+          status = isDueDateInFuture ? "upcoming" : "due";
         }
       } else {
-        // No fee record exists
-        status = isFuture ? "upcoming" : "due";
+        // No fee record exists in DB
+        // Rule 1: today < monthDueDate -> status MUST be 'upcoming' (dueAmount: 0)
+        // Rule 2: joiningDate > monthDueDate -> status MUST be 'upcoming' (dueAmount: 0)
+        if (isDueDateInFuture || joinedAfterDueDate) {
+          status = "upcoming";
+        } else {
+          // Rule 3: truly due unbilled cycle (joiningDate <= monthDueDate <= today)
+          status = "due";
+        }
       }
 
       // Determine Financial Amounts & Identifiers
@@ -325,7 +366,12 @@ export async function GET(
           amountInvoiced = 0;
           amountPaid = 0;
           amountDue = 0;
+        } else if (status === "upcoming") {
+          amountInvoiced = monthlyFee;
+          amountPaid = 0;
+          amountDue = 0;
         } else {
+          // status === "due"
           amountInvoiced = monthlyFee;
           amountPaid = 0;
           amountDue = monthlyFee;

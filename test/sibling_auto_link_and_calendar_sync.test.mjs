@@ -313,4 +313,179 @@ test("Sibling Auto-Link & Calendar Dues Sync Test Suite", async (t) => {
       }
     }
   );
+
+  // 5. Unbilled Month Rule 1: Joined today (19 Nov), billingDay = 26 (future) -> Nov is 'upcoming', totalDue === 0
+  await t.test(
+    "5. Unbilled Month: Joined today with future billing day (26th) shows current month as 'upcoming' with totalDue === 0",
+    async () => {
+      const ownerToken = await signToken({
+        userId: "owner_1",
+        centerId: centerA,
+        role: "owner",
+        name: "Owner Sharma",
+      });
+
+      const studentKhushiId = new mongoose.Types.ObjectId("507f191e810c19729de86033");
+      const mockKhushi = {
+        _id: studentKhushiId,
+        centerId: centerA,
+        name: "Khushi",
+        monthlyFee: 200,
+        billingCycleDate: 26, // In future (26 Nov > 19 Nov)
+        joiningDate: new Date("2026-11-19T06:00:00Z"),
+        createdAt: new Date("2026-11-19T06:00:00Z"),
+        advanceBalance: 0,
+      };
+
+      const originalStudentFindOne = StudentModel.findOne;
+      const originalFeeFind = FeeModel.find;
+
+      StudentModel.findOne = async () => mockKhushi;
+      FeeModel.find = async () => []; // 0 fee records
+
+      try {
+        const req = createMockRequest({
+          token: ownerToken,
+          url: `http://localhost:3000/api/students/${studentKhushiId}/fee-summary?year=2026`,
+        });
+
+        const res = await getFeeSummaryRoute(req, {
+          params: Promise.resolve({ id: String(studentKhushiId) }),
+        });
+        const body = await res.json();
+
+        assert.equal(res.status, 200);
+        assert.equal(body.success, true);
+
+        const summary = body.data.summary;
+        const months = body.data.months;
+
+        const novMonth = months.find((m) => m.month === 11);
+        assert.ok(novMonth, "November month must exist in calendar");
+        assert.equal(novMonth.status, "upcoming", "Nov must be 'upcoming' because 19 Nov < 26 Nov");
+        assert.equal(novMonth.amountDue, 0, "Nov amountDue must be 0 for upcoming cycle");
+        assert.equal(summary.totalDue, 0, "summary.totalDue must be 0 when current month cycle is upcoming");
+      } finally {
+        StudentModel.findOne = originalStudentFindOne;
+        FeeModel.find = originalFeeFind;
+      }
+    }
+  );
+
+  // 6. Unbilled Month Rule 2: Joined today (19 Nov), billingDay = 12 (before joiningDate) -> Nov is NOT 'due', totalDue === 0
+  await t.test(
+    "6. Unbilled Month: Joined after this month's billing day (joined 19 Nov, billingDay 12 Nov) is NOT 'due', totalDue === 0",
+    async () => {
+      const ownerToken = await signToken({
+        userId: "owner_1",
+        centerId: centerA,
+        role: "owner",
+        name: "Owner Sharma",
+      });
+
+      const studentPostCycleId = new mongoose.Types.ObjectId("507f191e810c19729de86044");
+      const mockPostCycleStudent = {
+        _id: studentPostCycleId,
+        centerId: centerA,
+        name: "Aman",
+        monthlyFee: 500,
+        billingCycleDate: 12, // 12 Nov was before joining on 19 Nov
+        joiningDate: new Date("2026-11-19T06:00:00Z"),
+        createdAt: new Date("2026-11-19T06:00:00Z"),
+        advanceBalance: 0,
+      };
+
+      const originalStudentFindOne = StudentModel.findOne;
+      const originalFeeFind = FeeModel.find;
+
+      StudentModel.findOne = async () => mockPostCycleStudent;
+      FeeModel.find = async () => []; // 0 fee records
+
+      try {
+        const req = createMockRequest({
+          token: ownerToken,
+          url: `http://localhost:3000/api/students/${studentPostCycleId}/fee-summary?year=2026`,
+        });
+
+        const res = await getFeeSummaryRoute(req, {
+          params: Promise.resolve({ id: String(studentPostCycleId) }),
+        });
+        const body = await res.json();
+
+        assert.equal(res.status, 200);
+        assert.equal(body.success, true);
+
+        const summary = body.data.summary;
+        const months = body.data.months;
+
+        const novMonth = months.find((m) => m.month === 11);
+        assert.ok(novMonth);
+        assert.notEqual(novMonth.status, "due", "Nov must NOT be 'due' when joined after billingDay");
+        assert.equal(novMonth.status, "upcoming", "Nov should be 'upcoming' for pre-cycle onboarding");
+        assert.equal(novMonth.amountDue, 0);
+        assert.equal(summary.totalDue, 0, "summary.totalDue must be 0 because 1st billing starts next cycle (Dec)");
+      } finally {
+        StudentModel.findOne = originalStudentFindOne;
+        FeeModel.find = originalFeeFind;
+      }
+    }
+  );
+
+  // 7. Unbilled Month Rule 3: Joined 1 Nov, billingDay = 12, today is 19 Nov (unpaid) -> Nov IS 'due', totalDue === monthlyFee
+  await t.test(
+    "7. Unbilled Month: Joined 1 Nov with billingDay 12 Nov (unpaid on 19 Nov) IS 'due' with totalDue === monthlyFee",
+    async () => {
+      const ownerToken = await signToken({
+        userId: "owner_1",
+        centerId: centerA,
+        role: "owner",
+        name: "Owner Sharma",
+      });
+
+      const studentUnpaidId = new mongoose.Types.ObjectId("507f191e810c19729de86055");
+      const mockUnpaidStudent = {
+        _id: studentUnpaidId,
+        centerId: centerA,
+        name: "Rohan",
+        monthlyFee: 750,
+        billingCycleDate: 12, // 12 Nov has arrived and student was already enrolled on 1 Nov
+        joiningDate: new Date("2026-11-01T06:00:00Z"),
+        createdAt: new Date("2026-11-01T06:00:00Z"),
+        advanceBalance: 0,
+      };
+
+      const originalStudentFindOne = StudentModel.findOne;
+      const originalFeeFind = FeeModel.find;
+
+      StudentModel.findOne = async () => mockUnpaidStudent;
+      FeeModel.find = async () => []; // 0 fee records in DB
+
+      try {
+        const req = createMockRequest({
+          token: ownerToken,
+          url: `http://localhost:3000/api/students/${studentUnpaidId}/fee-summary?year=2026`,
+        });
+
+        const res = await getFeeSummaryRoute(req, {
+          params: Promise.resolve({ id: String(studentUnpaidId) }),
+        });
+        const body = await res.json();
+
+        assert.equal(res.status, 200);
+        assert.equal(body.success, true);
+
+        const summary = body.data.summary;
+        const months = body.data.months;
+
+        const novMonth = months.find((m) => m.month === 11);
+        assert.ok(novMonth);
+        assert.equal(novMonth.status, "due", "Nov must be 'due' because joiningDate (1 Nov) <= billingDay (12 Nov) <= today");
+        assert.equal(novMonth.amountDue, 750, "Nov amountDue must equal monthlyFee");
+        assert.equal(summary.totalDue, 750, "summary.totalDue must equal 750 for overdue cycle");
+      } finally {
+        StudentModel.findOne = originalStudentFindOne;
+        FeeModel.find = originalFeeFind;
+      }
+    }
+  );
 });
