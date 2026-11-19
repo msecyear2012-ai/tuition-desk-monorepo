@@ -70,9 +70,56 @@ export default function StudentFormModal({
   const [parentWhatsApp, setParentWhatsApp] = useState("");
   const [joiningDate, setJoiningDate] = useState("");
   const [monthlyFee, setMonthlyFee] = useState<number | string>(2500);
-  const [billingCycleDate, setBillingCycleDate] = useState<number>(5);
+  const [billingCycleDate, setBillingCycleDate] = useState<number | string>(5);
   const [isActive, setIsActive] = useState(true);
   const [assignedTeacherId, setAssignedTeacherId] = useState<string>("");
+
+  // Controlled input handlers to prevent Backspace snap-back
+  const handleBillingCycleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    if (raw === "") {
+      setBillingCycleDate("");
+      return;
+    }
+    // Allow only digits, max 2 characters while typing
+    const digits = raw.replace(/\D/g, "").slice(0, 2);
+    setBillingCycleDate(digits);
+  };
+
+  const handleBillingCycleBlur = () => {
+    if (billingCycleDate === "" || billingCycleDate === null || billingCycleDate === undefined) {
+      setBillingCycleDate(5);
+      return;
+    }
+    const num = parseInt(String(billingCycleDate), 10);
+    if (isNaN(num) || num < 1) {
+      setBillingCycleDate(1);
+    } else if (num > 31) {
+      setBillingCycleDate(31);
+    } else {
+      setBillingCycleDate(num);
+    }
+  };
+
+  const handleMonthlyFeeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    if (raw === "") {
+      setMonthlyFee("");
+      return;
+    }
+    // Allow only whole rupee digits while typing
+    const digits = raw.replace(/\D/g, "");
+    setMonthlyFee(digits);
+  };
+
+  const handleMonthlyFeeBlur = () => {
+    if (monthlyFee === "" || monthlyFee === null || monthlyFee === undefined) {
+      setMonthlyFee(0);
+      return;
+    }
+    const num = Math.max(0, parseInt(String(monthlyFee), 10) || 0);
+    setMonthlyFee(num);
+  };
 
   // Auto-detect sibling matching existing students by normalized phone (last 10 digits)
   const normalizedPhoneDigits = parentWhatsApp.replace(/\D/g, "");
@@ -212,8 +259,9 @@ export default function StudentFormModal({
     const cleanName = name.trim();
     const finalBatch = batch.trim();
     const cleanPhone = parentWhatsApp.trim().replace(/\s+/g, "").replace(/^\+91/, "");
-    const parsedFee = Number(monthlyFee);
-    const parsedCycle = Number(billingCycleDate);
+    const parsedFee = monthlyFee === "" ? 0 : Number(monthlyFee);
+    const rawCycleNum = parseInt(String(billingCycleDate), 10);
+    const parsedCycle = isNaN(rawCycleNum) || rawCycleNum < 1 ? 5 : Math.min(31, rawCycleNum);
 
     // Validation
     if (!cleanName) {
@@ -590,11 +638,11 @@ export default function StudentFormModal({
                   <IndianRupee className="w-4 h-4 mr-0.5 text-slate-400" />
                 </div>
                 <input
-                  type="number"
-                  min="0"
-                  step="1"
+                  type="text"
+                  inputMode="numeric"
                   value={monthlyFee}
-                  onChange={(e) => setMonthlyFee(e.target.value)}
+                  onChange={handleMonthlyFeeChange}
+                  onBlur={handleMonthlyFeeBlur}
                   placeholder="2500"
                   required
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50/50 pl-10 pr-3 py-2.5 text-sm font-bold text-slate-900 focus:bg-white focus:border-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-100 transition-all"
@@ -635,11 +683,13 @@ export default function StudentFormModal({
               </div>
               <div className="relative w-20 flex-shrink-0">
                 <input
-                  type="number"
-                  min="1"
-                  max="31"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={2}
                   value={billingCycleDate}
-                  onChange={(e) => setBillingCycleDate(Number(e.target.value))}
+                  onChange={handleBillingCycleChange}
+                  onBlur={handleBillingCycleBlur}
+                  placeholder="5"
                   required
                   className="w-full rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-center text-sm font-bold text-slate-900 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 transition-all shadow-2xs"
                 />
@@ -657,7 +707,7 @@ export default function StudentFormModal({
                   type="button"
                   onClick={() => setBillingCycleDate(day)}
                   className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors ${
-                    billingCycleDate === day
+                    Number(billingCycleDate) === day
                       ? "bg-slate-900 text-white shadow-xs"
                       : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
                   }`}
