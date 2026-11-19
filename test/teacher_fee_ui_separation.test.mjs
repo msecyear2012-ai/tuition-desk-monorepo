@@ -6,9 +6,14 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const feesClientPath = path.resolve(__dirname, "../src/app/fees/FeesClient.tsx");
+const teacherConsolePath = path.resolve(
+  __dirname,
+  "../src/components/handovers/TeacherHandoverConsole.tsx"
+);
 
 test("Teacher Fee Management UI Separation & De-cluttering Suite", async (t) => {
   const content = fs.readFileSync(feesClientPath, "utf-8");
+  const consoleContent = fs.readFileSync(teacherConsolePath, "utf-8");
 
   await t.test("1. Technical Jargon 'Financial Separation Invariant' is completely removed", () => {
     assert.equal(
@@ -76,63 +81,89 @@ test("Teacher Fee Management UI Separation & De-cluttering Suite", async (t) => 
     );
   });
 
-  await t.test("3. Cash Handover tab contains 'My Financial Activity', banner, and recent collections above the console", () => {
+  await t.test("3. Cash Handover tab is deduplicated without duplicate KPI cards or recent collections", () => {
     const handoverStart = content.indexOf('mainTab === "handovers"');
     const handoverEnd = content.indexOf("<AddFeeModal", handoverStart);
     assert.ok(handoverStart > 0 && handoverEnd > handoverStart, "Cash handover tab block must exist");
     const handoverBlock = content.slice(handoverStart, handoverEnd);
 
-    // Check presence of My Financial Activity
-    assert.ok(
+    // Confirm duplicate sections are REMOVED from FeesClient Cash Handover tab
+    assert.equal(
       handoverBlock.includes("My Financial Activity"),
-      "Cash Handover tab must contain 'My Financial Activity'"
+      false,
+      "Cash Handover tab must NOT contain duplicate 'My Financial Activity'"
     );
-    assert.ok(
+    assert.equal(
       handoverBlock.includes("Collected By You"),
-      "Cash Handover tab must contain 'Collected By You' card"
+      false,
+      "Cash Handover tab must NOT contain duplicate 'Collected By You' card"
     );
-    assert.ok(
-      handoverBlock.includes("Cash in Hand"),
-      "Cash Handover tab must contain 'Cash in Hand' card"
-    );
-    assert.ok(
-      handoverBlock.includes("Submitted"),
-      "Cash Handover tab must contain 'Submitted' card"
-    );
-    assert.ok(
-      handoverBlock.includes("Verified"),
-      "Cash Handover tab must contain 'Verified' card"
-    );
-
-    // Check presence of Physical Cash banner & Submit Handover
-    assert.ok(
+    assert.equal(
       handoverBlock.includes("Physical Cash in Your Custody"),
-      "Cash Handover tab must contain 'Physical Cash in Your Custody' banner"
+      false,
+      "Cash Handover tab must NOT contain duplicate 'Physical Cash in Your Custody' banner"
     );
-    assert.ok(
-      handoverBlock.includes("Submit Handover"),
-      "Cash Handover tab must contain 'Submit Handover' action button"
-    );
-
-    // Check presence of Your Recent Cash Collections & Record Cash
-    assert.ok(
+    assert.equal(
       handoverBlock.includes("Your Recent Cash Collections"),
-      "Cash Handover tab must contain 'Your Recent Cash Collections'"
+      false,
+      "Cash Handover tab must NOT contain duplicate 'Your Recent Cash Collections'"
+    );
+
+    // Confirm compact status alerts are kept (pending / rejected / active disputes)
+    assert.ok(
+      handoverBlock.includes("pendingHandoverCount"),
+      "Handover tab must retain pending handover status alert check"
     );
     assert.ok(
-      handoverBlock.includes("Record Cash"),
-      "Cash Handover tab must contain 'Record Cash' action button"
+      handoverBlock.includes("rejectedHandoverCount"),
+      "Handover tab must retain rejected handover status alert check"
+    );
+    assert.ok(
+      handoverBlock.includes("activeDisputesCount"),
+      "Handover tab must retain active disputes status alert check"
     );
 
-    // Check ordering: Financial Activity must appear BEFORE TeacherHandoverConsole
-    const activityIndex = handoverBlock.indexOf("My Financial Activity");
-    const bannerIndex = handoverBlock.indexOf("Physical Cash in Your Custody");
-    const collectionsIndex = handoverBlock.indexOf("Your Recent Cash Collections");
-    const consoleIndex = handoverBlock.indexOf("<TeacherHandoverConsole");
+    // Confirm TeacherHandoverConsole is passed onRecordCash
+    assert.ok(
+      handoverBlock.includes("onRecordCash={() => setIsAddFeeModalOpen(true)}"),
+      "TeacherHandoverConsole must receive onRecordCash callback"
+    );
+  });
 
-    assert.ok(activityIndex > 0, "Activity must be present in handover block");
-    assert.ok(bannerIndex > activityIndex, "Banner must follow activity cards");
-    assert.ok(collectionsIndex > bannerIndex, "Collections feed must follow banner");
-    assert.ok(consoleIndex > collectionsIndex, "Handover console must appear below collections feed");
+  await t.test("4. TeacherHandoverConsole renders accessible '+ Record Cash' button alongside Refresh Console", () => {
+    assert.ok(
+      consoleContent.includes("onRecordCash?: () => void"),
+      "TeacherHandoverConsoleProps must define onRecordCash"
+    );
+    assert.ok(
+      consoleContent.includes("onRecordCash && ("),
+      "TeacherHandoverConsole must conditionally render onRecordCash button"
+    );
+    assert.ok(
+      consoleContent.includes("Record Cash"),
+      "TeacherHandoverConsole must contain 'Record Cash' button label"
+    );
+    assert.ok(
+      consoleContent.includes("Refresh Console"),
+      "TeacherHandoverConsole must contain 'Refresh Console' button label"
+    );
+
+    // Confirm TeacherHandoverConsole's native 4 handover KPI cards
+    assert.ok(
+      consoleContent.includes("In-Hand Cash"),
+      "Console must render native 'In-Hand Cash' card"
+    );
+    assert.ok(
+      consoleContent.includes("Pending Count"),
+      "Console must render native 'Pending Count' card"
+    );
+    assert.ok(
+      consoleContent.includes("Verified to Date"),
+      "Console must render native 'Verified to Date' card"
+    );
+    assert.ok(
+      consoleContent.includes("Discrepancy / Rejected"),
+      "Console must render native 'Discrepancy / Rejected' card"
+    );
   });
 });

@@ -13,6 +13,7 @@ import {
   AlertCircle,
   HelpCircle,
   Eye,
+  Plus,
 } from "lucide-react";
 import { apiClient, getCurrentCenterId } from "@/lib/apiClient";
 import { CenterInfo } from "@/lib/centerProfile";
@@ -28,6 +29,7 @@ import DisputeModal from "./DisputeModal";
 
 interface TeacherHandoverConsoleProps {
   userProfile: CenterInfo;
+  onRecordCash?: () => void;
 }
 
 interface RawFeeResponse {
@@ -58,7 +60,10 @@ function formatDate(dateInput?: string | Date | null): string {
   }
 }
 
-export default function TeacherHandoverConsole({ userProfile }: TeacherHandoverConsoleProps) {
+export default function TeacherHandoverConsole({
+  userProfile,
+  onRecordCash,
+}: TeacherHandoverConsoleProps) {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshCount, setRefreshCount] = useState<number>(0);
@@ -359,15 +364,27 @@ export default function TeacherHandoverConsole({ userProfile }: TeacherHandoverC
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={refreshData}
-          disabled={loading}
-          className="tap-bounce inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 shadow-2xs cursor-pointer self-start sm:self-auto"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-amber-600" : ""}`} />
-          <span>Refresh Console</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+          {onRecordCash && (
+            <button
+              type="button"
+              onClick={onRecordCash}
+              className="tap-bounce inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-2xs cursor-pointer whitespace-nowrap"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Record Cash</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={refreshData}
+            disabled={loading}
+            className="tap-bounce inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-xs font-bold text-slate-700 shadow-2xs cursor-pointer"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-amber-600" : ""}`} />
+            <span>Refresh Console</span>
+          </button>
+        </div>
       </div>
 
       {/* 4 Financial KPI Cards */}

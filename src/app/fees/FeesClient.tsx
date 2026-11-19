@@ -64,10 +64,8 @@ import {
   CreditCard,
   ArrowRight,
   TrendingUp,
-  Wallet,
   Building2,
   Sparkles,
-  Bell,
   FileText,
   Camera,
   ZoomIn,
@@ -2142,295 +2140,48 @@ export default function FeesClient({
       {/* ========================================================================= */}
       {mainTab === "handovers" && userProfile && (
         <div className="space-y-6 animate-fade-in">
+          {/* Teacher Status Alerts (Compact) */}
           {userProfile.role === "teacher" && (
-            <div className="space-y-6">
-              {/* ========================================================================= */}
-              {/* MY FINANCIAL ACTIVITY                                                    */}
-              {/* ========================================================================= */}
-              <div className="space-y-3.5">
-                <div className="flex items-center justify-between px-0.5">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-xs shadow-amber-500/50" />
-                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                      My Financial Activity
-                    </h3>
-                  </div>
-                  <span className="text-[11px] font-semibold text-slate-400">
-                    Your Personal Cash Collections &amp; Custody
-                  </span>
-                </div>
-
-                {/* 4 Teacher Financial KPIs */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  {/* Own Cash Collected */}
-                  <div className="rounded-2xl border border-slate-200/90 bg-white p-3.5 shadow-2xs">
-                    <div className="flex items-center justify-between text-slate-500 mb-1.5">
-                      <span className="text-[11px] font-bold uppercase tracking-wider">
-                        Collected By You
-                      </span>
-                      <TrendingUp className="w-4 h-4 text-emerald-600" />
-                    </div>
-                    <div className="text-lg sm:text-xl font-black text-slate-900 font-mono">
-                      ₹{(summaryOverview?.kpis?.ownCashCollected ?? 0).toLocaleString("en-IN")}
-                    </div>
-                    <p className="text-[10px] text-slate-400 mt-0.5 truncate">
-                      Total parent cash collected
-                    </p>
-                  </div>
-
-                  {/* Cash in Your Hand */}
-                  <div className="rounded-2xl border border-amber-200/90 bg-amber-50/40 p-3.5 shadow-2xs">
-                    <div className="flex items-center justify-between text-amber-700 mb-1.5">
-                      <span className="text-[11px] font-bold uppercase tracking-wider">
-                        Cash in Hand
-                      </span>
-                      <Clock className="w-4 h-4 text-amber-600" />
-                    </div>
-                    <div className="text-lg sm:text-xl font-black text-amber-900 font-mono">
-                      ₹{(summaryOverview?.kpis?.ownCashInHand ?? 0).toLocaleString("en-IN")}
-                    </div>
-                    <p className="text-[10px] text-amber-700/80 mt-0.5 truncate">
-                      Eligible for handover
-                    </p>
-                  </div>
-
-                  {/* Submitted Handovers */}
-                  <div className="rounded-2xl border border-purple-200/90 bg-purple-50/40 p-3.5 shadow-2xs">
-                    <div className="flex items-center justify-between text-purple-700 mb-1.5">
-                      <span className="text-[11px] font-bold uppercase tracking-wider">
-                        Submitted
-                      </span>
-                      <ShieldCheck className="w-4 h-4 text-purple-600" />
-                    </div>
-                    <div className="text-lg sm:text-xl font-black text-purple-900 font-mono">
-                      ₹{(summaryOverview?.kpis?.ownSubmittedHandovers ?? 0).toLocaleString("en-IN")}
-                    </div>
-                    <p className="text-[10px] text-purple-700/80 mt-0.5 truncate">
-                      Awaiting Owner count
-                    </p>
-                  </div>
-
-                  {/* Verified Handovers */}
-                  <div className="rounded-2xl border border-emerald-200/90 bg-emerald-50/40 p-3.5 shadow-2xs">
-                    <div className="flex items-center justify-between text-emerald-700 mb-1.5">
-                      <span className="text-[11px] font-bold uppercase tracking-wider">
-                        Verified
-                      </span>
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    </div>
-                    <div className="text-lg sm:text-xl font-black text-emerald-900 font-mono">
-                      ₹{(summaryOverview?.kpis?.ownVerifiedHandovers ?? 0).toLocaleString("en-IN")}
-                    </div>
-                    <p className="text-[10px] text-emerald-700/80 mt-0.5 truncate">
-                      Received by institute
-                    </p>
-                  </div>
-                </div>
-
-                {/* Teacher Action Required: Physical Cash in Your Custody Banner */}
-                <div className="space-y-2">
-                  <div className="rounded-2xl border border-amber-300 bg-amber-50/80 p-4 flex items-center justify-between shadow-2xs">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center flex-shrink-0">
-                        <Wallet className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-black text-slate-900">
-                          ₹{(summaryOverview?.actionRequired?.eligibleForHandoverAmount ?? 0).toLocaleString("en-IN")} Physical Cash in Your Custody
-                        </div>
-                        <p className="text-xs text-slate-600 mt-0.5">
-                          Submit a handover envelope to transfer physical custody to the Owner.
-                        </p>
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const el = document.getElementById("teacher-handover-console");
-                        if (el) {
-                          el.scrollIntoView({ behavior: "smooth" });
-                        }
-                      }}
-                      className="tap-bounce rounded-xl bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-2 text-xs font-bold flex items-center gap-1.5 shadow-xs flex-shrink-0"
-                    >
-                      <span>Submit Handover</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  {/* Teacher Status Alerts */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {(summaryOverview?.actionRequired?.pendingHandoverCount ?? 0) > 0 && (
-                      <div className="rounded-xl border border-purple-200 bg-purple-50/60 p-3 text-xs text-purple-900 flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-purple-600 flex-shrink-0" />
-                        <span>
-                          <strong>{summaryOverview?.actionRequired?.pendingHandoverCount}</strong> envelope(s) awaiting Owner approval.
-                        </span>
-                      </div>
-                    )}
-
-                    {(summaryOverview?.actionRequired?.rejectedHandoverCount ?? 0) > 0 && (
-                      <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3 text-xs text-rose-900 flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
-                        <span>
-                          <strong>{summaryOverview?.actionRequired?.rejectedHandoverCount}</strong> envelope(s) rejected by Owner.
-                        </span>
-                      </div>
-                    )}
-
-                    {(summaryOverview?.actionRequired?.activeDisputesCount ?? 0) > 0 && (
-                      <div className="rounded-xl border border-red-200 bg-red-50/60 p-3 text-xs text-red-900 flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
-                        <span>
-                          <strong>{summaryOverview?.actionRequired?.activeDisputesCount}</strong> active dispute(s) being reconciled.
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Teacher Personal Notifications */}
-                {summaryOverview?.notifications && summaryOverview.notifications.length > 0 && (
-                  <div className="rounded-2xl border border-slate-200/90 bg-white p-3.5 sm:p-4 shadow-2xs space-y-2">
-                    <div className="flex items-center justify-between pb-1.5 border-b border-slate-100">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
-                        <Bell className="w-3.5 h-3.5 text-blue-600" />
-                        <span>Recent Personal Notifications</span>
-                      </div>
-                      <span className="text-[10.5px] font-semibold text-slate-400">
-                        {summaryOverview.notifications.length} update(s)
-                      </span>
-                    </div>
-                    <div className="divide-y divide-slate-100">
-                      {summaryOverview.notifications.map((n, i) => (
-                        <div key={n._id || n.id || i} className="py-2 flex items-start justify-between gap-2.5 text-xs">
-                          <div className="space-y-0.5 min-w-0">
-                            <div className="font-bold text-slate-800 flex items-center gap-1.5">
-                              <span>{n.title}</span>
-                              {n.statusLabel && (
-                                <span className="px-1.5 py-0.2 rounded-md bg-slate-100 text-slate-600 text-[9.5px] font-semibold">
-                                  {n.statusLabel}
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[11px] text-slate-500 leading-snug">{n.message}</p>
-                          </div>
-                          <span className="text-[10px] text-slate-400 whitespace-nowrap flex-shrink-0">
-                            {n.createdAt ? new Date(n.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "Recent"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+            ((summaryOverview?.actionRequired?.pendingHandoverCount ?? 0) > 0 ||
+              (summaryOverview?.actionRequired?.rejectedHandoverCount ?? 0) > 0 ||
+              (summaryOverview?.actionRequired?.activeDisputesCount ?? 0) > 0) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {(summaryOverview?.actionRequired?.pendingHandoverCount ?? 0) > 0 && (
+                  <div className="rounded-xl border border-purple-200 bg-purple-50/60 p-3 text-xs text-purple-900 flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-purple-600 flex-shrink-0" />
+                    <span>
+                      <strong>{summaryOverview?.actionRequired?.pendingHandoverCount}</strong> envelope(s) awaiting Owner approval.
+                    </span>
                   </div>
                 )}
 
-                {/* Teacher Recent Cash Collections Activity Feed */}
-                <div className="rounded-2xl sm:rounded-3xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-xs space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2 border-b border-slate-100">
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
-                        <Banknote className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <h4 className="text-sm font-extrabold text-slate-900 truncate">
-                          Your Recent Cash Collections
-                        </h4>
-                        <p className="text-[11px] text-slate-500 line-clamp-1 sm:line-clamp-none">
-                          Live recorded cash payments in your custody awaiting or processed for handover
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 self-start sm:self-auto flex-shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => setIsAddFeeModalOpen(true)}
-                        className="tap-bounce rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-xs font-bold flex items-center gap-1 shadow-2xs whitespace-nowrap"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>Record Cash</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => fetchFeesData(true)}
-                        title="Refresh collections"
-                        aria-label="Refresh collections"
-                        className="tap-bounce p-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-500"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                {(summaryOverview?.actionRequired?.rejectedHandoverCount ?? 0) > 0 && (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-3 text-xs text-rose-900 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                    <span>
+                      <strong>{summaryOverview?.actionRequired?.rejectedHandoverCount}</strong> envelope(s) rejected by Owner.
+                    </span>
                   </div>
+                )}
 
-                  {summaryOverview?.recentCollections && summaryOverview.recentCollections.length > 0 ? (
-                    <div className="divide-y divide-slate-100">
-                      {summaryOverview.recentCollections.map((item, idx) => {
-                        const custodyPillStyle =
-                          item.custodyStatus === "Verified by Owner"
-                            ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                            : item.custodyStatus === "Pending Verification"
-                            ? "bg-purple-50 text-purple-800 border-purple-200"
-                            : item.custodyStatus === "Teacher In-Hand"
-                            ? "bg-amber-50 text-amber-800 border-amber-200"
-                            : "bg-slate-50 text-slate-700 border-slate-200";
-
-                        return (
-                          <div
-                            key={item.paymentId || idx}
-                            className="py-3 flex items-center justify-between gap-2.5 text-xs hover:bg-slate-50/50 rounded-xl px-2 transition-colors"
-                          >
-                            <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                              <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center font-bold font-mono text-[11px] flex-shrink-0">
-                                ₹
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <div className="font-extrabold text-slate-900 truncate">
-                                  {item.studentName}
-                                </div>
-                                <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5 flex-wrap">
-                                  <span>
-                                    {item.paymentDate && !isNaN(new Date(item.paymentDate).getTime())
-                                      ? new Date(item.paymentDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
-                                      : "Undated"}
-                                  </span>
-                                  <span>•</span>
-                                  <span className="font-mono text-slate-600 truncate max-w-[120px]">{item.receiptNumber || "Offline"}</span>
-                                  <span>•</span>
-                                  <span className="text-slate-500 font-medium">You</span>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex flex-col items-end gap-1 flex-shrink-0 sm:flex-row sm:items-center sm:gap-2.5">
-                              <span className="font-black font-mono text-slate-900 text-sm">
-                                ₹{item.amount.toLocaleString("en-IN")}
-                              </span>
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${custodyPillStyle}`}
-                              >
-                                {item.custodyStatus}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="py-8 text-center text-slate-400">
-                      <Banknote className="w-8 h-8 mx-auto mb-1 text-slate-300" />
-                      <p className="text-xs font-semibold text-slate-600">No cash collections recorded yet</p>
-                      <p className="text-[11px] mt-0.5">Recorded desk collections appear here immediately.</p>
-                    </div>
-                  )}
-                </div>
+                {(summaryOverview?.actionRequired?.activeDisputesCount ?? 0) > 0 && (
+                  <div className="rounded-xl border border-red-200 bg-red-50/60 p-3 text-xs text-red-900 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                    <span>
+                      <strong>{summaryOverview?.actionRequired?.activeDisputesCount}</strong> active dispute(s) being reconciled.
+                    </span>
+                  </div>
+                )}
               </div>
-            </div>
+            )
           )}
 
           <div id="teacher-handover-console">
             {userProfile.role === "teacher" ? (
-              <TeacherHandoverConsole userProfile={userProfile} />
+              <TeacherHandoverConsole
+                userProfile={userProfile}
+                onRecordCash={() => setIsAddFeeModalOpen(true)}
+              />
             ) : (
               <OwnerHandoverConsole userProfile={userProfile} />
             )}
