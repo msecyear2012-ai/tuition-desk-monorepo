@@ -97,7 +97,7 @@ export default function BulkImportModal({
   const [isCreateBatchOpen, setIsCreateBatchOpen] = useState(false);
 
   // File & Upload States
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [_selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [generalError, setGeneralError] = useState<string | null>(null);
@@ -105,6 +105,20 @@ export default function BulkImportModal({
   // Preview Response State
   const [previewData, setPreviewData] = useState<BulkPreviewResponse | null>(null);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const PAGE_SIZE = 10;
+
+  const validRows = previewData
+    ? previewData.rows?.length
+      ? previewData.rows
+      : previewData.previewRows || []
+    : [];
+  const totalValidRows = validRows.length;
+  const totalPages = Math.max(1, Math.ceil(totalValidRows / PAGE_SIZE));
+  const effectivePage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (effectivePage - 1) * PAGE_SIZE;
+  const endIndex = Math.min(startIndex + PAGE_SIZE, totalValidRows);
+  const currentRows = validRows.slice(startIndex, endIndex);
 
   // Confirmation Response State
   const [confirmResult, setConfirmResult] = useState<BulkImportConfirmResponse | null>(null);
@@ -124,6 +138,7 @@ export default function BulkImportModal({
       setSelectedBatchId("");
       setSelectedBatchName("");
       setIsCreateBatchOpen(false);
+      setCurrentPage(1);
 
       getAuthenticatedCenter().then((profile) => {
         setUserProfile(profile);
@@ -200,6 +215,7 @@ export default function BulkImportModal({
 
   const handleFileSelected = (file: File) => {
     setGeneralError(null);
+    setCurrentPage(1);
 
     // Limit check: 5MB
     if (file.size > 5 * 1024 * 1024) {
@@ -224,6 +240,7 @@ export default function BulkImportModal({
   const uploadAndPreviewFile = async (file: File) => {
     setLoadingPreview(true);
     setGeneralError(null);
+    setCurrentPage(1);
 
     try {
       const isXlsx = file.name.toLowerCase().endsWith(".xlsx");
@@ -640,7 +657,12 @@ export default function BulkImportModal({
                 <div className="flex items-center gap-2">
                   <Layers className="w-4 h-4 text-indigo-600" />
                   <span className="text-xs font-bold text-indigo-950">
-                    Importing to Batch: {selectedBatchName || previewData.previewRows[0]?.batch || "General"}
+                    Importing to Batch: {selectedBatchName || validRows[0]?.batch || "General"}
+                    {_selectedFile && (
+                      <span className="font-normal text-slate-500 ml-1.5">
+                        ({_selectedFile.name})
+                      </span>
+                    )}
                   </span>
                 </div>
                 <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-white text-indigo-700 border border-indigo-200">
@@ -784,18 +806,20 @@ export default function BulkImportModal({
                 </div>
               )}
 
-              {/* Valid Rows Preview Table (first 10 rows) */}
+              {/* Valid Rows Preview Table with Client-Side Pagination */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-bold text-slate-800">
-                    Preview (First {Math.min(10, previewData.previewRows.length)} valid records):
+                    Preview Valid Records:
                   </span>
                   <span className="text-slate-500 font-medium text-[11px]">
-                    Showing {previewData.previewRows.length} of {previewData.validCount} valid rows
+                    {totalValidRows > 0
+                      ? `Showing ${startIndex + 1}-${endIndex} of ${totalValidRows} valid rows`
+                      : "0 valid rows"}
                   </span>
                 </div>
 
-                <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-48 overflow-y-auto shadow-2xs">
+                <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-56 overflow-y-auto shadow-2xs">
                   <table className="w-full text-left text-[11px]">
                     <thead className="bg-slate-50 text-slate-500 uppercase font-bold sticky top-0 border-b border-slate-200">
                       <tr>
@@ -808,28 +832,64 @@ export default function BulkImportModal({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                      {previewData.previewRows.map((row, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/60">
-                          <td className="px-3 py-1.5 text-slate-400 font-mono">{idx + 1}</td>
-                          <td className="px-3 py-1.5 font-bold text-slate-900">{row.name}</td>
-                          <td className="px-3 py-1.5 text-slate-600">
-                            {row.batch || selectedBatchName}
-                          </td>
-                          <td className="px-3 py-1.5 font-mono text-slate-600">
-                            <StudentPhoneMasked
-                              phone={row.parentWhatsApp}
-                              userRole={userProfile?.role}
-                              showQuickActions={false}
-                              textClassName="font-mono text-slate-600 text-xs"
-                            />
-                          </td>
-                          <td className="px-3 py-1.5 font-bold text-emerald-700">₹{row.monthlyFee}</td>
-                          <td className="px-3 py-1.5 font-mono">{row.billingCycleDate}th</td>
-                        </tr>
-                      ))}
+                      {currentRows.map((row, idx) => {
+                        const rowNumber = startIndex + idx + 1;
+                        return (
+                          <tr key={rowNumber} className="hover:bg-slate-50/60">
+                            <td className="px-3 py-1.5 text-slate-400 font-mono">{rowNumber}</td>
+                            <td className="px-3 py-1.5 font-bold text-slate-900">{row.name}</td>
+                            <td className="px-3 py-1.5 text-slate-600">
+                              {row.batch || selectedBatchName}
+                            </td>
+                            <td className="px-3 py-1.5 font-mono text-slate-600">
+                              <StudentPhoneMasked
+                                phone={row.parentWhatsApp}
+                                userRole={userProfile?.role}
+                                showQuickActions={false}
+                                textClassName="font-mono text-slate-600 text-xs"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5 font-bold text-emerald-700">₹{row.monthlyFee}</td>
+                            <td className="px-3 py-1.5 font-mono">{row.billingCycleDate}th</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
+
+                {/* Compact Pagination Controls */}
+                {totalValidRows > 0 && (
+                  <div className="flex items-center justify-between pt-1 text-xs">
+                    <div className="text-[11px] font-medium text-slate-600">
+                      <span className="font-semibold text-slate-700">
+                        Page {effectivePage} of {totalPages}
+                      </span>
+                      <span className="mx-2 text-slate-300">•</span>
+                      <span>
+                        Showing {startIndex + 1}-{endIndex} of {totalValidRows} valid rows
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                        disabled={effectivePage <= 1}
+                        className="tap-bounce px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 text-[11px] font-bold shadow-2xs hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                        disabled={effectivePage >= totalPages}
+                        className="tap-bounce px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 text-[11px] font-bold shadow-2xs hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons */}
@@ -840,6 +900,7 @@ export default function BulkImportModal({
                     setStep("upload");
                     setSelectedFile(null);
                     setPreviewData(null);
+                    setCurrentPage(1);
                   }}
                   disabled={step === "confirming"}
                   className="tap-bounce px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors disabled:opacity-50"

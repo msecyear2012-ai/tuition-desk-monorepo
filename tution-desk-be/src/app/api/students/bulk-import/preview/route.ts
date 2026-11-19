@@ -231,14 +231,15 @@ export async function POST(request: NextRequest) {
       activeBatches.map((b) => b.name.toLowerCase().trim())
     );
 
-    let matchedBatchDoc: any = null;
+    let matchedBatchDoc: (typeof activeBatches)[number] | null = null;
     if (selectedBatch) {
       const cleanTerm = selectedBatch.trim().toLowerCase();
-      matchedBatchDoc = activeBatches.find(
-        (b) =>
-          b._id.toString() === selectedBatch.trim() ||
-          b.name.toLowerCase().trim() === cleanTerm
-      );
+      matchedBatchDoc =
+        activeBatches.find(
+          (b) =>
+            b._id.toString() === selectedBatch.trim() ||
+            b.name.toLowerCase().trim() === cleanTerm
+        ) ?? null;
 
       if (!matchedBatchDoc) {
         return NextResponse.json(
@@ -287,11 +288,12 @@ export async function POST(request: NextRequest) {
     const previewId = `prev_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
     const rowsHash = computeRowsHash(validRows);
 
+    const userRecord = user as unknown as Record<string, unknown>;
     const effectiveUserId =
       (typeof user.userId === "string" && user.userId.trim()) ||
       (user.role === "teacher" && user.teacherId ? String(user.teacherId).trim() : null) ||
-      (typeof (user as any).id === "string" && (user as any).id.trim()) ||
-      (typeof (user as any).sub === "string" && (user as any).sub.trim()) ||
+      (typeof userRecord.id === "string" && (userRecord.id as string).trim()) ||
+      (typeof user.sub === "string" && user.sub.trim()) ||
       (typeof user.centerId === "string" && user.centerId.trim()) ||
       "admin";
 
@@ -363,7 +365,7 @@ export async function POST(request: NextRequest) {
           validCount: validRows.length,
           duplicateCount: duplicateRows.length,
           errorCount: errorRows.length,
-          previewRows: sanitizedRows.slice(0, 10),
+          previewRows: sanitizedRows,
           rows: sanitizedRows,
           defaultAssignee,
           availableAssignees,
