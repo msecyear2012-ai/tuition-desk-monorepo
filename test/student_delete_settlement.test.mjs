@@ -493,4 +493,103 @@ test("Student Deletion & Fee Settlement Suite", async (t) => {
     assert.ok(admissionsCode.includes("studentToDelete"), "Admissions page must track studentToDelete state");
     assert.ok(admissionsCode.includes("invalidateApiCache"), "Admissions page must invalidate cache on student deletion");
   });
+
+  // 9. Concurrency & Transaction Safety: Proves operations on session execute strictly sequentially
+  await t.test("9. Active Mongoose ClientSession executes delete operations strictly sequentially (zero concurrent ops)", async () => {
+    let activeOps = 0;
+    let maxConcurrentOps = 0;
+
+    const trackConcurrentOp = async (fn) => {
+      activeOps++;
+      if (activeOps > maxConcurrentOps) {
+        maxConcurrentOps = activeOps;
+      }
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return typeof fn === "function" ? await fn() : undefined;
+      } finally {
+        activeOps--;
+      }
+    };
+
+    let sessionStarted = false;
+    let sessionEnded = false;
+    let txCommitted = false;
+
+    const mockSession = {
+      startTransaction() {
+        sessionStarted = true;
+      },
+      async commitTransaction() {
+        txCommitted = true;
+      },
+      async abortTransaction() {},
+      async endSession() {
+        sessionEnded = true;
+      },
+    };
+
+    mongoose.startSession = async () => mockSession;
+
+    const originalFindOne = StudentModel.findOne;
+    const originalFindOneAndDelete = StudentModel.findOneAndDelete;
+    const originalFeeFind = FeeModel.find;
+    const originalJobDelete = AdmissionWelcomeJobModel.deleteMany;
+    const originalLockDelete = FeeCreationLockModel.deleteMany;
+    const originalReminderDelete = FeeReminderLogModel.deleteMany;
+    const originalParentLockDelete = ParentAccessLockModel.deleteMany;
+    const originalParentUpdate = ParentAccessModel.updateMany;
+    const originalParentDelete = ParentAccessModel.deleteMany;
+    const originalCampaignUpdate = MessageCampaignModel.updateMany;
+    const originalProofDelete = PaymentProofModel.deleteMany;
+    const originalBatchReqDelete = StudentBatchRequestModel.deleteMany;
+
+    StudentModel.findOne = async () => sampleStudent;
+    FeeModel.find = async () => []; // 0 dues
+
+    StudentModel.findOneAndDelete = (q, opts) => trackConcurrentOp(() => sampleStudent);
+    AdmissionWelcomeJobModel.deleteMany = (q, opts) => trackConcurrentOp(() => ({ deletedCount: 1 }));
+    FeeCreationLockModel.deleteMany = (q, opts) => trackConcurrentOp(() => ({ deletedCount: 1 }));
+    FeeReminderLogModel.deleteMany = (q, opts) => trackConcurrentOp(() => ({ deletedCount: 1 }));
+    ParentAccessLockModel.deleteMany = (q, opts) => trackConcurrentOp(() => ({ deletedCount: 1 }));
+    PaymentProofModel.deleteMany = (q, opts) => trackConcurrentOp(() => ({ deletedCount: 1 }));
+    StudentBatchRequestModel.deleteMany = (q, opts) => trackConcurrentOp(() => ({ deletedCount: 1 }));
+    ParentAccessModel.updateMany = (q, u, opts) => trackConcurrentOp(() => ({ modifiedCount: 1 }));
+    ParentAccessModel.deleteMany = (q, opts) => trackConcurrentOp(() => ({ deletedCount: 0 }));
+    MessageCampaignModel.updateMany = (q, u, opts) => trackConcurrentOp(() => ({ modifiedCount: 0 }));
+
+    try {
+      const req = createMockRequest({
+        method: "DELETE",
+        token: ownerToken,
+        url: `http://localhost:3000/api/students/${studentId}`,
+      });
+
+      const res = await deleteStudentRoute(req, {
+        params: Promise.resolve({ id: studentId }),
+      });
+      const body = await res.json();
+
+      assert.equal(res.status, 200);
+      assert.equal(body.success, true);
+      assert.equal(sessionStarted, true, "Transaction must have started");
+      assert.equal(txCommitted, true, "Transaction must have committed");
+      assert.equal(sessionEnded, true, "Session must have ended in finally block");
+      assert.equal(maxConcurrentOps, 1, "Max concurrent operations on the session MUST be 1 (strictly sequential)");
+    } finally {
+      mongoose.startSession = null;
+      StudentModel.findOne = originalFindOne;
+      StudentModel.findOneAndDelete = originalFindOneAndDelete;
+      FeeModel.find = originalFeeFind;
+      AdmissionWelcomeJobModel.deleteMany = originalJobDelete;
+      FeeCreationLockModel.deleteMany = originalLockDelete;
+      FeeReminderLogModel.deleteMany = originalReminderDelete;
+      ParentAccessLockModel.deleteMany = originalParentLockDelete;
+      ParentAccessModel.updateMany = originalParentUpdate;
+      ParentAccessModel.deleteMany = originalParentDelete;
+      MessageCampaignModel.updateMany = originalCampaignUpdate;
+      PaymentProofModel.deleteMany = originalProofDelete;
+      StudentBatchRequestModel.deleteMany = originalBatchReqDelete;
+    }
+  });
 });

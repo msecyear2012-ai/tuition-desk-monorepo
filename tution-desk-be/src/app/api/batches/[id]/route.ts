@@ -196,30 +196,28 @@ export async function DELETE(
     try {
       const sessionOpts = session && inTx ? { session } : {};
 
-      // 3. Cascade delete all student-dependent collections
+      // 3. Cascade delete all student-dependent collections sequentially
       if (studentIds.length > 0) {
-        await Promise.all([
-          Fee.deleteMany(
-            { centerId, studentId: { $in: studentIds } },
-            sessionOpts
-          ),
-          FeeCreationLock.deleteMany(
-            { centerId, studentId: { $in: studentIdStrings } },
-            sessionOpts
-          ),
-          FeeReminderLog.deleteMany(
-            { centerId, studentId: { $in: studentIds } },
-            sessionOpts
-          ),
-          PaymentProof.deleteMany(
-            { centerId, studentId: { $in: studentIds } },
-            sessionOpts
-          ),
-          ParentAccessLock.deleteMany(
-            { centerId, studentId: { $in: studentIdStrings } },
-            sessionOpts
-          ),
-        ]);
+        await Fee.deleteMany(
+          { centerId, studentId: { $in: studentIds } },
+          sessionOpts
+        );
+        await FeeCreationLock.deleteMany(
+          { centerId, studentId: { $in: studentIdStrings } },
+          sessionOpts
+        );
+        await FeeReminderLog.deleteMany(
+          { centerId, studentId: { $in: studentIds } },
+          sessionOpts
+        );
+        await PaymentProof.deleteMany(
+          { centerId, studentId: { $in: studentIds } },
+          sessionOpts
+        );
+        await ParentAccessLock.deleteMany(
+          { centerId, studentId: { $in: studentIdStrings } },
+          sessionOpts
+        );
 
         await ParentAccess.updateMany(
           { centerId, linkedStudentIds: { $in: studentIds } },
@@ -254,64 +252,62 @@ export async function DELETE(
         );
       }
 
-      // 4. Cascade delete batch-level and related operational collections
-      await Promise.all([
-        Attendance.deleteMany(
-          {
-            centerId,
-            $or: [
-              { batch: batch.name },
-              ...(studentIds.length > 0
-                ? [{ studentId: { $in: studentIds } }]
-                : []),
-            ],
-          },
-          sessionOpts
-        ),
-        AdmissionWelcomeJob.deleteMany(
-          {
-            centerId,
-            $or: [
-              { batchName: batch.name },
-              ...(studentIds.length > 0
-                ? [{ studentId: { $in: studentIds } }]
-                : []),
-            ],
-          },
-          sessionOpts
-        ),
-        StudentBatchRequest.deleteMany(
-          {
-            centerId,
-            $or: [
-              { batchName: batch.name },
-              { batchId: batch._id },
-              ...(studentIds.length > 0
-                ? [{ studentId: { $in: studentIds } }]
-                : []),
-            ],
-          },
-          sessionOpts
-        ),
-        Test.deleteMany({ centerId, batch: batch.name }, sessionOpts),
-        Teacher.updateMany(
-          { centerId, assignedBatches: batch.name },
-          { $pull: { assignedBatches: batch.name } },
-          sessionOpts
-        ),
-        StaffNotification.deleteMany(
-          {
-            centerId,
-            $or: [
-              { entityId: String(batch._id) },
-              ...(studentIdStrings.length > 0
-                ? [{ studentId: { $in: studentIdStrings } }]
-                : []),
-            ],
-          },
-          sessionOpts
-        ),
-      ]);
+      // 4. Cascade delete batch-level and related operational collections sequentially
+      await Attendance.deleteMany(
+        {
+          centerId,
+          $or: [
+            { batch: batch.name },
+            ...(studentIds.length > 0
+              ? [{ studentId: { $in: studentIds } }]
+              : []),
+          ],
+        },
+        sessionOpts
+      );
+      await AdmissionWelcomeJob.deleteMany(
+        {
+          centerId,
+          $or: [
+            { batchName: batch.name },
+            ...(studentIds.length > 0
+              ? [{ studentId: { $in: studentIds } }]
+              : []),
+          ],
+        },
+        sessionOpts
+      );
+      await StudentBatchRequest.deleteMany(
+        {
+          centerId,
+          $or: [
+            { batchName: batch.name },
+            { batchId: batch._id },
+            ...(studentIds.length > 0
+              ? [{ studentId: { $in: studentIds } }]
+              : []),
+          ],
+        },
+        sessionOpts
+      );
+      await Test.deleteMany({ centerId, batch: batch.name }, sessionOpts);
+      await Teacher.updateMany(
+        { centerId, assignedBatches: batch.name },
+        { $pull: { assignedBatches: batch.name } },
+        sessionOpts
+      );
+      await StaffNotification.deleteMany(
+        {
+          centerId,
+          $or: [
+            { entityId: String(batch._id) },
+            ...(studentIdStrings.length > 0
+              ? [{ studentId: { $in: studentIdStrings } }]
+              : []),
+          ],
+        },
+        sessionOpts
+      );
 
       // 5. Finally, delete the Batch itself
       await Batch.deleteOne({ _id: batch._id, centerId }, sessionOpts);

@@ -534,37 +534,35 @@ export async function DELETE(
         );
       }
 
-      // 9. Cascade delete student and all operational / pending artifacts
-      await Promise.all([
-        Student.findOneAndDelete(
-          { _id: student._id, centerId: user.centerId },
-          sessionOpts
-        ),
-        AdmissionWelcomeJob.deleteMany(
-          { centerId: user.centerId, studentId: student._id },
-          sessionOpts
-        ),
-        FeeReminderLog.deleteMany(
-          { centerId: user.centerId, studentId: student._id },
-          sessionOpts
-        ),
-        FeeCreationLock.deleteMany(
-          { centerId: user.centerId, studentId: String(student._id) },
-          sessionOpts
-        ),
-        ParentAccessLock.deleteMany(
-          { centerId: user.centerId, studentId: String(student._id) },
-          sessionOpts
-        ),
-        PaymentProof.deleteMany(
-          { centerId: user.centerId, studentId: student._id },
-          sessionOpts
-        ),
-        StudentBatchRequest.deleteMany(
-          { centerId: user.centerId, studentId: student._id },
-          sessionOpts
-        ),
-      ]);
+      // 9. Cascade delete student and all operational / pending artifacts sequentially
+      await Student.findOneAndDelete(
+        { _id: student._id, centerId: user.centerId },
+        sessionOpts
+      );
+      await AdmissionWelcomeJob.deleteMany(
+        { centerId: user.centerId, studentId: student._id },
+        sessionOpts
+      );
+      await FeeReminderLog.deleteMany(
+        { centerId: user.centerId, studentId: student._id },
+        sessionOpts
+      );
+      await FeeCreationLock.deleteMany(
+        { centerId: user.centerId, studentId: String(student._id) },
+        sessionOpts
+      );
+      await ParentAccessLock.deleteMany(
+        { centerId: user.centerId, studentId: String(student._id) },
+        sessionOpts
+      );
+      await PaymentProof.deleteMany(
+        { centerId: user.centerId, studentId: student._id },
+        sessionOpts
+      );
+      await StudentBatchRequest.deleteMany(
+        { centerId: user.centerId, studentId: student._id },
+        sessionOpts
+      );
 
       await ParentAccess.updateMany(
         { centerId: user.centerId, linkedStudentIds: student._id },
@@ -613,12 +611,12 @@ export async function DELETE(
       );
     } catch (innerErr) {
       if (inTx && session) {
-        await session.abortTransaction();
+        await session.abortTransaction().catch(() => {});
       }
       throw innerErr;
     } finally {
       if (session) {
-        await session.endSession();
+        await session.endSession().catch(() => {});
       }
     }
   } catch (error: unknown) {
