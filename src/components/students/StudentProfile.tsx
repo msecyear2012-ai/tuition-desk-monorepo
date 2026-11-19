@@ -47,6 +47,7 @@ import {
   AlertCircle,
   RefreshCw,
   User,
+  Users,
   Wallet,
 } from "lucide-react";
 
@@ -159,11 +160,20 @@ export default function StudentProfile({
   }, [initialRole]);
   const router = useRouter();
 
+  const [activeStudentId, setActiveStudentId] = useState<string>(studentId);
   const [student, setStudent] = useState<StudentRecord | null>(null);
   const [fees, setFees] = useState<StudentFeeItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeLedgerTab, setActiveLedgerTab] = useState<"all" | "paid" | "pending">("all");
+
+  // Keep activeStudentId synchronized if studentId prop changes externally
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setActiveStudentId(studentId);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [studentId]);
 
   // Synchronize student profile header title and badge with persistent TopHeader
   useSetHeader({
@@ -194,16 +204,36 @@ export default function StudentProfile({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
 
+  // Switch to sibling student seamlessly without stale data
+  const handleSwitchSibling = useCallback(
+    (newStudentId: string) => {
+      if (newStudentId === activeStudentId) return;
+      setLoading(true);
+      setError(null);
+      setActiveStudentId(newStudentId);
+      router.push(`/admissions/${newStudentId}`, { scroll: false });
+    },
+    [activeStudentId, router]
+  );
+
+  // Linked Sibling Students derived from student's parent access bundle
+  const linkedSiblings = useMemo(() => {
+    if (student?.siblings && Array.isArray(student.siblings) && student.siblings.length > 0) {
+      return student.siblings;
+    }
+    return [];
+  }, [student?.siblings]);
+
   // Fetch Student Profile & Fee Ledger
   useEffect(() => {
-    if (!studentId) return;
+    if (!activeStudentId) return;
     let ignore = false;
 
     async function load() {
       try {
         const [studentRes, feesRes] = await Promise.allSettled([
-          apiClient<StudentRecord>(`/students/${studentId}`),
-          apiClient<StudentFeeItem[]>("/fees", { params: { studentId, all: true } }),
+          apiClient<StudentRecord>(`/students/${activeStudentId}`),
+          apiClient<StudentFeeItem[]>("/fees", { params: { studentId: activeStudentId, all: true } }),
         ]);
 
         if (ignore) return;
@@ -236,7 +266,7 @@ export default function StudentProfile({
     return () => {
       ignore = true;
     };
-  }, [studentId, refreshTrigger]);
+  }, [activeStudentId, refreshTrigger]);
 
   const handleManualRefresh = useCallback(() => {
     setLoading(true);
@@ -574,20 +604,71 @@ export default function StudentProfile({
               </div>
             </div>
 
+            {/* Sibling Switcher Bar (when 2 or more linked children exist) */}
+            {linkedSiblings.length > 1 && (
+              <div className="rounded-2xl border border-blue-200/90 bg-gradient-to-r from-blue-50/90 via-indigo-50/70 to-blue-50/90 p-3 shadow-xs space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-blue-900">
+                    <Users className="w-4 h-4 text-blue-600" />
+                    <span>Linked Sibling Students ({linkedSiblings.length})</span>
+                  </div>
+                  <span className="text-[10px] text-blue-600 font-medium">
+                    Click to switch profile &amp; ledger
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pt-0.5">
+                  {linkedSiblings.map((sib) => {
+                    const isSelected = String(sib._id) === activeStudentId;
+                    return (
+                      <button
+                        key={sib._id}
+                        type="button"
+                        onClick={() => handleSwitchSibling(sib._id)}
+                        className={`tap-bounce inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                          isSelected
+                            ? "bg-blue-600 text-white shadow-sm ring-2 ring-blue-300"
+                            : "bg-white text-slate-700 hover:bg-slate-100 border border-slate-200 shadow-2xs"
+                        }`}
+                      >
+                        <User className={`w-3.5 h-3.5 ${isSelected ? "text-white" : "text-slate-400"}`} />
+                        <span>{sib.name}</span>
+                        {sib.batch && (
+                          <span
+                            className={`text-[10px] font-medium px-1.5 py-0.5 rounded-md ${
+                              isSelected
+                                ? "bg-white/20 text-white"
+                                : "bg-slate-100 text-slate-500"
+                            }`}
+                          >
+                            {sib.batch}
+                          </span>
+                        )}
+                        {isSelected && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* 2.5 Parent VIP Portal Access Management */}
             {currentUserRole === "owner" && (
               <ParentAccessCard
+                key={`parent-access-${student._id}`}
                 studentId={student._id}
                 studentName={student.name}
                 parentPhone={student.parentWhatsApp}
                 centerId={student.centerId}
                 advanceBalance={student.advanceBalance}
                 onLinkGenerated={handleManualRefresh}
+                onSelectStudent={handleSwitchSibling}
               />
             )}
 
             {/* 2.6 Student 12-Month Fee Calendar */}
-            <StudentFeeCalendar studentId={student._id} />
+            <StudentFeeCalendar key={`fee-cal-${student._id}`} studentId={student._id} />
 
             {/* 3. Task 1: 360-Degree Fee & Payment History Ledger */}
             <div className="rounded-3xl border border-slate-200/90 bg-white p-5 shadow-xs space-y-4">

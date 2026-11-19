@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   X,
   UserPlus,
@@ -13,6 +13,7 @@ import {
   Loader2,
   AlertCircle,
   GraduationCap,
+  Sparkles,
 } from "lucide-react";
 import { apiClient, getCurrentCenterId } from "@/lib/apiClient";
 import { getAuthenticatedCenter, type CenterInfo } from "@/lib/centerProfile";
@@ -38,6 +39,7 @@ interface StudentFormModalProps {
   studentToEdit?: StudentFormData | null;
   availableBatches?: string[];
   initialBatch?: string;
+  existingStudents?: Array<{ _id: string; name: string; parentWhatsApp?: string }>;
 }
 
 const DEFAULT_FALLBACK_BATCHES = [
@@ -58,6 +60,7 @@ export default function StudentFormModal({
   studentToEdit,
   availableBatches = [],
   initialBatch,
+  existingStudents = [],
 }: StudentFormModalProps) {
   const isEditing = Boolean(studentToEdit?._id);
 
@@ -70,6 +73,18 @@ export default function StudentFormModal({
   const [billingCycleDate, setBillingCycleDate] = useState<number>(5);
   const [isActive, setIsActive] = useState(true);
   const [assignedTeacherId, setAssignedTeacherId] = useState<string>("");
+
+  // Auto-detect sibling matching existing students by normalized phone (last 10 digits)
+  const normalizedPhoneDigits = parentWhatsApp.replace(/\D/g, "");
+  const matchingSibling = useMemo(() => {
+    if (!existingStudents || normalizedPhoneDigits.length < 10) return null;
+    const last10 = normalizedPhoneDigits.slice(-10);
+    return existingStudents.find((s) => {
+      if (studentToEdit && s._id === studentToEdit._id) return false;
+      const sDigits = (s.parentWhatsApp || "").replace(/\D/g, "");
+      return sDigits.slice(-10) === last10;
+    });
+  }, [existingStudents, normalizedPhoneDigits, studentToEdit]);
 
   // Batches state fetched from backend
   const [fetchedBatches, setFetchedBatches] = useState<string[]>([]);
@@ -413,6 +428,14 @@ export default function StudentFormModal({
               <p className="text-[11px] text-slate-400 mt-1">
                 Used for VIP Parent Magic Links and automated fee receipts.
               </p>
+              {matchingSibling && !isEditing && (
+                <div className="mt-2 p-2.5 rounded-xl bg-blue-50 border border-blue-200/80 text-[11px] font-medium text-blue-900 flex items-center gap-2 animate-fade-in">
+                  <Sparkles className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                  <span>
+                    Existing parent portal found for this number ({matchingSibling.name}) — student will be auto-linked on save.
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 

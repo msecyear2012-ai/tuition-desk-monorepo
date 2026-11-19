@@ -176,6 +176,12 @@ export default function StudentFeeCalendar({ studentId }: StudentFeeCalendarProp
   const summary = calendarData?.summary;
   const months = calendarData?.months || [];
 
+  // Guarantee strict consistency between the top TOTAL DUE box and the monthly calendar cells
+  const calendarDueSum = months
+    .filter((m) => m.status === "due" || m.status === "partial")
+    .reduce((sum, m) => sum + (Number(m.amountDue) || 0), 0);
+  const effectiveTotalDue = Math.max(summary?.totalDue || 0, calendarDueSum);
+
   return (
     <div className="rounded-3xl border border-slate-200/90 bg-white p-4 sm:p-5 shadow-xs space-y-4">
       {/* Section Header with Title and Year Switcher */}
@@ -247,22 +253,22 @@ export default function StudentFeeCalendar({ studentId }: StudentFeeCalendarProp
               {/* Card 1: Total Due */}
               <div
                 className={`rounded-2xl p-3.5 border shadow-2xs transition-all ${
-                  summary.totalDue > 0
+                  effectiveTotalDue > 0
                     ? "bg-rose-50/70 border-rose-200/90 text-rose-900"
                     : "bg-emerald-50/70 border-emerald-200/90 text-emerald-900"
                 }`}
               >
                 <div className="flex items-center justify-between text-[11px] font-extrabold uppercase tracking-wider opacity-80 mb-1">
                   <span>Total Due</span>
-                  {summary.totalDue > 0 ? (
+                  {effectiveTotalDue > 0 ? (
                     <AlertCircle className="w-4 h-4 text-rose-600" />
                   ) : (
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   )}
                 </div>
                 <div className="text-xl sm:text-2xl font-black font-mono">
-                  {summary.totalDue > 0 ? (
-                    `₹${summary.totalDue.toLocaleString("en-IN")}`
+                  {effectiveTotalDue > 0 ? (
+                    `₹${effectiveTotalDue.toLocaleString("en-IN")}`
                   ) : (
                     <span className="text-emerald-700 text-lg sm:text-xl">
                       ₹0 • Cleared
@@ -270,7 +276,7 @@ export default function StudentFeeCalendar({ studentId }: StudentFeeCalendarProp
                   )}
                 </div>
                 <p className="text-[10px] opacity-75 mt-0.5 truncate">
-                  {summary.totalDue > 0
+                  {effectiveTotalDue > 0
                     ? "Outstanding fee obligations"
                     : "All dues fully settled"}
                 </p>

@@ -85,8 +85,8 @@ test("Bulletproof 4-Step Allocation & Simulation Suite", async (t) => {
     billingCycleDate: 10,
     advanceBalance: 0,
     isActive: true,
-    createdAt: new Date("2026-01-01"),
-    joiningDate: new Date("2026-01-01"),
+    createdAt: new Date("2026-11-01"),
+    joiningDate: new Date("2026-11-01"),
   };
 
   const feesStore = [];

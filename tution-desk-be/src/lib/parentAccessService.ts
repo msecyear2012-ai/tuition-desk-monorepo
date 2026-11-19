@@ -56,6 +56,25 @@ export function sanitizePhoneNumber(phone: string | number): string {
   return String(phone || "").replace(/\D/g, "");
 }
 
+/**
+ * Generates matching variants for phone numbers (raw digits, last 10 digits, +91, 91, 0 prefixes)
+ * to support robust sibling detection regardless of leading country codes or formatting.
+ */
+export function getPhoneVariants(phone: string | number): string[] {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return [];
+  const variants = new Set<string>();
+  variants.add(digits);
+  if (digits.length >= 10) {
+    const last10 = digits.slice(-10);
+    variants.add(last10);
+    variants.add(`91${last10}`);
+    variants.add(`+91${last10}`);
+    variants.add(`0${last10}`);
+  }
+  return Array.from(variants);
+}
+
 export interface GetOrCreateParentAccessOptions {
   parentName?: string;
   parentPhone?: string;
@@ -113,7 +132,7 @@ export async function getOrCreateParentAccess(
   }
 
   // 3. Early check: Check if an active ParentAccess record already explicitly links this student
-  const existing = await ParentAccessModel.findOne({
+  let existing = await ParentAccessModel.findOne({
     centerId: cleanCenterId,
     linkedStudentIds: studentObjectId,
     status: "active",
@@ -127,9 +146,36 @@ export async function getOrCreateParentAccess(
     };
   }
 
+  // 3b. Sibling Auto-Linking: Check if an active Parent Portal already exists in the same centerId
+  // for another student with the exact same normalized parentPhone
+  const phoneVariants = getPhoneVariants(phone);
+  existing = await ParentAccessModel.findOne({
+    centerId: cleanCenterId,
+    parentPhone: { $in: phoneVariants },
+    status: "active",
+  });
+
+  if (existing) {
+    await ParentAccessModel.updateOne(
+      { _id: existing._id, centerId: cleanCenterId },
+      { $addToSet: { linkedStudentIds: studentObjectId } }
+    );
+    if (existing.linkedStudentIds && typeof existing.linkedStudentIds.addToSet === "function") {
+      existing.linkedStudentIds.addToSet(studentObjectId);
+    } else if (!existing.linkedStudentIds.includes(studentObjectId)) {
+      existing.linkedStudentIds.push(studentObjectId);
+    }
+    return {
+      parentAccess: existing,
+      rawToken: null,
+      created: false,
+    };
+  }
+
   // 4. Distributed Atomic Lock Coordination
-  // Lock identity binds centerId, studentId, and phone for specific parent-student relationship
-  const lockKey = `${cleanCenterId}:${String(studentObjectId)}:${phone}:parent_access_create`;
+  // Lock identity binds centerId and phone for specific parent account to serialize sibling admissions
+  const lockPhone = phone.slice(-10);
+  const lockKey = `${cleanCenterId}:${lockPhone}:parent_access_create`;
   const lockToken = crypto.randomUUID();
   const lockTtlMs = 15000; // 15 seconds TTL
   const pollIntervalMs =
@@ -204,11 +250,18 @@ export async function getOrCreateParentAccess(
       // Check if ParentAccess was created by current holder
       const createdRecord = await ParentAccessModel.findOne({
         centerId: cleanCenterId,
-        linkedStudentIds: studentObjectId,
+        $or: [
+          { linkedStudentIds: studentObjectId },
+          { parentPhone: { $in: phoneVariants } },
+        ],
         status: "active",
       });
 
       if (createdRecord) {
+        await ParentAccessModel.updateOne(
+          { _id: createdRecord._id, centerId: cleanCenterId },
+          { $addToSet: { linkedStudentIds: studentObjectId } }
+        );
         return {
           parentAccess: createdRecord,
           rawToken: null,
@@ -290,11 +343,30 @@ export async function getOrCreateParentAccess(
   // 5. Critical Section: Lock successfully acquired
   try {
     // Double-checked locking: check if active record was committed right before lock acquisition
-    const doubleCheck = await ParentAccessModel.findOne({
+    let doubleCheck = await ParentAccessModel.findOne({
       centerId: cleanCenterId,
       linkedStudentIds: studentObjectId,
       status: "active",
     });
+
+    if (!doubleCheck) {
+      doubleCheck = await ParentAccessModel.findOne({
+        centerId: cleanCenterId,
+        parentPhone: { $in: phoneVariants },
+        status: "active",
+      });
+      if (doubleCheck) {
+        await ParentAccessModel.updateOne(
+          { _id: doubleCheck._id, centerId: cleanCenterId },
+          { $addToSet: { linkedStudentIds: studentObjectId } }
+        );
+        if (doubleCheck.linkedStudentIds && typeof doubleCheck.linkedStudentIds.addToSet === "function") {
+          doubleCheck.linkedStudentIds.addToSet(studentObjectId);
+        } else if (!doubleCheck.linkedStudentIds.includes(studentObjectId)) {
+          doubleCheck.linkedStudentIds.push(studentObjectId);
+        }
+      }
+    }
 
     if (doubleCheck) {
       return {
@@ -303,6 +375,20 @@ export async function getOrCreateParentAccess(
         created: false,
       };
     }
+
+    // Query any existing active students in this center with matching parent phone to bundle them together
+    const siblingStudents = await StudentModel.find({
+      centerId: cleanCenterId,
+      parentWhatsApp: { $in: phoneVariants },
+      isActive: { $ne: false },
+    }).select("_id");
+
+    const allLinkedStudentIds = Array.from(
+      new Set([
+        String(studentObjectId),
+        ...siblingStudents.map((s: any) => String(s._id)),
+      ])
+    ).map((id) => new Types.ObjectId(id));
 
     // Generate fresh high-entropy token pair
     const { rawToken, tokenHash, tokenPrefix } = generatePortalToken();
@@ -334,7 +420,7 @@ export async function getOrCreateParentAccess(
       centerId: cleanCenterId,
       parentPhone: phone,
       parentName: (options.parentName || student.name || "").trim(),
-      linkedStudentIds: [studentObjectId],
+      linkedStudentIds: allLinkedStudentIds,
       tokenHash,
       tokenPrefix,
       // Encrypted (AES-256-GCM) copy of the raw token, so the canonical

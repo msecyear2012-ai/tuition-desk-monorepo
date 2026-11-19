@@ -346,6 +346,12 @@ export async function GET(
       });
     }
 
+    // Ensure summary.totalDue is strictly consistent with the sum of all unpaid/due months shown in the calendar
+    const calendarDueSum = months
+      .filter((m) => m.status === "due" || m.status === "partial")
+      .reduce((sum, m) => sum + (Number(m.amountDue) || 0), 0);
+    const synchronizedTotalDue = Math.max(totalDue, calendarDueSum);
+
     return NextResponse.json(
       {
         success: true,
@@ -353,7 +359,7 @@ export async function GET(
           studentId: String(student._id),
           year: targetYear,
           summary: {
-            totalDue,
+            totalDue: synchronizedTotalDue,
             advanceBalance,
             nextBillingDate,
             monthlyFee,

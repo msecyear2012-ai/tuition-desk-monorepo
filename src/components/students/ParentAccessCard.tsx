@@ -82,6 +82,7 @@ export default function ParentAccessCard({
   centerName = "Tuition Center",
   advanceBalance = 0,
   onLinkGenerated,
+  onSelectStudent,
 }: {
   studentId: string;
   studentName: string;
@@ -90,6 +91,7 @@ export default function ParentAccessCard({
   centerName?: string;
   advanceBalance?: number;
   onLinkGenerated?: () => void;
+  onSelectStudent?: (studentId: string) => void;
 }) {
   const [loading, setLoading] = useState(true);
   const [isOwner, setIsOwner] = useState<boolean | null>(null);
@@ -166,7 +168,16 @@ export default function ParentAccessCard({
   }, [studentId]);
 
   useEffect(() => {
-    fetchAccessInfo();
+    let ignore = false;
+    const timer = setTimeout(() => {
+      if (!ignore) {
+        void fetchAccessInfo();
+      }
+    }, 0);
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+    };
   }, [fetchAccessInfo]);
 
   // 2. Generate new or initial portal link
@@ -679,31 +690,55 @@ export default function ParentAccessCard({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-full">
-              {access.linkedStudents?.map((child) => (
-                <div
-                  key={child._id}
-                  className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 text-xs min-w-0 overflow-hidden"
-                >
-                  <div className="space-y-0.5 min-w-0 overflow-hidden">
-                    <span className="font-bold text-slate-800 block truncate">
-                      {child.name}
-                    </span>
-                    <span className="text-[10px] text-slate-500 block truncate">
-                      {child.batch || "Regular Batch"}
-                    </span>
-                  </div>
+              {access.linkedStudents?.map((child) => {
+                const isCurrentChild = String(child._id) === studentId;
+                return (
+                  <div
+                    key={child._id}
+                    onClick={() => {
+                      if (!isCurrentChild && onSelectStudent) {
+                        onSelectStudent(child._id);
+                      }
+                    }}
+                    className={`flex items-center justify-between p-2.5 rounded-xl border text-xs min-w-0 overflow-hidden transition-all ${
+                      isCurrentChild
+                        ? "bg-blue-50/80 border-blue-300 ring-1 ring-blue-200"
+                        : onSelectStudent
+                        ? "bg-slate-50 border-slate-200/70 hover:bg-slate-100 hover:border-blue-300 cursor-pointer"
+                        : "bg-slate-50 border-slate-200/70"
+                    }`}
+                  >
+                    <div className="space-y-0.5 min-w-0 overflow-hidden flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-slate-800 truncate">
+                          {child.name}
+                        </span>
+                        {isCurrentChild && (
+                          <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded-md bg-blue-600 text-white shrink-0">
+                            Current
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-500 block truncate">
+                        {child.batch || "Regular Batch"}
+                      </span>
+                    </div>
 
-                  {access.linkedStudents.length > 1 && String(child._id) !== studentId && (
-                    <button
-                      onClick={() => handleUnlinkStudent(child._id)}
-                      className="p-1 text-slate-400 hover:text-rose-600 transition-colors"
-                      title="Unlink this student"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
+                    {access.linkedStudents.length > 1 && !isCurrentChild && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUnlinkStudent(child._id);
+                        }}
+                        className="p-1 text-slate-400 hover:text-rose-600 transition-colors ml-2"
+                        title="Unlink this student"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

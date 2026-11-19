@@ -1412,6 +1412,7 @@ function AdmissionsContent() {
         studentToEdit={studentToEdit}
         availableBatches={uniqueBatchNames}
         initialBatch={selectedBatch?.name || undefined}
+        existingStudents={students}
       />
 
       {/* Create Batch Modal (Owner Only) */}

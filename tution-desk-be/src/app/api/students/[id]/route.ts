@@ -84,6 +84,32 @@ export async function GET(
       user.role
     );
 
+    // Fetch active ParentAccess to provide linked siblings
+    let siblings: Array<{ _id: string; name: string; batch?: string; rollNumber?: string }> = [];
+    try {
+      const parentAccess = await ParentAccess.findOne({
+        centerId: user.centerId,
+        linkedStudentIds: student._id,
+        status: "active",
+      }).populate({
+        path: "linkedStudentIds",
+        select: "name batch rollNumber parentWhatsApp isActive",
+      });
+
+      if (parentAccess && Array.isArray(parentAccess.linkedStudentIds)) {
+        siblings = parentAccess.linkedStudentIds
+          .filter((s: any) => s && s.isActive !== false)
+          .map((s: any) => ({
+            _id: String(s._id),
+            name: s.name,
+            batch: s.batch,
+            rollNumber: s.rollNumber,
+          }));
+      }
+    } catch {
+      siblings = [];
+    }
+
     const checkDues = request.nextUrl.searchParams.get("checkDues") === "true";
     if (checkDues) {
       const pendingFees = await Fee.find({
@@ -100,6 +126,7 @@ export async function GET(
           success: true,
           data: {
             ...sanitizedStudent,
+            siblings,
             unpaidAmount,
             pendingFeesCount: pendingFees.length,
           },
@@ -109,7 +136,7 @@ export async function GET(
     }
 
     return NextResponse.json(
-      { success: true, data: sanitizedStudent },
+      { success: true, data: { ...sanitizedStudent, siblings } },
       { status: 200, headers: corsHeaders }
     );
   } catch (error: unknown) {

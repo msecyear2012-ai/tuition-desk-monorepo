@@ -320,6 +320,7 @@ export interface StudentRecord {
   billingCycleDate: number;
   assignedTeacherId?: string | null;
   advanceBalance?: number;
+  siblings?: Array<{ _id: string; name: string; batch?: string; rollNumber?: string }>;
   createdAt?: string;
   updatedAt?: string;
 }
