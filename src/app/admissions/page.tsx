@@ -35,7 +35,7 @@ import {
   ChevronRight,
   AlertTriangle,
 } from "lucide-react";
-import { apiClient, getCurrentCenterId, getApiCache } from "@/lib/apiClient";
+import { apiClient, getCurrentCenterId, getApiCache, invalidateApiCache } from "@/lib/apiClient";
 import { openParentPortalForStudent } from "@/lib/parentPortalLink";
 import { StudentRecord, BatchRecord, TeacherRecord, StudentBatchRequestRecord } from "@/types";
 import StudentPhoneMasked from "@/components/common/StudentPhoneMasked";
@@ -59,6 +59,10 @@ const StudentBatchRequestModal = dynamic(
 );
 const BatchRequestsModal = dynamic(
   () => import("@/components/modals/BatchRequestsModal"),
+  { ssr: false }
+);
+const StudentDeleteModal = dynamic(
+  () => import("@/components/modals/StudentDeleteModal"),
   { ssr: false }
 );
 
@@ -271,16 +275,18 @@ const StudentRowItem = memo(function StudentRowItem({
           </button>
         )}
 
-        {/* Delete Student Button */}
-        <button
-          type="button"
-          onClick={() => onDelete(student)}
-          aria-label={`Delete student ${student.name}`}
-          title={`Delete ${student.name}`}
-          className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-bold flex items-center gap-1 border border-rose-200/80 transition-colors"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        {/* Delete Student Button (Owners only) */}
+        {(userRole === "owner" || !userRole) && (
+          <button
+            type="button"
+            onClick={() => onDelete(student)}
+            aria-label={`Delete student ${student.name}`}
+            title={`Delete ${student.name}`}
+            className="tap-bounce text-xs md:text-sm px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-bold flex items-center gap-1 border border-rose-200/80 transition-colors"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -334,6 +340,7 @@ function AdmissionsContent() {
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
   const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
   const [studentToEdit, setStudentToEdit] = useState<StudentRecord | null>(null);
+  const [studentToDelete, setStudentToDelete] = useState<StudentRecord | null>(null);
 
   // Batch Assignment Requests (REQ-01)
   const [isBatchRequestsOpen, setIsBatchRequestsOpen] = useState(false);
@@ -705,30 +712,9 @@ function AdmissionsContent() {
     showToast(`Batch "${newBatch.name}" created successfully!`);
   };
 
-  const handleDeleteStudent = useCallback(
-    async (student: StudentRecord) => {
-      if (
-        !window.confirm(
-          `Are you sure you want to delete ${student.name}? This action cannot be undone.`
-        )
-      ) {
-        return;
-      }
-
-      try {
-        await apiClient(`/students/${student._id}`, {
-          method: "DELETE",
-        });
-        showToast(`Student "${student.name}" deleted successfully.`);
-        fetchStudents(true);
-      } catch (err: unknown) {
-        const msg =
-          err instanceof Error ? err.message : "Failed to delete student.";
-        showToast(`Error: ${msg}`);
-      }
-    },
-    [fetchStudents, showToast]
-  );
+  const handleDeleteStudent = useCallback((student: StudentRecord) => {
+    setStudentToDelete(student);
+  }, []);
 
   const handleDeleteBatch = async (batch: BatchRecord) => {
     if (
@@ -1438,6 +1424,22 @@ function AdmissionsContent() {
           showToast(`Bulk import successful! ${importedCount} students added.`);
         }}
       />
+
+      {/* Student Delete & Fee Settlement Modal */}
+      {studentToDelete && (
+        <StudentDeleteModal
+          key={studentToDelete._id}
+          isOpen={!!studentToDelete}
+          student={studentToDelete}
+          onClose={() => setStudentToDelete(null)}
+          onSuccess={(deletedStudentName) => {
+            showToast(`Student "${deletedStudentName}" deleted successfully.`);
+            fetchStudents(true);
+            fetchBatches(true);
+            invalidateApiCache();
+          }}
+        />
+      )}
     </div>
   );
 }

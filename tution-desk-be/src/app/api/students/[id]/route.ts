@@ -3,9 +3,15 @@ import mongoose from "mongoose";
 import connectDB from "../../../../lib/db.ts";
 import Student from "../../../../models/Student.ts";
 import Teacher from "../../../../models/Teacher.ts";
-import Fee from "../../../../models/Fee.ts";
-import Attendance from "../../../../models/Attendance.ts";
-import Test from "../../../../models/Test.ts";
+import Fee, { type IPaymentEntry } from "../../../../models/Fee.ts";
+import AdmissionWelcomeJob from "../../../../models/AdmissionWelcomeJob.ts";
+import FeeCreationLock from "../../../../models/FeeCreationLock.ts";
+import FeeReminderLog from "../../../../models/FeeReminderLog.ts";
+import ParentAccess from "../../../../models/ParentAccess.ts";
+import ParentAccessLock from "../../../../models/ParentAccessLock.ts";
+import MessageCampaign from "../../../../models/MessageCampaign.ts";
+import PaymentProof from "../../../../models/PaymentProof.ts";
+import StudentBatchRequest from "../../../../models/StudentBatchRequest.ts";
 import { getAuthenticatedUser } from "../../../../lib/auth.ts";
 import { getCorsHeaders, handleCorsPreflight } from "../../../../lib/cors.ts";
 import { sanitizeStudentForRole } from "../../../../lib/privacyUtils.ts";
@@ -77,6 +83,30 @@ export async function GET(
       student.toObject ? student.toObject() : { ...student },
       user.role
     );
+
+    const checkDues = request.nextUrl.searchParams.get("checkDues") === "true";
+    if (checkDues) {
+      const pendingFees = await Fee.find({
+        studentId: student._id,
+        centerId: user.centerId,
+        status: { $in: ["Pending", "Verification Pending", "Partial Paid"] },
+      });
+      const unpaidAmount = pendingFees.reduce(
+        (sum, f) => sum + (Number(f.amountDue) || 0),
+        0
+      );
+      return NextResponse.json(
+        {
+          success: true,
+          data: {
+            ...sanitizedStudent,
+            unpaidAmount,
+            pendingFeesCount: pendingFees.length,
+          },
+        },
+        { status: 200, headers: corsHeaders }
+      );
+    }
 
     return NextResponse.json(
       { success: true, data: sanitizedStudent },
@@ -332,9 +362,10 @@ export async function DELETE(
       );
     }
 
-    if (user.role !== "owner" && user.role !== "teacher") {
+    // Individual student deletion is strictly restricted to Owner
+    if (user.role !== "owner") {
       return NextResponse.json(
-        { success: false, error: "Access denied: Unauthorized role" },
+        { success: false, error: "Access denied: Only Owners can delete students" },
         { status: 403, headers: corsHeaders }
       );
     }
@@ -350,23 +381,11 @@ export async function DELETE(
     // 2. Connect to database only after authentication and authorization
     await connectDB();
 
-    // 3. Locate student strictly scoped to centerId and role
-    const query: Record<string, unknown> = {
+    // 3. Locate student strictly scoped to centerId
+    const student = await Student.findOne({
       _id: id,
       centerId: user.centerId,
-    };
-
-    if (user.role === "teacher") {
-      if (!user.teacherId || !mongoose.Types.ObjectId.isValid(user.teacherId)) {
-        return NextResponse.json(
-          { success: false, error: "Teacher profile invalid" },
-          { status: 403, headers: corsHeaders }
-        );
-      }
-      query.assignedTeacherId = new mongoose.Types.ObjectId(user.teacherId);
-    }
-
-    const student = await Student.findOne(query);
+    });
 
     if (!student) {
       return NextResponse.json(
@@ -375,62 +394,233 @@ export async function DELETE(
       );
     }
 
-    // 4. Guard against removing students with unresolved Pending, Verification Pending, or Partial Paid dues
-    const unresolvedDuesCount = await Fee.countDocuments({
+    // 4. Safely parse incoming settlement action payload if present
+    let body: {
+      settlementAction?: "mark_paid" | "waive_and_delete";
+      amountReceived?: number;
+      paymentMode?: string;
+    } = {};
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+
+    // 5. Calculate student's total unpaid balance across all pending Fee records
+    const pendingFees = await Fee.find({
       studentId: student._id,
       centerId: user.centerId,
       status: { $in: ["Pending", "Verification Pending", "Partial Paid"] },
     });
 
-    if (unresolvedDuesCount > 0) {
+    const unpaidAmount = pendingFees.reduce(
+      (sum, f) => sum + (Number(f.amountDue) || 0),
+      0
+    );
+    const pendingFeesCount = pendingFees.length;
+
+    // 6. If student has unpaid dues (> 0) and no valid settlement action is provided, return 409 Conflict
+    if (
+      unpaidAmount > 0 &&
+      (!body.settlementAction ||
+        !["mark_paid", "waive_and_delete"].includes(body.settlementAction))
+    ) {
       return NextResponse.json(
         {
           success: false,
-          error: `Cannot remove student: ${unresolvedDuesCount} active fee obligation(s) exist. Settle or cancel pending dues before removing.`,
+          error: `Cannot remove student: ${pendingFeesCount} active fee obligation(s) totaling ₹${unpaidAmount.toLocaleString(
+            "en-IN"
+          )} exist. Settle or waive pending dues before deleting.`,
           code: "UNRESOLVED_FEES_EXIST",
-          unresolvedCount: unresolvedDuesCount,
+          unpaidAmount,
+          pendingFeesCount,
         },
         { status: 409, headers: corsHeaders }
       );
     }
 
-    // 5. Check if historical fee, attendance, or test records exist
-    const [hasFees, hasAttendance, hasTests] = await Promise.all([
-      Fee.exists({ studentId: student._id, centerId: user.centerId }),
-      Attendance.exists({ studentId: student._id, centerId: user.centerId }),
-      Test.exists({ centerId: user.centerId, "results.studentId": student._id }),
-    ]);
+    // 7. Atomic transaction setup (if supported)
+    let session: mongoose.ClientSession | null = null;
+    let inTx = false;
 
-    const hasHistoricalRecords = Boolean(hasFees || hasAttendance || hasTests);
+    try {
+      if (typeof mongoose.startSession === "function") {
+        session = await mongoose.startSession();
+        if (session && typeof session.startTransaction === "function") {
+          session.startTransaction();
+          inTx = true;
+        }
+      }
+    } catch {
+      session = null;
+      inTx = false;
+    }
 
-    if (hasHistoricalRecords) {
-      // Soft-deactivate student to preserve receipts, attendance, and academic history
-      student.isActive = false;
-      await student.save();
+    try {
+      const sessionOpts = session && inTx ? { session } : {};
+      const now = new Date();
+
+      // 8. Handle Settlement Actions if unpaid dues exist
+      if (unpaidAmount > 0 && body.settlementAction === "mark_paid") {
+        const paymentMode = body.paymentMode || "Cash";
+        const totalReceived =
+          typeof body.amountReceived === "number" && body.amountReceived > 0
+            ? body.amountReceived
+            : unpaidAmount;
+
+        let remainingAllocation = totalReceived;
+
+        for (const fee of pendingFees) {
+          const currentDue = Number(fee.amountDue) || 0;
+          const allocated = Math.min(remainingAllocation, currentDue);
+          remainingAllocation = Math.max(0, remainingAllocation - allocated);
+
+          const priorPaid = Number(fee.paidAmount) || 0;
+          const finalPaid =
+            priorPaid + (allocated > 0 ? allocated : currentDue);
+          const receiptNumber = `RCP-${Date.now()}-${Math.floor(
+            1000 + Math.random() * 9000
+          )}`;
+
+          const paymentEntry: IPaymentEntry = {
+            amount: allocated > 0 ? allocated : currentDue,
+            paymentDate: now,
+            paymentMode,
+            receiptNumber,
+            receivedBy: new mongoose.Types.ObjectId(user.userId),
+            receivedByRole: "owner",
+            recordedBy: new mongoose.Types.ObjectId(user.userId),
+            recordedByRole: "owner",
+            recordedAt: now,
+            custodyStatus: "owner_custody",
+            notes: "Settled during student deletion",
+          };
+
+          fee.status = "Paid";
+          fee.amountDue = 0;
+          fee.paidAmount = finalPaid;
+          fee.paidDate = now;
+          fee.paidAt = now;
+          fee.paymentDate = now;
+          fee.paymentMode = paymentMode;
+          fee.receiptNumber = fee.receiptNumber || receiptNumber;
+          fee.receivedBy = new mongoose.Types.ObjectId(user.userId);
+          fee.receivedByRole = "owner";
+          fee.recordedBy = new mongoose.Types.ObjectId(user.userId);
+          fee.recordedByRole = "owner";
+          fee.recordedAt = now;
+          if (!Array.isArray(fee.paymentHistory)) {
+            fee.paymentHistory = [];
+          }
+          fee.paymentHistory.push(paymentEntry);
+          fee.notes = fee.notes
+            ? `${fee.notes}\nSettled during student deletion`
+            : "Settled during student deletion";
+
+          await fee.save(sessionOpts);
+        }
+      } else if (
+        unpaidAmount > 0 &&
+        body.settlementAction === "waive_and_delete"
+      ) {
+        // Clear/delete the unpaid pending fee records so no ghost dues remain
+        await Fee.deleteMany(
+          {
+            centerId: user.centerId,
+            studentId: student._id,
+            status: { $in: ["Pending", "Verification Pending", "Partial Paid"] },
+          },
+          sessionOpts
+        );
+      }
+
+      // 9. Cascade delete student and all operational / pending artifacts
+      await Promise.all([
+        Student.findOneAndDelete(
+          { _id: student._id, centerId: user.centerId },
+          sessionOpts
+        ),
+        AdmissionWelcomeJob.deleteMany(
+          { centerId: user.centerId, studentId: student._id },
+          sessionOpts
+        ),
+        FeeReminderLog.deleteMany(
+          { centerId: user.centerId, studentId: student._id },
+          sessionOpts
+        ),
+        FeeCreationLock.deleteMany(
+          { centerId: user.centerId, studentId: String(student._id) },
+          sessionOpts
+        ),
+        ParentAccessLock.deleteMany(
+          { centerId: user.centerId, studentId: String(student._id) },
+          sessionOpts
+        ),
+        PaymentProof.deleteMany(
+          { centerId: user.centerId, studentId: student._id },
+          sessionOpts
+        ),
+        StudentBatchRequest.deleteMany(
+          { centerId: user.centerId, studentId: student._id },
+          sessionOpts
+        ),
+      ]);
+
+      await ParentAccess.updateMany(
+        { centerId: user.centerId, linkedStudentIds: student._id },
+        { $pull: { linkedStudentIds: student._id } },
+        sessionOpts
+      );
+      await ParentAccess.deleteMany(
+        { centerId: user.centerId, linkedStudentIds: { $size: 0 } },
+        sessionOpts
+      );
+
+      await MessageCampaign.updateMany(
+        { centerId: user.centerId, "messages.studentId": student._id },
+        { $pull: { messages: { studentId: student._id } } },
+        sessionOpts
+      );
+      await MessageCampaign.updateMany(
+        {
+          centerId: user.centerId,
+          status: { $in: ["pending", "approved", "in_progress", "paused"] },
+          messages: { $size: 0 },
+        },
+        { $set: { status: "cancelled" } },
+        sessionOpts
+      );
+
+      if (inTx && session) {
+        await session.commitTransaction();
+      }
+
+      const actionMessage =
+        body.settlementAction === "mark_paid"
+          ? "Payment recorded as Paid under Owner custody and student deleted successfully."
+          : body.settlementAction === "waive_and_delete"
+          ? "Pending fees waived and student deleted successfully."
+          : "Student deleted successfully.";
 
       return NextResponse.json(
         {
           success: true,
-          action: "deactivated",
-          message:
-            "Student deactivated and archived. Historical fee receipts, attendance, and test records preserved.",
-          data: student,
+          action: body.settlementAction || "deleted",
+          message: actionMessage,
+          unpaidAmount: 0,
         },
         { status: 200, headers: corsHeaders }
       );
+    } catch (innerErr) {
+      if (inTx && session) {
+        await session.abortTransaction();
+      }
+      throw innerErr;
+    } finally {
+      if (session) {
+        await session.endSession();
+      }
     }
-
-    // 6. Clean hard-delete if zero historical dependencies exist
-    await Student.findOneAndDelete({ _id: student._id, centerId: user.centerId });
-
-    return NextResponse.json(
-      {
-        success: true,
-        action: "deleted",
-        message: "Student deleted successfully",
-      },
-      { status: 200, headers: corsHeaders }
-    );
   } catch (error: unknown) {
     const errorMessage =
       error instanceof Error ? error.message : "Failed to delete student";
