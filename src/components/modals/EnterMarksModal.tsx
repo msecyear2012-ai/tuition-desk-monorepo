@@ -5,13 +5,9 @@ import {
   X,
   Award,
   Users,
-  CheckCircle2,
   AlertCircle,
   Loader2,
-  Calendar,
-  Layers,
   Save,
-  UserCheck,
   UserX,
 } from "lucide-react";
 import { apiClient, getCurrentCenterId } from "@/lib/apiClient";
@@ -66,7 +62,6 @@ export default function EnterMarksModal({
   onSuccess,
   test,
 }: EnterMarksModalProps) {
-  const [students, setStudents] = useState<StudentRecord[]>([]);
   const [entries, setEntries] = useState<StudentEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -95,6 +90,7 @@ export default function EnterMarksModal({
           params: {
             centerId: getCurrentCenterId(),
             batch: test.batch,
+            limit: "250",
           },
         });
 
@@ -103,8 +99,6 @@ export default function EnterMarksModal({
         const relevantStudents = test.assignedTeacherId
           ? batchStudents.filter((s) => s.assignedTeacherId === test.assignedTeacherId)
           : batchStudents;
-
-        setStudents(relevantStudents);
 
         // Map existing results or initialize
         const existingResultsMap = new Map<string, TestResult>();

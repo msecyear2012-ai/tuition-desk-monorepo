@@ -349,8 +349,25 @@ export interface BatchRecord {
   subject?: string;
   assignedTeacherId?: string | null;
   isActive?: boolean;
+  studentCount?: number;
+  activeStudentCount?: number;
+  monthlyFeeSum?: number;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface BatchesSummary {
+  totalStudents: number;
+  activeStudents: number;
+  totalMonthlyFee: number;
+  byBatch?: Record<
+    string,
+    {
+      studentCount: number;
+      activeStudentCount: number;
+      monthlyFeeSum: number;
+    }
+  >;
 }
 
 export interface TestResult {

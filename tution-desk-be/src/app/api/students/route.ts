@@ -194,10 +194,22 @@ export async function GET(request: NextRequest) {
     const pageParam = searchParams.get("page");
     const limitParam = searchParams.get("limit");
 
+    const hasBatchFilter = Boolean(
+      (batchId && batchId.trim()) ||
+      (searchParams.get("batch") && searchParams.get("batch")!.trim())
+    );
+
+    const maxAllowedLimit = hasBatchFilter ? 250 : 100;
+    const defaultLimit = hasBatchFilter ? 250 : 50;
+
+    let limit = defaultLimit;
+    if (limitParam) {
+      const parsed = parseInt(limitParam, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        limit = Math.min(maxAllowedLimit, parsed);
+      }
+    }
     const page = pageParam ? Math.max(1, parseInt(pageParam, 10) || 1) : 1;
-    const limit = limitParam
-      ? Math.min(100, Math.max(1, parseInt(limitParam, 10) || 50))
-      : 50;
     const skip = (page - 1) * limit;
 
     let studentQuery: any = Student.find(filter);

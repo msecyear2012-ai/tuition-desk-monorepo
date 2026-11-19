@@ -209,7 +209,10 @@ export default function AttendancePage() {
   }, []);
 
   useEffect(() => {
-    fetchBatches();
+    const timer = setTimeout(() => {
+      fetchBatches();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [fetchBatches]);
 
   // Currently selected batch object
@@ -235,10 +238,11 @@ export default function AttendancePage() {
         const batchObj = batches.find((b) => b._id === batchId);
         const batchName = batchObj?.name || "";
 
-        // Build students query parameters
+        // Build students query parameters (fetch all batch students up to 250)
         const studentParams: Record<string, string> = {
           batchId,
           centerId: getCurrentCenterId(),
+          limit: "250",
         };
 
         if (userProfile?.role === "owner" && facultyFilter !== "all") {
@@ -319,7 +323,10 @@ export default function AttendancePage() {
   // Trigger roster load when selected batch, date, or owner faculty filter changes
   useEffect(() => {
     if (selectedBatchId) {
-      fetchBatchStudentsAndAttendance(selectedBatchId, selectedTeacherFilter, selectedDate);
+      const timer = setTimeout(() => {
+        fetchBatchStudentsAndAttendance(selectedBatchId, selectedTeacherFilter, selectedDate);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [selectedBatchId, selectedTeacherFilter, selectedDate, fetchBatchStudentsAndAttendance]);
 

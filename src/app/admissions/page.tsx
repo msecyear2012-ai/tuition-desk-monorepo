@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { apiClient, getCurrentCenterId, getApiCache, invalidateApiCache } from "@/lib/apiClient";
 import { openParentPortalForStudent } from "@/lib/parentPortalLink";
-import { StudentRecord, BatchRecord, TeacherRecord, StudentBatchRequestRecord } from "@/types";
+import { StudentRecord, BatchRecord, TeacherRecord, StudentBatchRequestRecord, BatchesSummary } from "@/types";
 import StudentPhoneMasked from "@/components/common/StudentPhoneMasked";
 import { getAuthenticatedCenter, type CenterInfo } from "@/lib/centerProfile";
 
@@ -332,6 +332,13 @@ function AdmissionsContent() {
   const [batchSearchQuery, setBatchSearchQuery] = useState("");
   const [selectedTeacherFilter, setSelectedTeacherFilter] = useState<string>("all");
 
+  // Backend Aggregated Batches & Student Summary
+  const [batchesSummary, setBatchesSummary] = useState<BatchesSummary | null>(null);
+
+  // Batch-Scoped Students for Selected Batch View
+  const [batchStudents, setBatchStudents] = useState<StudentRecord[] | null>(null);
+  const [loadingBatchStudents, setLoadingBatchStudents] = useState(false);
+
   // Debounced Student Search in Batch Detail
   const [studentSearchInput, setStudentSearchInput] = useState("");
   const [isSearchingStudents, setIsSearchingStudents] = useState(false);
@@ -404,7 +411,7 @@ function AdmissionsContent() {
     }
   }, []);
 
-  // Fetch real batches from MongoDB backend
+  // Fetch real batches with backend pre-computed student counts and fee sums
   const fetchBatches = useCallback(async (isRefresh = false) => {
     try {
       const res = await apiClient<BatchRecord[]>("/batches", {
@@ -412,6 +419,9 @@ function AdmissionsContent() {
         skipCache: isRefresh,
       });
       setBatches(res.data || []);
+      if (res.summary && typeof res.summary === "object") {
+        setBatchesSummary(res.summary as BatchesSummary);
+      }
     } catch (err) {
       console.error("Failed to fetch batches:", err);
     }
@@ -442,6 +452,7 @@ function AdmissionsContent() {
 
     students.forEach((s) => {
       if (s.batch && !knownNames.has(s.batch)) {
+        const orphanStats = batchesSummary?.byBatch?.[s.batch];
         list.push({
           _id: `orphan_${encodeURIComponent(s.batch)}`,
           centerId: s.centerId || getCurrentCenterId(),
@@ -449,13 +460,36 @@ function AdmissionsContent() {
           subject: "General",
           timing: "Flexible",
           isActive: true,
+          studentCount: orphanStats?.studentCount,
+          activeStudentCount: orphanStats?.activeStudentCount,
+          monthlyFeeSum: orphanStats?.monthlyFeeSum,
         });
         knownNames.add(s.batch);
       }
     });
 
+    if (batchesSummary?.byBatch) {
+      Object.keys(batchesSummary.byBatch).forEach((bName) => {
+        if (!knownNames.has(bName)) {
+          const orphanStats = batchesSummary.byBatch![bName];
+          list.push({
+            _id: `orphan_${encodeURIComponent(bName)}`,
+            centerId: getCurrentCenterId(),
+            name: bName,
+            subject: "General",
+            timing: "Flexible",
+            isActive: true,
+            studentCount: orphanStats.studentCount,
+            activeStudentCount: orphanStats.activeStudentCount,
+            monthlyFeeSum: orphanStats.monthlyFeeSum,
+          });
+          knownNames.add(bName);
+        }
+      });
+    }
+
     return list;
-  }, [batches, students]);
+  }, [batches, students, batchesSummary]);
 
   // Sync selectedBatchId when URL query parameter changes (browser back/forward & refresh)
   useEffect(() => {
@@ -549,6 +583,7 @@ function AdmissionsContent() {
             batchId: selectedBatch._id,
             batch: selectedBatch.name,
             search: trimmed,
+            limit: "250",
           },
           signal: controller.signal,
           skipCache: true,
@@ -566,7 +601,8 @@ function AdmissionsContent() {
         if (reqEpoch === searchReqEpochRef.current) {
           const q = trimmed.toLowerCase();
           const isTeacher = userProfile?.role === "teacher";
-          const fallback = students.filter(
+          const pool = batchStudents || students;
+          const fallback = pool.filter(
             (s) =>
               s.batch === selectedBatch.name &&
               (s.name.toLowerCase().includes(q) || (!isTeacher && s.parentWhatsApp.includes(trimmed)))
@@ -583,16 +619,21 @@ function AdmissionsContent() {
     return () => {
       clearTimeout(timer);
     };
-  }, [studentSearchInput, selectedBatch, students, userProfile?.role]);
+  }, [studentSearchInput, selectedBatch, batchStudents, students, userProfile?.role]);
 
-  // Overall metrics
-  const totalStudentsCount = students.length;
-  const activeStudentsCount = students.filter((s) => s.isActive !== false).length;
-  const totalMonthlyPotential = students
-    .filter((s) => s.isActive !== false)
-    .reduce((acc, curr) => acc + (curr.monthlyFee || 0), 0);
+  // Overall metrics driven directly by backend-aggregated stats
+  const totalStudentsCount =
+    batchesSummary?.totalStudents ?? students.length;
+  const activeStudentsCount =
+    batchesSummary?.activeStudents ??
+    students.filter((s) => s.isActive !== false).length;
+  const totalMonthlyPotential =
+    batchesSummary?.totalMonthlyFee ??
+    students
+      .filter((s) => s.isActive !== false)
+      .reduce((acc, curr) => acc + (curr.monthlyFee || 0), 0);
 
-  // Compute per-batch metrics
+  // Compute per-batch metrics driven by backend-aggregated stats
   const batchStatsMap = useMemo(() => {
     const stats: Record<
       string,
@@ -605,30 +646,49 @@ function AdmissionsContent() {
     > = {};
 
     displayBatches.forEach((b) => {
+      const backendStat =
+        (b.studentCount !== undefined
+          ? {
+              totalStudents: b.studentCount,
+              activeStudents: b.activeStudentCount ?? b.studentCount,
+              monthlyFee: b.monthlyFeeSum ?? 0,
+            }
+          : null) ||
+        (batchesSummary?.byBatch?.[b.name]
+          ? {
+              totalStudents: batchesSummary.byBatch[b.name].studentCount,
+              activeStudents: batchesSummary.byBatch[b.name].activeStudentCount,
+              monthlyFee: batchesSummary.byBatch[b.name].monthlyFeeSum,
+            }
+          : null);
+
       stats[b._id] = {
-        totalStudents: 0,
-        activeStudents: 0,
-        monthlyFee: 0,
+        totalStudents: backendStat?.totalStudents ?? 0,
+        activeStudents: backendStat?.activeStudents ?? 0,
+        monthlyFee: backendStat?.monthlyFee ?? 0,
         meta: b,
       };
     });
 
-    students.forEach((student) => {
-      const matchBatch = displayBatches.find((b) => b.name === student.batch);
-      if (matchBatch) {
-        const entry = stats[matchBatch._id];
-        if (entry) {
-          entry.totalStudents += 1;
-          if (student.isActive !== false) {
-            entry.activeStudents += 1;
-            entry.monthlyFee += student.monthlyFee || 0;
+    // Fallback: If no backend stats are available, calculate from loaded students
+    if (!batchesSummary && displayBatches.length > 0 && students.length > 0) {
+      students.forEach((student) => {
+        const matchBatch = displayBatches.find((b) => b.name === student.batch);
+        if (matchBatch) {
+          const entry = stats[matchBatch._id];
+          if (entry) {
+            entry.totalStudents += 1;
+            if (student.isActive !== false) {
+              entry.activeStudents += 1;
+              entry.monthlyFee += student.monthlyFee || 0;
+            }
           }
         }
-      }
-    });
+      });
+    }
 
     return stats;
-  }, [displayBatches, students]);
+  }, [displayBatches, batchesSummary, students]);
 
   // Filtered batch list for Overview Grid
   const filteredBatches = useMemo(() => {
@@ -658,6 +718,78 @@ function AdmissionsContent() {
     });
   }, [displayBatches, batchSearchQuery, selectedTeacherFilter, students]);
 
+  // Fetch full student roster for selected batch (up to 250 students)
+  useEffect(() => {
+    if (!selectedBatch) {
+      const resetTimer = setTimeout(() => {
+        setBatchStudents(null);
+        setLoadingBatchStudents(false);
+      }, 0);
+      return () => clearTimeout(resetTimer);
+    }
+
+    let isMounted = true;
+    const startTimer = setTimeout(() => {
+      if (isMounted) setLoadingBatchStudents(true);
+    }, 0);
+
+    const params: Record<string, string> = {
+      centerId: getCurrentCenterId(),
+      batch: selectedBatch.name,
+      limit: "250",
+    };
+    if (selectedBatch._id && !selectedBatch._id.startsWith("orphan_")) {
+      params.batchId = selectedBatch._id;
+    }
+
+    apiClient<StudentRecord[]>("/students", {
+      params,
+      skipCache: true,
+    })
+      .then((res) => {
+        if (isMounted) {
+          setBatchStudents(res.data || []);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch batch students:", err);
+        if (isMounted) {
+          setBatchStudents(students.filter((s) => s.batch === selectedBatch.name));
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setLoadingBatchStudents(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+      clearTimeout(startTimer);
+    };
+  }, [selectedBatch, students]);
+
+  const refreshBatchStudents = useCallback(async () => {
+    if (!selectedBatch) return;
+    try {
+      const params: Record<string, string> = {
+        centerId: getCurrentCenterId(),
+        batch: selectedBatch.name,
+        limit: "250",
+      };
+      if (selectedBatch._id && !selectedBatch._id.startsWith("orphan_")) {
+        params.batchId = selectedBatch._id;
+      }
+      const res = await apiClient<StudentRecord[]>("/students", {
+        params,
+        skipCache: true,
+      });
+      setBatchStudents(res.data || []);
+    } catch {
+      // Ignore background refresh errors
+    }
+  }, [selectedBatch]);
+
   // Active batch students (when a batch is selected)
   const currentBatchStudents = useMemo(() => {
     if (!selectedBatch) return [];
@@ -666,8 +798,12 @@ function AdmissionsContent() {
       return searchedStudents;
     }
 
+    if (batchStudents !== null) {
+      return batchStudents;
+    }
+
     return students.filter((s) => s.batch === selectedBatch.name);
-  }, [selectedBatch, searchedStudents, students]);
+  }, [selectedBatch, searchedStudents, batchStudents, students]);
 
   // Navigation handlers
   const handleSelectBatch = (batch: BatchRecord) => {
@@ -712,6 +848,7 @@ function AdmissionsContent() {
   const handleModalSuccess = (savedStudent: StudentRecord) => {
     fetchStudents(true);
     fetchBatches(true);
+    refreshBatchStudents();
     const isEdit = Boolean(studentToEdit);
     showToast(
       isEdit
@@ -748,6 +885,7 @@ function AdmissionsContent() {
       }
       fetchBatches(true);
       fetchStudents(true);
+      refreshBatchStudents();
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : "Failed to delete batch.";
@@ -1338,6 +1476,11 @@ function AdmissionsContent() {
                 <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
                 <span>Searching students...</span>
               </div>
+            ) : loadingBatchStudents && batchStudents === null ? (
+              <div className="p-8 text-center bg-white rounded-3xl border border-slate-200 flex items-center justify-center gap-2 text-xs text-slate-500 font-semibold">
+                <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                <span>Loading students in {selectedBatch.name}...</span>
+              </div>
             ) : currentBatchStudents.length === 0 ? (
               <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-8 text-center space-y-3">
                 <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto">
@@ -1412,7 +1555,14 @@ function AdmissionsContent() {
         studentToEdit={studentToEdit}
         availableBatches={uniqueBatchNames}
         initialBatch={selectedBatch?.name || undefined}
-        existingStudents={students}
+        existingStudents={
+          batchStudents
+            ? [
+                ...students,
+                ...batchStudents.filter((bs) => !students.some((s) => s._id === bs._id)),
+              ]
+            : students
+        }
       />
 
       {/* Create Batch Modal (Owner Only) */}
@@ -1479,6 +1629,7 @@ function AdmissionsContent() {
             setBatchToEdit(null);
             fetchBatches(true);
             fetchStudents(true);
+            refreshBatchStudents();
           }}
         />
       )}
@@ -1494,6 +1645,7 @@ function AdmissionsContent() {
             showToast(`Student "${deletedStudentName}" deleted successfully.`);
             fetchStudents(true);
             fetchBatches(true);
+            refreshBatchStudents();
             invalidateApiCache();
           }}
         />

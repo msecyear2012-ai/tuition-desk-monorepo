@@ -134,6 +134,10 @@ export async function GET(request: NextRequest) {
       isActive: { $ne: false },
     };
 
+    const studentMatch: Record<string, unknown> = {
+      centerId,
+    };
+
     // Role-based scoping
     if (user?.role === "teacher") {
       if (!user.teacherId || !mongoose.Types.ObjectId.isValid(user.teacherId)) {
@@ -144,6 +148,8 @@ export async function GET(request: NextRequest) {
       }
 
       const teacherObjectId = new mongoose.Types.ObjectId(user.teacherId);
+      studentMatch.assignedTeacherId = teacherObjectId;
+
       const [teacherStudents, teacherDoc, teacherBatches] = await Promise.all([
         Student.find({
           centerId,
@@ -176,6 +182,10 @@ export async function GET(request: NextRequest) {
 
       if (assignedTeacherParam) {
         if (assignedTeacherParam === "owner" || assignedTeacherParam === "null") {
+          studentMatch.$or = [
+            { assignedTeacherId: null },
+            { assignedTeacherId: { $exists: false } },
+          ];
           const [ownerStudents, ownerBatches] = await Promise.all([
             Student.find({
               centerId,
@@ -197,6 +207,7 @@ export async function GET(request: NextRequest) {
           filter.name = { $in: ownerBatchNames };
         } else if (mongoose.Types.ObjectId.isValid(assignedTeacherParam)) {
           const teacherObjectId = new mongoose.Types.ObjectId(assignedTeacherParam);
+          studentMatch.assignedTeacherId = teacherObjectId;
           const [teacherStudents, teacherDoc, teacherBatches] = await Promise.all([
             Student.find({
               centerId,
@@ -225,12 +236,118 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const batches = await Batch.find(filter).sort({
-      createdAt: -1,
+    // Run batch query and Student aggregation in parallel
+    const [batches, aggResult] = await Promise.all([
+      Batch.find(filter).sort({ createdAt: -1 }),
+      typeof Student.aggregate === "function"
+        ? Student.aggregate([
+            { $match: studentMatch },
+            {
+              $facet: {
+                overall: [
+                  {
+                    $group: {
+                      _id: null,
+                      totalStudents: { $sum: 1 },
+                      activeStudents: {
+                        $sum: { $cond: [{ $ne: ["$isActive", false] }, 1, 0] },
+                      },
+                      totalMonthlyFee: {
+                        $sum: {
+                          $cond: [
+                            { $ne: ["$isActive", false] },
+                            { $ifNull: ["$monthlyFee", 0] },
+                            0,
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+                byBatch: [
+                  {
+                    $group: {
+                      _id: "$batch",
+                      studentCount: { $sum: 1 },
+                      activeStudentCount: {
+                        $sum: { $cond: [{ $ne: ["$isActive", false] }, 1, 0] },
+                      },
+                      monthlyFeeSum: {
+                        $sum: {
+                          $cond: [
+                            { $ne: ["$isActive", false] },
+                            { $ifNull: ["$monthlyFee", 0] },
+                            0,
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          ]).catch((err) => {
+            console.error("Student.aggregate error in /api/batches:", err);
+            return [];
+          })
+        : Promise.resolve([]),
+    ]);
+
+    let overall = { totalStudents: 0, activeStudents: 0, totalMonthlyFee: 0 };
+    const batchStatsRecord: Record<
+      string,
+      { studentCount: number; activeStudentCount: number; monthlyFeeSum: number }
+    > = {};
+
+    if (Array.isArray(aggResult) && aggResult[0]) {
+      const first = aggResult[0];
+      if (Array.isArray(first.overall) && first.overall[0]) {
+        overall = {
+          totalStudents: Number(first.overall[0].totalStudents) || 0,
+          activeStudents: Number(first.overall[0].activeStudents) || 0,
+          totalMonthlyFee: Number(first.overall[0].totalMonthlyFee) || 0,
+        };
+      }
+      if (Array.isArray(first.byBatch)) {
+        for (const item of first.byBatch) {
+          if (item && item._id) {
+            batchStatsRecord[String(item._id)] = {
+              studentCount: Number(item.studentCount) || 0,
+              activeStudentCount: Number(item.activeStudentCount) || 0,
+              monthlyFeeSum: Number(item.monthlyFeeSum) || 0,
+            };
+          }
+        }
+      }
+    }
+
+    const batchesWithStats = batches.map((b: any) => {
+      const plain = typeof b.toObject === "function" ? b.toObject() : { ...b };
+      const stats = batchStatsRecord[plain.name] || {
+        studentCount: 0,
+        activeStudentCount: 0,
+        monthlyFeeSum: 0,
+      };
+      return {
+        ...plain,
+        studentCount: stats.studentCount,
+        activeStudentCount: stats.activeStudentCount,
+        monthlyFeeSum: stats.monthlyFeeSum,
+      };
     });
 
     return NextResponse.json(
-      { success: true, count: batches.length, data: batches },
+      {
+        success: true,
+        count: batchesWithStats.length,
+        data: batchesWithStats,
+        summary: {
+          totalStudents: overall.totalStudents,
+          activeStudents: overall.activeStudents,
+          totalMonthlyFee: overall.totalMonthlyFee,
+          byBatch: batchStatsRecord,
+        },
+      },
       { status: 200, headers: corsHeaders }
     );
   } catch (error: unknown) {
